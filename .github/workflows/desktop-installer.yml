@@ -1,0 +1,61 @@
+name: Windows Desktop Installer
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'desktop/**'
+      - '.github/workflows/desktop-installer.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows-installer:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install desktop dependencies
+        run: npm install
+
+      - name: Build Windows installer
+        run: npm run dist
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RAMeng-Windows-Installer
+          path: desktop/dist/RAMeng-CRM-Setup.exe
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish rolling desktop release
+        if: github.ref == 'refs/heads/main'
+        shell: pwsh
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f desktop-latest $env:GITHUB_SHA
+          git push origin desktop-latest --force
+
+          gh release view desktop-latest *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create desktop-latest --title "RAMeng CRM Windows Desktop" --notes "Rolling Windows installer for RAMeng CRM. This release is updated automatically when the desktop client changes." --prerelease
+          }
+
+          gh release upload desktop-latest "desktop/dist/RAMeng-CRM-Setup.exe" --clobber
