@@ -5,8 +5,6 @@ workers_dev = true
 
 [[kv_namespaces]]
 binding = "CONFIG"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
-preview_id = "REPLACE_WITH_KV_PREVIEW_NAMESPACE_ID"
 
 [assets]
 directory = "../dist"
