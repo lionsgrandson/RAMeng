@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>הגדרת ראם הנדסה CRM</title>
+  <style>
+    :root { font-family: Arial, "Segoe UI", sans-serif; color: #26362d; background: #f4f7f5; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 32px; background: radial-gradient(circle at top right, #e8efea 0, #f4f7f5 42%, #eef2ef 100%); }
+    .card { width: min(680px, 100%); background: #fff; border: 1px solid #dbe5de; border-radius: 24px; box-shadow: 0 24px 70px rgba(38,54,45,.12); overflow: hidden; }
+    .top { padding: 34px 36px 26px; background: #75927c; color: #fff; }
+    .brand { display: flex; align-items: center; gap: 16px; }
+    .mark { width: 60px; height: 60px; border-radius: 15px; background: #fff; padding: 10px; display: grid; gap: 6px; }
+    .mark i { display: block; height: 8px; background: #75927c; border-radius: 2px; }
+    .mark i:nth-child(2) { width: 65%; }
+    h1 { margin: 0; font-size: 28px; }
+    .subtitle { margin: 7px 0 0; opacity: .92; }
+    .body { padding: 34px 36px 38px; }
+    h2 { margin: 0 0 10px; font-size: 22px; }
+    p { color: #637169; line-height: 1.7; margin: 0 0 22px; }
+    label { display: block; font-weight: 700; margin-bottom: 8px; }
+    input { width: 100%; border: 1px solid #cfdad3; border-radius: 12px; padding: 14px 15px; font-size: 16px; direction: ltr; text-align: left; outline: none; }
+    input:focus { border-color: #75927c; box-shadow: 0 0 0 3px rgba(117,146,124,.14); }
+    .hint { font-size: 13px; color: #7a8780; margin-top: 8px; }
+    button { width: 100%; margin-top: 22px; border: 0; border-radius: 12px; padding: 14px 18px; background: #26362d; color: #fff; font-size: 16px; font-weight: 700; cursor: pointer; }
+    button:disabled { opacity: .58; cursor: wait; }
+    .status { margin-top: 16px; padding: 12px 14px; border-radius: 10px; display: none; line-height: 1.5; }
+    .status.show { display: block; }
+    .status.error { color: #842029; background: #f8d7da; border: 1px solid #f1aeb5; }
+    .status.ok { color: #0f5132; background: #d1e7dd; border: 1px solid #a3cfbb; }
+    .foot { margin-top: 22px; padding-top: 20px; border-top: 1px solid #edf1ee; font-size: 13px; color: #7a8780; line-height: 1.65; }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <section class="top">
+      <div class="brand">
+        <div class="mark" aria-hidden="true"><i></i><i></i><i></i></div>
+        <div><h1>ראם הנדסה CRM</h1><div class="subtitle">אפליקציית Windows</div></div>
+      </div>
+    </section>
+    <section class="body">
+      <h2>חיבור חד פעמי למערכת</h2>
+      <p>ההתקנה כבר כוללת את כל מה שנדרש להפעלת אפליקציית שולחן העבודה. הזינו פעם אחת את כתובת ה-Cloudflare של מערכת ראם, ומכאן האפליקציה תפתח תמיד ישירות את ה-CRM.</p>
+      <form id="form">
+        <label for="url">כתובת מערכת ה-CRM</label>
+        <input id="url" type="url" required placeholder="https://your-rameng-worker.workers.dev" autocomplete="off" />
+        <div class="hint">נדרש HTTPS. לפיתוח מקומי ניתן להשתמש גם ב-http://localhost.</div>
+        <button id="save" type="submit">בדיקה וחיבור למערכת</button>
+      </form>
+      <div id="status" class="status"></div>
+      <div class="foot">אין צורך להתקין Node.js, Chrome או סביבת פיתוח במחשב של העובד. מתקין ה-EXE כולל את סביבת ההרצה של האפליקציה. עדכוני ה-CRM עצמם נטענים מהשרת, כך שבדרך כלל לא צריך להתקין מחדש את אפליקציית Windows אחרי שינוי במערכת.</div>
+    </section>
+  </main>
+  <script>
+    const form = document.getElementById('form')
+    const input = document.getElementById('url')
+    const save = document.getElementById('save')
+    const status = document.getElementById('status')
+
+    function show(message, kind) {
+      status.textContent = message
+      status.className = `status show ${kind || ''}`
+    }
+
+    async function init() {
+      try {
+        const current = await window.ramengDesktop.getConfig()
+        if (current?.serverUrl) input.value = current.serverUrl
+        const queryError = new URLSearchParams(location.search).get('error')
+        if (queryError) show(queryError, 'error')
+      } catch (error) {
+        show(error?.message || 'לא ניתן לטעון את ההגדרה הקיימת.', 'error')
+      }
+    }
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault()
+      save.disabled = true
+      save.textContent = 'בודק את השרת...'
+      show('בודק שהכתובת היא שרת RAMeng CRM תקין...', '')
+      try {
+        const result = await window.ramengDesktop.saveServer(input.value)
+        show(result.configured ? 'החיבור הצליח. פותח את המערכת...' : 'השרת נמצא, אך טרם הושלמה בו הגדרת Supabase. אפשר להשלים אותה מתוך המערכת.', 'ok')
+      } catch (error) {
+        show(error?.message || 'החיבור נכשל. בדקו את הכתובת ונסו שוב.', 'error')
+        save.disabled = false
+        save.textContent = 'בדיקה וחיבור למערכת'
+      }
+    })
+
+    void init()
+  </script>
+</body>
+</html>
