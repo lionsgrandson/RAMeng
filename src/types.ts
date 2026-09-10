@@ -13,7 +13,7 @@ export interface Contact {
   company?: string
   phone?: string
   email?: string
-  status: ContactStatus
+  status: string
   tags: string[]
   notes?: string
   createdAt: string
