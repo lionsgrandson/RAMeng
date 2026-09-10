@@ -18,39 +18,68 @@ const fieldValue = (task: Task, column: TaskColumn) => {
 export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail }: Props) {
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('הכל')
+  const [projectFilter, setProjectFilter] = useState('הכל')
+  const [assigneeFilter, setAssigneeFilter] = useState('הכל')
   const [showColumns, setShowColumns] = useState(false)
   const [newColumn, setNewColumn] = useState('')
   const [newColumnType, setNewColumnType] = useState<TaskColumnType>('text')
   const [newStatus, setNewStatus] = useState('')
 
   const visibleColumns = workspace.taskColumns.filter((column) => column.visible)
-  const projectTasks = workspace.tasks.filter((task) => !projectId || task.projectId === projectId)
+  const filteredTasks = workspace.tasks.filter((task) => {
+    if (projectId && task.projectId !== projectId) return false
+    if (!projectId && projectFilter !== 'הכל') {
+      if (projectFilter === '__none__' && task.projectId) return false
+      if (projectFilter !== '__none__' && task.projectId !== projectFilter) return false
+    }
+    if (assigneeFilter !== 'הכל') {
+      if (assigneeFilter === '__none__' && task.assigneeId) return false
+      if (assigneeFilter !== '__none__' && task.assigneeId !== assigneeFilter) return false
+    }
+    return true
+  })
   const matches = (task: Task) => (!search || `${task.title} ${task.description || ''}`.toLowerCase().includes(search.toLowerCase())) && (statusFilter === 'הכל' || task.status === statusFilter)
 
   const rows = useMemo(() => {
     const byParent = new Map<string, Task[]>()
-    projectTasks.forEach((task) => {
+    filteredTasks.forEach((task) => {
       const key = task.parentId || 'root'
       byParent.set(key, [...(byParent.get(key) || []), task].sort((a, b) => a.order - b.order))
     })
     const result: { task: Task; depth: number }[] = []
+    const hasMatchingDescendant = (id: string): boolean => (byParent.get(id) || []).some((child) => matches(child) || hasMatchingDescendant(child.id))
     const walk = (parent: string, depth: number) => {
       for (const task of byParent.get(parent) || []) {
-        if (matches(task) || (byParent.get(task.id) || []).some(matches)) result.push({ task, depth })
+        if (matches(task) || hasMatchingDescendant(task.id)) result.push({ task, depth })
         walk(task.id, depth + 1)
       }
     }
     walk('root', 0)
     return result
-  }, [projectTasks, search, statusFilter])
+  }, [filteredTasks, search, statusFilter])
 
   const updateTask = (id: string, patch: Partial<Task>) => setWorkspace((current) => ({ ...current, tasks: current.tasks.map((task) => task.id === id ? { ...task, ...patch } : task) }))
-  const addTask = (parentId?: string, title = 'משימה חדשה') => setWorkspace((current) => ({
-    ...current,
-    tasks: [...current.tasks, {
-      id: uid('task'), projectId, parentId, title, status: current.taskStatuses[0] || 'טרם התחיל', priority: 'רגילה', custom: {}, order: current.tasks.length + 1, createdAt: nowIso(),
-    }],
-  }))
+  const changeTaskProject = (id: string, nextProjectId?: string) => setWorkspace((current) => {
+    const affected = new Set<string>([id])
+    let changed = true
+    while (changed) {
+      changed = false
+      current.tasks.forEach((task) => {
+        if (task.parentId && affected.has(task.parentId) && !affected.has(task.id)) { affected.add(task.id); changed = true }
+      })
+    }
+    return { ...current, tasks: current.tasks.map((task) => affected.has(task.id) ? { ...task, projectId: nextProjectId } : task) }
+  })
+  const addTask = (parentId?: string, title = 'משימה חדשה') => setWorkspace((current) => {
+    const parent = parentId ? current.tasks.find((task) => task.id === parentId) : undefined
+    const chosenProjectId = parent?.projectId || projectId || (!projectId && projectFilter !== 'הכל' && projectFilter !== '__none__' ? projectFilter : undefined)
+    return {
+      ...current,
+      tasks: [...current.tasks, {
+        id: uid('task'), projectId: chosenProjectId, parentId, title, status: current.taskStatuses[0] || 'טרם התחיל', priority: 'רגילה', custom: {}, order: current.tasks.length + 1, createdAt: nowIso(),
+      }],
+    }
+  })
   const removeTask = (id: string) => setWorkspace((current) => {
     const remove = new Set<string>([id])
     let changed = true
@@ -62,6 +91,7 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail 
   })
 
   const applyTemplate = (items: ChecklistTemplateItem[]) => {
+    if (!projectId) return
     const created: Task[] = []
     const build = (list: ChecklistTemplateItem[], parentId?: string) => list.forEach((item) => {
       const id = uid('task')
@@ -97,10 +127,14 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail 
     return { ...current, taskColumns: list }
   })
 
+  const extraColumns = projectId ? 0 : 1
+
   return <div className="task-board-wrap">
     <div className="toolbar board-toolbar">
       <div className="toolbar-grow"><input className="search-input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="חיפוש משימה..." /></div>
+      {!projectId && <select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)}><option value="הכל">כל הפרויקטים</option><option value="__none__">ללא פרויקט</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select>}
       <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}><option>הכל</option>{workspace.taskStatuses.map((status) => <option key={status}>{status}</option>)}</select>
+      <select value={assigneeFilter} onChange={(e) => setAssigneeFilter(e.target.value)}><option value="הכל">כל האחראים</option><option value="__none__">ללא אחראי</option>{workspace.team.filter((member) => member.active).map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select>
       {projectId && <select defaultValue="" onChange={(e) => { const template = workspace.checklistTemplates.find((item) => item.id === e.target.value); if (template) applyTemplate(template.items); e.target.value = '' }}>
         <option value="">החלת צ׳ק ליסט</option>{workspace.checklistTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
       </select>}
@@ -123,10 +157,10 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail 
     </div>}
 
     <div className="table-scroll task-table-wrap">
-      <table className="data-table task-table"><thead><tr>{visibleColumns.map((column) => <th key={column.id} style={{ minWidth: column.width }}>{column.label}</th>)}<th className="actions-col">פעולות</th></tr></thead>
-        <tbody>{rows.map(({ task, depth }) => <tr key={task.id} className={task.parentId ? 'subtask-row' : ''}>{visibleColumns.map((column) => <td key={column.id}>{column.key === 'title' ? <input className="cell-input task-title-input" style={{ paddingInlineStart: 8 + depth * 22 }} value={task.title} onChange={(e) => updateTask(task.id, { title: e.target.value })} /> : column.type === 'status' ? <select className="cell-input" value={fieldValue(task, column)} onChange={(e) => editCell(task, column, e.target.value)}>{workspace.taskStatuses.map((status) => <option key={status}>{status}</option>)}</select> : column.type === 'member' ? <select className="cell-input" value={fieldValue(task, column)} onChange={(e) => editCell(task, column, e.target.value)}><option value="">לא משויך</option>{workspace.team.filter((member) => member.active).map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select> : column.type === 'date' ? <input className="cell-input" type="date" value={dateInput(fieldValue(task, column))} onChange={(e) => editCell(task, column, e.target.value)} /> : column.type === 'priority' ? <select className="cell-input" value={fieldValue(task, column)} onChange={(e) => editCell(task, column, e.target.value)}><option>נמוכה</option><option>רגילה</option><option>גבוהה</option><option>דחופה</option></select> : column.type === 'email' ? <div className="email-cell"><input className="cell-input" type="email" value={fieldValue(task, column)} onChange={(e) => editCell(task, column, e.target.value)} placeholder="name@example.com" />{onEmail && <button className="icon-btn" title="פתיחת התכתבות" onClick={() => onEmail(task)}><Mail /></button>}</div> : <input className="cell-input" value={fieldValue(task, column)} onChange={(e) => editCell(task, column, e.target.value)} />}</td>)}
+      <table className="data-table task-table"><thead><tr>{!projectId && <th style={{ minWidth: 180 }}>פרויקט</th>}{visibleColumns.map((column) => <th key={column.id} style={{ minWidth: column.width }}>{column.label}</th>)}<th className="actions-col">פעולות</th></tr></thead>
+        <tbody>{rows.map(({ task, depth }) => <tr key={task.id} className={task.parentId ? 'subtask-row' : ''}>{!projectId && <td><select className="cell-input" value={task.projectId || ''} onChange={(e) => changeTaskProject(task.id, e.target.value || undefined)}><option value="">ללא פרויקט</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></td>}{visibleColumns.map((column) => <td key={column.id}>{column.key === 'title' ? <input className="cell-input task-title-input" style={{ paddingInlineStart: 8 + depth * 22 }} value={task.title} onChange={(e) => updateTask(task.id, { title: e.target.value })} /> : column.type === 'status' ? <select className="cell-input" value={fieldValue(task, column)} onChange={(e) => editCell(task, column, e.target.value)}>{workspace.taskStatuses.map((status) => <option key={status}>{status}</option>)}</select> : column.type === 'member' ? <select className="cell-input" value={fieldValue(task, column)} onChange={(e) => editCell(task, column, e.target.value)}><option value="">לא משויך</option>{workspace.team.filter((member) => member.active).map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select> : column.type === 'date' ? <input className="cell-input" type="date" value={dateInput(fieldValue(task, column))} onChange={(e) => editCell(task, column, e.target.value)} /> : column.type === 'priority' ? <select className="cell-input" value={fieldValue(task, column)} onChange={(e) => editCell(task, column, e.target.value)}><option>נמוכה</option><option>רגילה</option><option>גבוהה</option><option>דחופה</option></select> : column.type === 'email' ? <div className="email-cell"><input className="cell-input" type="email" value={fieldValue(task, column)} onChange={(e) => editCell(task, column, e.target.value)} placeholder="name@example.com" />{onEmail && <button className="icon-btn" title="פתיחת התכתבות" onClick={() => onEmail(task)}><Mail /></button>}</div> : <input className="cell-input" value={fieldValue(task, column)} onChange={(e) => editCell(task, column, e.target.value)} />}</td>)}
           <td className="row-actions"><button className="icon-btn" title="הוסף תת משימה" onClick={() => addTask(task.id, 'תת משימה חדשה')}><Plus /></button><button className="icon-btn danger" title="מחיקה" onClick={() => removeTask(task.id)}><Trash2 /></button></td></tr>)}
-        {!rows.length && <tr><td colSpan={visibleColumns.length + 1}><div className="table-empty">אין משימות להצגה. הוסיפו משימה או החילו צ׳ק ליסט לפרויקט.</div></td></tr>}</tbody>
+        {!rows.length && <tr><td colSpan={visibleColumns.length + extraColumns + 1}><div className="table-empty">אין משימות להצגה. הוסיפו משימה או החילו צ׳ק ליסט לפרויקט.</div></td></tr>}</tbody>
       </table>
     </div>
   </div>
