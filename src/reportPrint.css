@@ -1,0 +1,65 @@
+.print-report{display:none}
+
+@media print{
+  @page{size:A4;margin:11mm}
+  body[data-print-report] .sidebar,
+  body[data-print-report] .sidebar-overlay,
+  body[data-print-report] .topbar,
+  body[data-print-report] .page-heading,
+  body[data-print-report] .editor-top,
+  body[data-print-report] .report-meta,
+  body[data-print-report] .previous-issues,
+  body[data-print-report] .inspection-sections{display:none!important}
+  body[data-print-report] .main{margin:0!important}
+  body[data-print-report] .page-wrap{width:100%!important;max-width:none!important;padding:0!important}
+  body[data-print-report] .report-editor{display:block!important}
+  body[data-print-report] .print-report{display:block!important;direction:rtl;color:#1c271f;background:#fff;font-family:Arial,"Noto Sans Hebrew",sans-serif}
+
+  .print-header{display:grid;grid-template-columns:1fr 1.5fr 1fr;gap:12px;align-items:start;padding-bottom:12px;margin-bottom:16px;border-bottom:3px solid #75927c}
+  .print-brand{display:flex;align-items:center;gap:8px}
+  .print-logo{width:54px;height:38px;display:grid;place-items:center;background:#75927c;color:#fff;font-weight:900;font-size:20px;letter-spacing:-1px}
+  .print-brand>div:last-child{display:flex;flex-direction:column}
+  .print-brand strong{font-size:13px}
+  .print-brand span{font-size:8px;color:#68756b;margin-top:2px}
+  .print-title{text-align:center}
+  .print-title h1{margin:0 0 3px;font-size:18px;color:#26372c}
+  .print-title p{margin:0;color:#67736a;font-size:10px}
+  .print-meta{display:grid;gap:3px;font-size:8.5px;line-height:1.35}
+  .print-meta span{display:block}
+
+  .print-section{margin:0 0 16px;break-inside:auto}
+  .print-section h2{margin:0 0 7px;padding:5px 8px;background:#eef3ef;border-right:4px solid #75927c;color:#314538;font-size:12px;break-after:avoid}
+  .print-report table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:8.2px;line-height:1.35}
+  .print-report thead{display:table-header-group}
+  .print-report tr{break-inside:avoid}
+  .print-report th,.print-report td{border:1px solid #aeb8b0;padding:5px;vertical-align:top;text-align:right;overflow-wrap:anywhere}
+  .print-report th{background:#f2f5f2;color:#34473a;font-weight:700}
+  .print-report th:nth-child(1),.print-report td:nth-child(1){width:5%;text-align:center}
+  .print-report th:nth-child(2),.print-report td:nth-child(2){width:20%}
+  .print-report th:nth-child(3),.print-report td:nth-child(3){width:12%}
+  .print-report th:nth-child(4),.print-report td:nth-child(4){width:28%}
+  .print-report th:nth-child(5),.print-report td:nth-child(5){width:12%}
+  .print-report th:nth-child(6),.print-report td:nth-child(6){width:23%}
+  .print-status{display:inline-block;padding:2px 5px;border-radius:10px;font-size:7.5px;font-weight:700;white-space:nowrap;background:#fff0dc;color:#8b5e1f}
+  .print-status.closed{background:#e7f1e9;color:#39704c}
+  .print-photos{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:3px}
+  .print-photos img{width:100%;height:48px;object-fit:cover;border:1px solid #cbd2cc;border-radius:2px}
+
+  .print-card-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .print-card-grid>article{border:1px solid #bdc6be;border-radius:5px;padding:8px;break-inside:avoid;background:#fff}
+  .print-card-head{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;border-bottom:1px solid #e2e7e2;padding-bottom:5px;margin-bottom:5px;font-size:9px}
+  .print-card-grid p{margin:0 0 5px;font-size:8.5px;line-height:1.45;white-space:pre-wrap}
+  .print-card-grid small{display:block;color:#68756c;font-size:8px;margin-bottom:5px}
+  .print-photos.large{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .print-photos.large figure{margin:0}
+  .print-photos.large img{height:78px}
+  .print-photos figcaption{font-size:7px;margin-top:2px;color:#657269}
+
+  .layout-photo .print-card-grid{grid-template-columns:1fr}
+  .layout-photo .print-card-grid>article{display:grid;grid-template-columns:1fr 46%;gap:8px}
+  .layout-photo .print-card-head,.layout-photo .print-card-grid>article>p,.layout-photo .print-card-grid>article>small{grid-column:1}
+  .layout-photo .print-photos.large{grid-column:2;grid-row:1/5;align-self:start}
+  .layout-photo .print-photos.large img{height:105px}
+
+  .print-footer{display:flex;justify-content:center;gap:14px;flex-wrap:wrap;margin-top:18px;padding-top:7px;border-top:2px solid #75927c;color:#607066;font-size:8px}
+}
