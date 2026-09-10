@@ -20,6 +20,7 @@
 - משתמשים והרשאות באמצעות Supabase Auth + RLS.
 - סנכרון realtime של סביבת העבודה בין משתמשים.
 - מסך מנהל מערכת להגדרת Supabase, Google Workspace, OpenAI, מיתוג ותבניות.
+- אפליקציית Windows עם מתקין EXE עצמאי, ללא צורך בהתקנת Node.js או Chrome אצל המשתמש.
 
 ## מבנה
 
@@ -27,6 +28,7 @@
 - `worker/` Cloudflare Worker שמגיש גם את ה-Frontend וגם את `/api`.
 - `supabase/setup.sql` סכמת בסיס נתונים, RLS, Realtime ו-Storage.
 - `deploy.cmd` התקנה ופריסה ראשונית מ-Windows.
+- `desktop/` לקוח Windows מבוסס Electron ומתקין EXE.
 
 ## הקמה ראשונית
 
@@ -86,6 +88,24 @@ https://YOUR-WORKER-DOMAIN/api/google/callback
 5. לחץ **חיבור Google** והתחבר לתיבת החברה.
 
 המערכת מבקשת הרשאות Gmail, Calendar ו-Drive הדרושות לפעולות שהוגדרו ב-CRM. אסימוני Google נשמרים בצד השרת ב-Cloudflare KV ואינם נשלחים ל-localStorage.
+
+## אפליקציית Windows
+
+הלקוח השולחני נמצא תחת `desktop/` ונבנה כמתקין אחד בשם:
+
+```text
+RAMeng-CRM-Setup.exe
+```
+
+המתקין כולל את סביבת ההרצה של Electron, ולכן משתמש קצה לא צריך להתקין Node.js, Chrome או כלי פיתוח. בהפעלה הראשונה מזינים פעם אחת את כתובת ה-HTTPS של ה-CRM ב-Cloudflare. לאחר מכן האפליקציה נפתחת ישירות למערכת.
+
+מכיוון שהלקוח השולחני טוען את ה-CRM מהשרת, עדכוני Frontend רגילים מתעדכנים אוטומטית בלי לשלוח EXE חדש. אם משתנה קוד ה-Desktop עצמו, GitHub Actions בונה EXE חדש.
+
+לאחר build מוצלח, ה-release המתגלגל זמין ב:
+
+```text
+https://github.com/lionsgrandson/RAMeng/releases/download/desktop-latest/RAMeng-CRM-Setup.exe
+```
 
 ## פיתוח מקומי
 
