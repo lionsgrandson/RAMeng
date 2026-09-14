@@ -1,3 +1,5 @@
+import { createClient } from '@supabase/supabase-js'
+
 const CONFIG_KEY = 'rameng:admin-config:v1'
 const GOOGLE_TOKENS_KEY = 'rameng:google-tokens:v1'
 const OAUTH_STATE_PREFIX = 'rameng:oauth-state:'
@@ -48,6 +50,10 @@ function cleanEmails(value) {
   return Array.isArray(value) ? value.map(cleanString).filter(Boolean).map((email) => email.toLowerCase()) : []
 }
 
+function developerEmails(config) {
+  return cleanEmails(config.developerEmails || config.adminEmails)
+}
+
 async function getAuthenticatedUser(request, env, config) {
   const auth = request.headers.get('authorization') || ''
   if (!auth.startsWith('Bearer ')) throw Object.assign(new Error('נדרשת התחברות'), { status: 401 })
@@ -61,18 +67,65 @@ async function getAuthenticatedUser(request, env, config) {
   return user
 }
 
-function isAdmin(user, config) {
+function isDeveloper(user, config) {
   const email = String(user?.email || '').toLowerCase()
-  return cleanEmails(config.adminEmails).includes(email)
+  return developerEmails(config).includes(email)
+}
+
+function supabaseAdmin(env, config) {
+  const secret = cleanString(env.SUPABASE_SECRET_KEY)
+  if (!secret) throw Object.assign(new Error('יש להגדיר SUPABASE_SECRET_KEY ב-Cloudflare Worker כדי לנהל הזמנות משתמשים'), { status: 503 })
+  if (!config.supabaseUrl) throw Object.assign(new Error('Supabase אינו מוגדר'), { status: 503 })
+  return createClient(config.supabaseUrl, secret, {
+    auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false },
+  })
+}
+
+async function ensureDeveloperMembership(env, config, user) {
+  if (!isDeveloper(user, config) || !cleanString(env.SUPABASE_SECRET_KEY)) return
+  const admin = supabaseAdmin(env, config)
+  const memberships = await admin.from('memberships').select('org_id, role').eq('user_id', user.id)
+  if (memberships.error) return
+  if (memberships.data?.length) {
+    for (const membership of memberships.data) {
+      if (membership.role !== 'developer') await admin.from('memberships').update({ role: 'developer' }).eq('org_id', membership.org_id).eq('user_id', user.id)
+    }
+    return
+  }
+  const orgs = await admin.from('organizations').select('id').limit(1)
+  const orgId = orgs.data?.[0]?.id
+  if (orgId) await admin.from('memberships').upsert({ org_id: orgId, user_id: user.id, role: 'developer' }, { onConflict: 'org_id,user_id' })
 }
 
 async function requireUser(request, env, config) {
   return getAuthenticatedUser(request, env, config)
 }
 
-async function requireAdmin(request, env, config) {
+async function requireDeveloper(request, env, config) {
   const user = await getAuthenticatedUser(request, env, config)
-  if (!isAdmin(user, config)) throw Object.assign(new Error('הפעולה זמינה למנהל מערכת בלבד'), { status: 403 })
+  if (!isDeveloper(user, config)) throw Object.assign(new Error('הפעולה זמינה למפתח המערכת בלבד'), { status: 403 })
+  await ensureDeveloperMembership(env, config, user)
+  return user
+}
+
+async function requireOrgManager(request, env, config, orgId) {
+  const user = await getAuthenticatedUser(request, env, config)
+  if (isDeveloper(user, config)) {
+    await ensureDeveloperMembership(env, config, user)
+    return user
+  }
+  const auth = request.headers.get('authorization') || ''
+  const response = await fetch(`${config.supabaseUrl.replace(/\/$/, '')}/rest/v1/rpc/is_org_admin`, {
+    method: 'POST',
+    headers: {
+      authorization: auth,
+      apikey: config.supabaseAnonKey,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ target_org: orgId }),
+  })
+  const allowed = response.ok ? await response.json() : false
+  if (allowed !== true) throw Object.assign(new Error('רק מנהל יכול לנהל משתמשים'), { status: 403 })
   return user
 }
 
@@ -198,7 +251,7 @@ function normalizeGmailMessage(message) {
 }
 
 async function handleGoogleAuthUrl(request, env, config) {
-  const user = await requireAdmin(request, env, config)
+  const user = await requireDeveloper(request, env, config)
   if (!config.googleClientId || !config.googleClientSecret) throw Object.assign(new Error('יש להזין Google OAuth Client ID ו-Client Secret לפני החיבור'), { status: 400 })
   const state = crypto.randomUUID()
   await env.CONFIG.put(`${OAUTH_STATE_PREFIX}${state}`, JSON.stringify({ userId: user.id, email: user.email || '', createdAt: Date.now() }), { expirationTtl: 600 })
@@ -444,6 +497,44 @@ async function handleAiRewrite(request, env, config) {
   return apiJson(request, { text: outputText })
 }
 
+async function handleUserInvite(request, env, config) {
+  const body = await parseBody(request)
+  const orgId = cleanString(body.orgId)
+  const email = cleanString(body.email).toLowerCase()
+  const name = cleanString(body.name)
+  const requestedRole = cleanString(body.role) || 'viewer'
+  if (!orgId || !email || !email.includes('@')) throw Object.assign(new Error('יש להזין מייל תקין'), { status: 400 })
+  if (!['admin', 'assistant', 'inspector', 'engineer', 'viewer'].includes(requestedRole)) throw Object.assign(new Error('תפקיד לא תקין'), { status: 400 })
+
+  await requireOrgManager(request, env, config, orgId)
+  const admin = supabaseAdmin(env, config)
+
+  const listResult = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 })
+  if (listResult.error) throw Object.assign(new Error(listResult.error.message || 'לא ניתן לבדוק משתמשים ב-Supabase'), { status: 502 })
+  let targetUser = (listResult.data.users || []).find((item) => String(item.email || '').toLowerCase() === email)
+  const existed = Boolean(targetUser)
+  let invited = false
+
+  if (!targetUser) {
+    const invite = await admin.auth.admin.inviteUserByEmail(email, {
+      data: name ? { full_name: name } : undefined,
+      redirectTo: `${new URL(request.url).origin}/?invite=1`,
+    })
+    if (invite.error || !invite.data.user) throw Object.assign(new Error(invite.error?.message || 'שליחת ההזמנה נכשלה'), { status: 502 })
+    targetUser = invite.data.user
+    invited = true
+  } else if (name && !targetUser.user_metadata?.full_name) {
+    const update = await admin.auth.admin.updateUserById(targetUser.id, { user_metadata: { ...(targetUser.user_metadata || {}), full_name: name } })
+    if (!update.error && update.data.user) targetUser = update.data.user
+  }
+
+  const role = developerEmails(config).includes(email) ? 'developer' : requestedRole
+  const membership = await admin.from('memberships').upsert({ org_id: orgId, user_id: targetUser.id, role }, { onConflict: 'org_id,user_id' })
+  if (membership.error) throw Object.assign(new Error(membership.error.message || 'לא ניתן לשייך את המשתמש לארגון'), { status: 502 })
+
+  return apiJson(request, { ok: true, invited, existing: existed, email, userId: targetUser.id, role })
+}
+
 async function handleAdminBootstrap(request, env) {
   const current = await readConfig(env)
   if (current.supabaseUrl && current.supabaseAnonKey) throw Object.assign(new Error('המערכת כבר הוגדרה. שינויים נוספים מבוצעים ממנהל המערכת.'), { status: 409 })
@@ -453,7 +544,7 @@ async function handleAdminBootstrap(request, env) {
   const supabaseUrl = cleanString(body.supabaseUrl).replace(/\/$/, '')
   const supabaseAnonKey = cleanString(body.supabaseAnonKey)
   const adminEmails = cleanEmails(body.adminEmails)
-  if (!/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(supabaseUrl) || supabaseAnonKey.length < 40 || !adminEmails.length) throw Object.assign(new Error('יש להזין Supabase URL, anon key ומייל מנהל תקינים'), { status: 400 })
+  if (!/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(supabaseUrl) || supabaseAnonKey.length < 40 || !adminEmails.length) throw Object.assign(new Error('יש להזין Supabase URL, anon key ומייל מפתח תקינים'), { status: 400 })
   const next = {
     organizationName: cleanString(body.organizationName) || 'ר.א.ם הנדסה',
     supabaseUrl,
@@ -471,13 +562,13 @@ async function handleAdminBootstrap(request, env) {
 }
 
 async function handleAdminConfig(request, env, config) {
-  await requireAdmin(request, env, config)
+  await requireDeveloper(request, env, config)
   if (request.method === 'GET') {
     return apiJson(request, {
       organizationName: config.organizationName || 'ר.א.ם הנדסה',
       supabaseUrl: config.supabaseUrl || '',
       supabaseAnonKey: config.supabaseAnonKey || '',
-      adminEmails: cleanEmails(config.adminEmails),
+      adminEmails: developerEmails(config),
       googleClientId: config.googleClientId || '',
       googleClientSecret: '',
       openaiApiKey: '',
@@ -506,6 +597,7 @@ async function handleStatus(request, env, config) {
     configured: Boolean(config.supabaseUrl && config.supabaseAnonKey),
     google: { connected: Boolean(tokens?.refresh_token || (tokens?.access_token && Number(tokens.expires_at || 0) > Date.now())), email: tokens?.email || '' },
     openai: { configured: Boolean(config.openaiApiKey) },
+    users: { invitationsConfigured: Boolean(cleanString(env.SUPABASE_SECRET_KEY)) },
   })
 }
 
@@ -519,6 +611,7 @@ async function routeApi(request, env) {
   if (path === '/api/admin/bootstrap' && request.method === 'POST') return handleAdminBootstrap(request, env)
   if (path === '/api/google/callback' && request.method === 'GET') return handleGoogleCallback(request, env, config)
   if (path === '/api/admin/config') return handleAdminConfig(request, env, config)
+  if (path === '/api/users/invite' && request.method === 'POST') return handleUserInvite(request, env, config)
   if (path === '/api/integrations/status' && request.method === 'GET') return handleStatus(request, env, config)
   if (path === '/api/google/auth-url' && request.method === 'GET') return handleGoogleAuthUrl(request, env, config)
   if (path === '/api/google/gmail/thread' && request.method === 'GET') return handleGmailThread(request, env, config)
@@ -543,7 +636,7 @@ export default {
       console.error(error)
       const status = Number(error?.status || 500)
       const message = error instanceof Error ? error.message : 'שגיאת שרת'
-      return apiJson(request, { error: status >= 500 ? message : message }, status)
+      return apiJson(request, { error: message }, status)
     }
   },
 }

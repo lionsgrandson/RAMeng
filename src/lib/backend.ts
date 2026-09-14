@@ -39,6 +39,13 @@ export async function signIn(email: string, password: string) {
   return data.user
 }
 
+export async function updatePassword(password: string) {
+  if (!client) throw new Error('Supabase is not configured')
+  const { data, error } = await client.auth.updateUser({ password })
+  if (error) throw error
+  return data.user
+}
+
 export async function signOut() {
   if (client) await client.auth.signOut()
 }

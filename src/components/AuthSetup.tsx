@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { Building2, KeyRound, LockKeyhole } from 'lucide-react'
 import { bootstrapServer } from '../lib/api'
-import { signIn } from '../lib/backend'
+import { signIn, updatePassword } from '../lib/backend'
 import { Field } from './common'
 
 export function SetupScreen() {
@@ -83,6 +83,45 @@ export function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
         <Field label="מייל"><input name="email" type="email" required autoComplete="email" /></Field>
         <Field label="סיסמה"><input name="password" type="password" required autoComplete="current-password" /></Field>
         <button className="primary login-submit" disabled={loading}>{loading ? 'מתחבר...' : 'כניסה'}</button>
+      </form>
+    </section>
+  </div>
+}
+
+export function SetPasswordScreen({ onSuccess }: { onSuccess: () => void }) {
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const data = new FormData(event.currentTarget)
+    const password = String(data.get('password') || '')
+    const confirm = String(data.get('confirm') || '')
+    setError('')
+    if (password.length < 8) { setError('הסיסמה צריכה להכיל לפחות 8 תווים'); return }
+    if (password !== confirm) { setError('הסיסמאות אינן תואמות'); return }
+    setLoading(true)
+    try {
+      await updatePassword(password)
+      onSuccess()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'לא ניתן לשמור את הסיסמה')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return <div className="auth-screen">
+    <div className="auth-brand"><img src="/rameng-mark.svg" /><div><strong>ר.א.ם הנדסה</strong><span>ניהול ופיקוח</span></div></div>
+    <section className="login-card">
+      <span className="login-icon"><KeyRound /></span>
+      <h1>הגדרת סיסמה</h1>
+      <p>בחרו סיסמה לחשבון שלכם.</p>
+      {error && <div className="error-banner">{error}</div>}
+      <form className="form-grid" onSubmit={(e) => void submit(e)}>
+        <Field label="סיסמה חדשה"><input name="password" type="password" required autoComplete="new-password" /></Field>
+        <Field label="אימות סיסמה"><input name="confirm" type="password" required autoComplete="new-password" /></Field>
+        <button className="primary login-submit" disabled={loading}>{loading ? 'שומר...' : 'שמירת סיסמה'}</button>
       </form>
     </section>
   </div>

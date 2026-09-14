@@ -19,7 +19,7 @@ create table if not exists public.memberships (
 
 alter table public.memberships drop constraint if exists memberships_role_check;
 alter table public.memberships add constraint memberships_role_check
-  check (role in ('admin','assistant','inspector','engineer','viewer','manager','member'));
+  check (role in ('developer','admin','assistant','inspector','engineer','viewer','manager','member'));
 
 create index if not exists memberships_user_idx on public.memberships(user_id);
 
@@ -47,6 +47,21 @@ as $$
   );
 $$;
 
+create or replace function public.is_org_developer(target_org uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.memberships m
+    where m.org_id = target_org
+      and m.user_id = auth.uid()
+      and m.role = 'developer'
+  );
+$$;
+
 create or replace function public.is_org_admin(target_org uuid)
 returns boolean
 language sql
@@ -58,7 +73,7 @@ as $$
     select 1 from public.memberships m
     where m.org_id = target_org
       and m.user_id = auth.uid()
-      and m.role in ('admin','manager')
+      and m.role in ('developer','admin','manager')
   );
 $$;
 
@@ -78,11 +93,13 @@ as $$
 $$;
 
 grant execute on function public.is_org_member(uuid) to authenticated;
+grant execute on function public.is_org_developer(uuid) to authenticated;
 grant execute on function public.is_org_admin(uuid) to authenticated;
 grant execute on function public.can_org_edit(uuid) to authenticated;
 
 -- The first authenticated user initializes the organization and becomes its first admin.
--- Additional users must be explicitly added by an admin.
+-- The configured developer account is promoted to developer by the server once the
+-- Supabase server secret is available.
 create or replace function public.bootstrap_first_admin()
 returns uuid
 language plpgsql
@@ -160,7 +177,7 @@ begin
   from public.memberships m
   join auth.users u on u.id = m.user_id
   where m.org_id = target_org
-  order by m.created_at;
+  order by case when m.role = 'developer' then 0 else 1 end, m.created_at;
 end;
 $$;
 
@@ -174,13 +191,24 @@ set search_path = public, auth
 as $$
 declare
   target_user_id uuid;
+  caller_role text;
+  existing_target_role text;
 begin
-  if not public.is_org_admin(target_org) then
+  select role into caller_role
+  from public.memberships
+  where org_id = target_org and user_id = auth.uid()
+  limit 1;
+
+  if caller_role not in ('developer','admin','manager') then
     raise exception 'Only an administrator can manage users';
   end if;
 
-  if target_role not in ('admin','assistant','inspector','engineer','viewer') then
+  if target_role not in ('developer','admin','assistant','inspector','engineer','viewer') then
     raise exception 'Invalid role';
+  end if;
+
+  if target_role = 'developer' and caller_role <> 'developer' then
+    raise exception 'Only the developer can assign the developer role';
   end if;
 
   select id into target_user_id
@@ -190,6 +218,15 @@ begin
 
   if target_user_id is null then
     raise exception 'No user exists with this email';
+  end if;
+
+  select role into existing_target_role
+  from public.memberships
+  where org_id = target_org and user_id = target_user_id
+  limit 1;
+
+  if existing_target_role = 'developer' and caller_role <> 'developer' then
+    raise exception 'Only the developer can change the developer account';
   end if;
 
   insert into public.memberships(org_id, user_id, role)
@@ -228,20 +265,32 @@ drop policy if exists memberships_insert_admin on public.memberships;
 create policy memberships_insert_admin
 on public.memberships for insert
 to authenticated
-with check (public.is_org_admin(org_id));
+with check (
+  public.is_org_admin(org_id)
+  and (role <> 'developer' or public.is_org_developer(org_id))
+);
 
 drop policy if exists memberships_update_admin on public.memberships;
 create policy memberships_update_admin
 on public.memberships for update
 to authenticated
-using (public.is_org_admin(org_id))
-with check (public.is_org_admin(org_id));
+using (
+  public.is_org_admin(org_id)
+  and (role <> 'developer' or public.is_org_developer(org_id))
+)
+with check (
+  public.is_org_admin(org_id)
+  and (role <> 'developer' or public.is_org_developer(org_id))
+);
 
 drop policy if exists memberships_delete_admin on public.memberships;
 create policy memberships_delete_admin
 on public.memberships for delete
 to authenticated
-using (public.is_org_admin(org_id));
+using (
+  public.is_org_admin(org_id)
+  and (role <> 'developer' or public.is_org_developer(org_id))
+);
 
 drop policy if exists workspace_select_member on public.workspace_state;
 create policy workspace_select_member
@@ -317,6 +366,7 @@ end $$;
 
 -- Setup flow:
 -- 1. Keep public self-signup disabled.
--- 2. Create users under Authentication > Users.
--- 3. The first user to sign in becomes the initial admin.
--- 4. Additional users can be assigned from the CRM Users & Permissions screen.
+-- 2. Configure SUPABASE_SECRET_KEY only on the Cloudflare Worker.
+-- 3. The first user to sign in initializes the organization.
+-- 4. Admins can invite additional users from the CRM Users & Permissions screen.
+-- 5. New users receive a Supabase invite and choose their own password.
