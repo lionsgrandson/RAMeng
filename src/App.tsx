@@ -6,7 +6,7 @@ import { cloneWorkspace } from './seed'
 import { configureBackend, getBackend, getCurrentUser, loadOrganizationWorkspace, saveOrganizationWorkspace, signOut, subscribeWorkspace } from './lib/backend'
 import { loadRuntimeConfig, type RuntimeConfig } from './lib/runtime'
 import { integrationsApi } from './lib/api'
-import { LoginScreen, SetupScreen } from './components/AuthSetup'
+import { LoginScreen, SetPasswordScreen, SetupScreen } from './components/AuthSetup'
 import { ClientsPage, Dashboard, ImportCenter } from './components/CorePages'
 import { CalendarPage, FilesPage } from './components/CalendarFiles'
 import { ProjectsPage, ProjectWorkspace } from './components/ProjectWorkspace'
@@ -38,13 +38,18 @@ const navGroups: { label: string; items: { id: Page; label: string; icon: typeof
 ]
 
 const roleLabel = (role: string, isDeveloper: boolean) => {
-  if (isDeveloper) return 'מפתח'
+  if (isDeveloper || role === 'developer') return 'מפתח'
   if (role === 'admin' || role === 'manager') return 'מנהל'
   if (role === 'assistant') return 'עוזר/ת'
   if (role === 'inspector') return 'מפקח/ת'
   if (role === 'engineer') return 'מהנדס/ת'
   if (role === 'viewer') return 'צפייה בלבד'
   return role
+}
+
+const invitedFromUrl = () => {
+  const params = new URLSearchParams(window.location.search)
+  return params.get('invite') === '1' || window.location.hash.includes('type=invite')
 }
 
 export default function App() {
@@ -54,6 +59,7 @@ export default function App() {
   const [orgId, setOrgId] = useState('local')
   const [role, setRole] = useState('')
   const [isDeveloper, setIsDeveloper] = useState(false)
+  const [inviteMode, setInviteMode] = useState(invitedFromUrl)
   const [loaded, setLoaded] = useState(false)
   const [loadError, setLoadError] = useState('')
   const [page, setPage] = useState<Page>('overview')
@@ -78,6 +84,7 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    if (role === 'developer') { setIsDeveloper(true); return }
     if (!user || !runtime) { setIsDeveloper(false); return }
     const email = String(user.email || '').toLowerCase()
     if ((runtime.developerEmails || []).includes(email)) {
@@ -89,7 +96,7 @@ export default function App() {
       .then((config) => { if (active) setIsDeveloper(Boolean(config.supabaseUrl)) })
       .catch(() => { if (active) setIsDeveloper(false) })
     return () => { active = false }
-  }, [user?.id, runtime])
+  }, [user?.id, runtime, role])
 
   useEffect(() => {
     if (!user) { setLoaded(false); setRole(''); return }
@@ -105,8 +112,8 @@ export default function App() {
     return () => { active = false }
   }, [user?.id])
 
-  const canManageUsers = isDeveloper || role === 'admin' || role === 'manager'
-  const canEdit = isDeveloper || role !== 'viewer'
+  const canManageUsers = isDeveloper || role === 'developer' || role === 'admin' || role === 'manager'
+  const canEdit = isDeveloper || role === 'developer' || role !== 'viewer'
   const editableSetWorkspace: typeof setWorkspace = (action) => {
     if (!canEdit) return
     setWorkspace(action)
@@ -149,6 +156,14 @@ export default function App() {
   if (!runtime.configured) return <SetupScreen />
   if (user === undefined) return <div className="app-loading"><img src="/rameng-mark.svg" /><span>בודק התחברות...</span></div>
   if (!user) return <LoginScreen onSuccess={() => void getCurrentUser().then(setUser)} />
+  if (inviteMode) return <SetPasswordScreen onSuccess={() => {
+    const url = new URL(window.location.href)
+    url.searchParams.delete('invite')
+    url.searchParams.delete('code')
+    url.hash = ''
+    window.history.replaceState({}, '', `${url.pathname}${url.search}`)
+    setInviteMode(false)
+  }} />
   if (loadError) return <div className="auth-screen"><section className="login-card"><h1>לא ניתן לטעון את סביבת העבודה</h1><div className="error-banner">{loadError}</div><p>ודאו שהגדרת מסד הנתונים הושלמה ושיש למשתמש הרשאה למערכת.</p><button className="secondary" onClick={() => window.location.reload()}>ניסיון מחדש</button></section></div>
   if (!loaded) return <div className="app-loading"><img src="/rameng-mark.svg" /><span>טוען פרויקטים...</span></div>
 
@@ -167,7 +182,7 @@ export default function App() {
         {page === 'calendar' && <CalendarPage workspace={workspace} setWorkspace={editableSetWorkspace} />}
         {page === 'files' && <FilesPage workspace={workspace} setWorkspace={editableSetWorkspace} orgId={orgId} />}
         {page === 'reports' && <ReportsPage workspace={workspace} setWorkspace={editableSetWorkspace} orgId={orgId} />}
-        {page === 'team' && canManageUsers && <UserManagement orgId={orgId} canManage={canManageUsers} workspace={workspace} setWorkspace={editableSetWorkspace} />}
+        {page === 'team' && canManageUsers && <UserManagement orgId={orgId} canManage={canManageUsers} isDeveloper={isDeveloper} workspace={workspace} setWorkspace={editableSetWorkspace} />}
         {page === 'imports' && canManageUsers && <ImportCenter workspace={workspace} setWorkspace={editableSetWorkspace} />}
         {page === 'settings' && isDeveloper && <SettingsPage workspace={workspace} setWorkspace={editableSetWorkspace} />}
       </main>
