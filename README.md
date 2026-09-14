@@ -1,139 +1,144 @@
 # ראם הנדסה CRM
 
-מערכת CRM, ניהול פרויקטים ופיקוח עבור **ר.א.ם הנדסה**. ברירת המחדל היא עברית מלאה ו-RTL, עם שפה עיצובית ירוקה ונקייה המבוססת על המיתוג של החברה.
+מערכת CRM, ניהול פרויקטים ופיקוח עבור **ר.א.ם הנדסה**. המערכת בנויה בעברית ו-RTL, עם הרשאות משתמשים, Supabase, Cloudflare ויכולת חיבור ל-Google Workspace.
 
-## מה כלול
+## מה כלול כרגע
 
-- מרכז שליטה עם תמונת מצב של פרויקטים, משימות, מעקבים, דוחות ומועדים.
+- מרכז שליטה עם פרויקטים, משימות, מעקבים, דוחות ומועדים.
 - ניהול לקוחות ולידים.
-- צינור מכירות, הצעות וחיובים.
 - ניהול מלא לפי פרויקט.
-- לוח משימות דינמי לכל פרויקט, כולל תתי משימות, אחראי, סטטוס, תאריך התחלה, מועד מעקב/סיום ותיבת מייל.
-- אפשרות להוסיף, להסתיר, להסיר ולשנות סדר עמודות וסטטוסים ללא שינוי קוד.
-- תבניות צ'ק ליסט קבועות שניתנות להחלה על כל פרויקט ואז לעריכה נקודתית.
-- Gmail: שליחה מתוך משימה ושיוך השרשור חזרה לאותה משימה.
-- Google Calendar: הצגת אירועים ויצירת אירועים מתוך המערכת.
-- Google Drive: תיקייה לכל פרויקט וגישה לקבצים מתוך כרטיס הפרויקט.
-- דוחות פיקוח עם תמונות, סטטוס, אחראי, הערות, נושאים פתוחים מדוחות קודמים ושלושה פורמטים להצגה/הדפסה.
-- ניסוח הערות פיקוח באמצעות OpenAI בלי להוסיף עובדות שלא נמסרו.
-- קבצים ב-Supabase Storage.
-- משתמשים והרשאות באמצעות Supabase Auth + RLS.
-- סנכרון realtime של סביבת העבודה בין משתמשים.
-- מסך מנהל מערכת להגדרת Supabase, Google Workspace, OpenAI, מיתוג ותבניות.
-- אפליקציית Windows עם מתקין EXE עצמאי, ללא צורך בהתקנת Node.js או Chrome אצל המשתמש.
+- לוח משימות לכל פרויקט, כולל תתי משימות, אחראי, סטטוס ותאריכים.
+- דוחות פיקוח לפי מבנה הדוחות של ראם, כולל תמונות, סטטוסים, הערות ומעקב.
+- קבצים ומסמכים ב-Supabase Storage.
+- משתמשים והרשאות המחוברים ל-Supabase Auth.
+- תפקידים: מפתח, מנהל, עוזר/ת, מפקח/ת, מהנדס/ת וצפייה בלבד.
+- הזמנת משתמשים מתוך ה-CRM. משתמש חדש מקבל הזמנת Supabase ובוחר את הסיסמה שלו.
+- סנכרון Realtime של סביבת העבודה בין משתמשים.
+- הגדרות תשתית זמינות למפתח בלבד.
+- חיבורי Gmail, Google Calendar ו-Google Drive מוכנים להפעלה כשחשבון Google של הלקוח יהיה זמין.
+- אזורי AI מוסתרים כרגע מהממשק.
 
-## מבנה
+## הרשאות
+
+`developer`
+: חשבון המפתח. מוגן ונפרד ממנהל רגיל. רואה את הגדרות התשתית ויכול לנהל משתמשים.
+
+`admin`
+: מנהל עסקי של המערכת. יכול לנהל משתמשים רגילים ונתוני CRM, אך לא לשנות את חשבון המפתח.
+
+`assistant`, `inspector`, `engineer`
+: משתמשי עבודה רגילים עם הרשאות עריכה.
+
+`viewer`
+: גישה לקריאה בלבד.
+
+המשתמשים עצמם נשמרים ב-Supabase Auth, והשיוך שלהם לראם והתפקיד שלהם נשמרים בטבלת `memberships`.
+
+## מבנה הפרויקט
 
 - `src/` אפליקציית React/Vite.
-- `worker/` Cloudflare Worker שמגיש גם את ה-Frontend וגם את `/api`.
-- `supabase/setup.sql` סכמת בסיס נתונים, RLS, Realtime ו-Storage.
-- `deploy.cmd` התקנה ופריסה ראשונית מ-Windows.
-- `desktop/` לקוח Windows מבוסס Electron ומתקין EXE.
+- `worker/` Cloudflare Worker שמגיש את ה-Frontend ואת `/api`.
+- `supabase/setup.sql` סכמת Supabase המלאה, כולל RLS, Realtime, Storage והרשאות.
+- `deploy.cmd` build ופריסה ל-Cloudflare, כולל הגדרת הסודות הדרושים.
+- `PRODUCTION_SETUP.md` סדר ההקמה המדויק כשמקבלים את חשבונות הלקוח.
+- `desktop/` לקוח Windows מבוסס Electron.
 
-## הקמה ראשונית
+## הקמת סביבת הלקוח
 
-### 1. Supabase
+ההוראות המלאות נמצאות ב-`PRODUCTION_SETUP.md`.
 
-1. צור פרויקט Supabase חדש עבור ראם הנדסה.
-2. פתח SQL Editor והריץ את `supabase/setup.sql` במלואו.
-3. תחת Authentication צור ידנית את משתמש המנהל הראשון.
-4. מומלץ להשאיר Public Signups כבוי עד שמחליטים על תהליך הזמנות מסודר.
+בגדול, הסדר הוא:
 
-האפליקציה משתמשת ב-`workspace_state` משותף לארגון, עם RLS לפי חברות בארגון. המשתמש הראשון שמתחבר לאחר הרצת ה-SQL הופך למנהל הארגון דרך `bootstrap_first_admin()`.
+1. ליצור/לקבל גישה לפרויקט Supabase של הלקוח.
+2. להריץ את כל `supabase/setup.sql` ב-SQL Editor.
+3. להריץ `deploy.cmd` בחשבון Cloudflare של הלקוח.
+4. להגדיר ב-Worker את `ADMIN_SETUP_TOKEN` ואת `SUPABASE_SECRET_KEY`.
+5. להגדיר ב-Supabase Auth את כתובת ה-CRM כ-Site URL ואת `/?invite=1` כ-Redirect URL.
+6. לפתוח את ה-CRM ולהזין Supabase URL, publishable/anon key ומייל המפתח.
+7. ליצור/להזמין את חשבון המפתח הראשון ב-Supabase Auth.
+8. לאחר מכן להוסיף את כל שאר המשתמשים מתוך `משתמשים והרשאות` ב-CRM.
 
-### 2. Cloudflare
+## Supabase
 
-Cloudflare הוא שכבת ה-hosting וה-API, ולכן **אי אפשר להעביר את ה-Worker מחשבון Cloudflare אחד לאחר מתוך מסך הניהול של ה-CRM עצמו**. זה שינוי ברמת התשתית. לעומת זאת, Supabase, Google ו-OpenAI ניתנים לשינוי ממנהל המערכת לאחר הפריסה.
+הקובץ `supabase/setup.sql` הוא קובץ ההקמה הראשי. הוא יוצר:
 
-ב-Windows אפשר להריץ:
+- `organizations`
+- `memberships`
+- `workspace_state`
+- RLS policies
+- helper functions להרשאות
+- Realtime עבור סביבת העבודה
+- bucket פרטי בשם `crm-files`
+
+Public signup אמור להישאר כבוי. משתמשים חדשים מוזמנים מתוך ה-CRM דרך Cloudflare Worker בעזרת Supabase secret key ששמור רק בצד השרת.
+
+## Cloudflare
+
+לפריסה מ-Windows:
 
 ```bat
 deploy.cmd
 ```
 
-הסקריפט מתקין dependencies, מתחבר ל-Cloudflare, בונה את האפליקציה ופורס את ה-Worker. ה-KV נוצר אוטומטית על ידי Wrangler.
+הסקריפט:
 
-לאחר הפריסה הראשונה, מתוך `worker` הרץ:
+- מתקין dependencies
+- בודק התחברות ל-Cloudflare
+- בונה את ה-CRM
+- פורס את ה-Worker וה-assets
+- מאפשר להגדיר `ADMIN_SETUP_TOKEN`
+- מאפשר להגדיר `SUPABASE_SECRET_KEY`
 
-```bat
-npx wrangler secret put ADMIN_SETUP_TOKEN
-```
+ה-Supabase secret key לעולם לא נכנס לקוד frontend או ל-`.env.local`.
 
-בחר token ארוך ואקראי. הוא משמש רק למסך ההגדרה הראשונית ואינו נשמר בדפדפן.
+## הזמנת משתמשים וסיסמאות
 
-### 3. הגדרה דרך ה-CRM
+מתוך `משתמשים והרשאות` מזינים שם, מייל ותפקיד.
 
-פתח את כתובת ה-Worker. לפני ש-Supabase מוגדר תופיע אוטומטית **הגדרה ראשונית**. הזן:
+אם המייל עדיין לא קיים ב-Supabase, המערכת שולחת הזמנה דרך Supabase Auth. המשתמש פותח את הקישור, מגיע למסך הגדרת סיסמה ב-CRM ובוחר סיסמה בעצמו. אם המייל כבר קיים ב-Supabase, המערכת רק משייכת אותו לארגון ראם ומעדכנת את התפקיד.
 
-- `ADMIN_SETUP_TOKEN`
-- Supabase Project URL
-- Supabase anon key
-- מייל המנהל הראשון
+ה-CRM לא שומר סיסמאות ולא יודע אותן.
 
-Google ו-OpenAI הם אופציונליים בשלב הזה וניתן לחבר אותם מאוחר יותר מתוך **מנהל מערכת → חיבורים ותשתיות**.
+## Google Workspace
 
-### 4. Google Cloud / Workspace
+כאשר חשבון Google Cloud של הלקוח יהיה זמין:
 
-ב-Google Cloud Console:
-
-1. הפעל Gmail API, Google Calendar API ו-Google Drive API.
-2. צור OAuth Client מסוג Web Application.
-3. לאחר שיש כתובת Worker סופית, הוסף Redirect URI בפורמט:
+1. מפעילים Gmail API, Google Calendar API ו-Google Drive API.
+2. יוצרים OAuth Client מסוג Web Application.
+3. מוסיפים Redirect URI:
 
 ```text
-https://YOUR-WORKER-DOMAIN/api/google/callback
+https://YOUR-CRM-DOMAIN/api/google/callback
 ```
 
-4. הזן Client ID ו-Client Secret במנהל המערכת.
-5. לחץ **חיבור Google** והתחבר לתיבת החברה.
-
-המערכת מבקשת הרשאות Gmail, Calendar ו-Drive הדרושות לפעולות שהוגדרו ב-CRM. אסימוני Google נשמרים בצד השרת ב-Cloudflare KV ואינם נשלחים ל-localStorage.
-
-## אפליקציית Windows
-
-הלקוח השולחני נמצא תחת `desktop/` ונבנה כמתקין אחד בשם:
-
-```text
-RAMeng-CRM-Setup.exe
-```
-
-המתקין כולל את סביבת ההרצה של Electron, ולכן משתמש קצה לא צריך להתקין Node.js, Chrome או כלי פיתוח. בהפעלה הראשונה מזינים פעם אחת את כתובת ה-HTTPS של ה-CRM ב-Cloudflare. לאחר מכן האפליקציה נפתחת ישירות למערכת.
-
-מכיוון שהלקוח השולחני טוען את ה-CRM מהשרת, עדכוני Frontend רגילים מתעדכנים אוטומטית בלי לשלוח EXE חדש. אם משתנה קוד ה-Desktop עצמו, GitHub Actions בונה EXE חדש.
-
-לאחר build מוצלח, ה-release המתגלגל זמין ב:
-
-```text
-https://github.com/lionsgrandson/RAMeng/releases/download/desktop-latest/RAMeng-CRM-Setup.exe
-```
+4. מזינים Client ID ו-Client Secret בהגדרות המפתח.
+5. מחברים את חשבון Google של החברה.
 
 ## פיתוח מקומי
 
-העתק `.env.example` ל-`.env.local`, ואז:
+העתק `.env.example` ל-`.env.local`:
 
-```bash
+```bat
+copy .env.example .env.local
 npm install
 npm run dev
 ```
 
-בטרמינל נוסף:
+לבדיקת ה-Worker מקומית:
 
-```bash
+```bat
+copy worker\.dev.vars.example worker\.dev.vars
 cd worker
 npm install
 npx wrangler dev
 ```
 
-ברירת המחדל ב-`.env.example` מפנה את האפליקציה המקומית ל-Worker ב-`http://localhost:8787`.
+`worker/.dev.vars` ו-`.env.local` נמצאים ב-`.gitignore` ואסור להעלות אליהם סודות ל-GitHub.
 
-## בנייה
+## Build
 
-```bash
+```bat
 npm run build
 ```
 
-כל push ל-`main` מריץ גם GitHub Actions build כדי לתפוס שגיאות TypeScript/Vite לפני פריסה.
-
-## דוחות פיקוח
-
-תבנית הדוח נבנתה על בסיס דוח הפיקוח שסופק: חלוקה לנושאים כגון בנייה, חשמל, אלומיניום ומיזוג, ולכל סעיף תיאור, סטטוס, לטיפול/הערות ותמונות. בגרסה החדשה נוספו אחראי, מעקב אחר נושאים פתוחים מדוחות קודמים, עריכה ישירה ושלושה layouts: טבלה נקייה, כרטיסים ותמונות מודגשות.
+כל push ל-`main` מריץ גם GitHub Actions build כדי לתפוס שגיאות TypeScript/Vite ותחביר Worker לפני פריסה.

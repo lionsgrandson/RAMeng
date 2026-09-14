@@ -1,5 +1,7 @@
--- RAMeng CRM Supabase bootstrap
--- Run this in the Supabase SQL Editor for the RAM Engineering project.
+-- RAMeng CRM Supabase production bootstrap
+-- Current schema: 2026-09-14
+-- Run this entire file in Supabase SQL Editor for the RAM Engineering project.
+-- The script is intentionally idempotent so the latest version can be run again after updates.
 
 create extension if not exists pgcrypto;
 
@@ -42,8 +44,10 @@ security definer
 set search_path = public
 as $$
   select exists (
-    select 1 from public.memberships m
-    where m.org_id = target_org and m.user_id = auth.uid()
+    select 1
+    from public.memberships m
+    where m.org_id = target_org
+      and m.user_id = auth.uid()
   );
 $$;
 
@@ -55,7 +59,8 @@ security definer
 set search_path = public
 as $$
   select exists (
-    select 1 from public.memberships m
+    select 1
+    from public.memberships m
     where m.org_id = target_org
       and m.user_id = auth.uid()
       and m.role = 'developer'
@@ -70,7 +75,8 @@ security definer
 set search_path = public
 as $$
   select exists (
-    select 1 from public.memberships m
+    select 1
+    from public.memberships m
     where m.org_id = target_org
       and m.user_id = auth.uid()
       and m.role in ('developer','admin','manager')
@@ -85,21 +91,16 @@ security definer
 set search_path = public
 as $$
   select exists (
-    select 1 from public.memberships m
+    select 1
+    from public.memberships m
     where m.org_id = target_org
       and m.user_id = auth.uid()
       and m.role <> 'viewer'
   );
 $$;
 
-grant execute on function public.is_org_member(uuid) to authenticated;
-grant execute on function public.is_org_developer(uuid) to authenticated;
-grant execute on function public.is_org_admin(uuid) to authenticated;
-grant execute on function public.can_org_edit(uuid) to authenticated;
-
--- The first authenticated user initializes the organization and becomes its first admin.
--- The configured developer account is promoted to developer by the server once the
--- Supabase server secret is available.
+-- The first authenticated user initializes the organization. The configured
+-- developer email is promoted to the protected developer role by the Worker.
 create or replace function public.bootstrap_first_admin()
 returns uuid
 language plpgsql
@@ -143,8 +144,6 @@ begin
 end;
 $$;
 
-grant execute on function public.bootstrap_first_admin() to authenticated;
-
 create or replace function public.list_org_members(target_org uuid)
 returns table (
   user_id uuid,
@@ -181,8 +180,6 @@ begin
 end;
 $$;
 
-grant execute on function public.list_org_members(uuid) to authenticated;
-
 create or replace function public.set_org_member_role(target_org uuid, target_email text, target_role text)
 returns uuid
 language plpgsql
@@ -196,7 +193,8 @@ declare
 begin
   select role into caller_role
   from public.memberships
-  where org_id = target_org and user_id = auth.uid()
+  where org_id = target_org
+    and user_id = auth.uid()
   limit 1;
 
   if caller_role not in ('developer','admin','manager') then
@@ -222,7 +220,8 @@ begin
 
   select role into existing_target_role
   from public.memberships
-  where org_id = target_org and user_id = target_user_id
+  where org_id = target_org
+    and user_id = target_user_id
   limit 1;
 
   if existing_target_role = 'developer' and caller_role <> 'developer' then
@@ -238,6 +237,22 @@ begin
 end;
 $$;
 
+-- Do not expose helper RPCs to anonymous clients. They still perform their own
+-- authorization checks, but explicit grants make the intended boundary clear.
+revoke all on function public.is_org_member(uuid) from public, anon;
+revoke all on function public.is_org_developer(uuid) from public, anon;
+revoke all on function public.is_org_admin(uuid) from public, anon;
+revoke all on function public.can_org_edit(uuid) from public, anon;
+revoke all on function public.bootstrap_first_admin() from public, anon;
+revoke all on function public.list_org_members(uuid) from public, anon;
+revoke all on function public.set_org_member_role(uuid, text, text) from public, anon;
+
+grant execute on function public.is_org_member(uuid) to authenticated;
+grant execute on function public.is_org_developer(uuid) to authenticated;
+grant execute on function public.is_org_admin(uuid) to authenticated;
+grant execute on function public.can_org_edit(uuid) to authenticated;
+grant execute on function public.bootstrap_first_admin() to authenticated;
+grant execute on function public.list_org_members(uuid) to authenticated;
 grant execute on function public.set_org_member_role(uuid, text, text) to authenticated;
 
 -- RLS policies
@@ -314,7 +329,8 @@ with check (public.can_org_edit(org_id));
 -- File storage. Files are stored under <org-id>/<project-id>/...
 insert into storage.buckets (id, name, public, file_size_limit)
 values ('crm-files', 'crm-files', false, 52428800)
-on conflict (id) do update set public = false, file_size_limit = excluded.file_size_limit;
+on conflict (id)
+do update set public = false, file_size_limit = excluded.file_size_limit;
 
 drop policy if exists rameng_files_select on storage.objects;
 create policy rameng_files_select
@@ -356,7 +372,7 @@ using (
   and public.can_org_edit(((storage.foldername(name))[1])::uuid)
 );
 
--- Realtime updates for shared workspace state.
+-- Realtime updates for the shared workspace.
 do $$
 begin
   alter publication supabase_realtime add table public.workspace_state;
@@ -364,9 +380,10 @@ exception
   when duplicate_object then null;
 end $$;
 
--- Setup flow:
--- 1. Keep public self-signup disabled.
--- 2. Configure SUPABASE_SECRET_KEY only on the Cloudflare Worker.
--- 3. The first user to sign in initializes the organization.
--- 4. Admins can invite additional users from the CRM Users & Permissions screen.
--- 5. New users receive a Supabase invite and choose their own password.
+-- Production flow:
+-- 1. Keep public self-signup disabled in Supabase Auth.
+-- 2. Keep SUPABASE_SECRET_KEY only in Cloudflare Worker secrets.
+-- 3. Configure the final CRM URL and /?invite=1 under Auth URL Configuration.
+-- 4. Create/invite the first developer account in Supabase Authentication > Users.
+-- 5. The first login initializes the organization; the configured developer email is protected by the Worker.
+-- 6. Invite all additional users from the CRM Users & Permissions screen.
