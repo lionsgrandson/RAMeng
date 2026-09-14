@@ -6,6 +6,14 @@ import { cloneWorkspace } from '../seed'
 let client: SupabaseClient | null = null
 let runtime: RuntimeConfig | null = null
 
+export interface OrganizationMember {
+  userId: string
+  email: string
+  displayName: string
+  role: string
+  createdAt?: string
+}
+
 export function configureBackend(config: RuntimeConfig) {
   runtime = config
   if (config.supabaseUrl && config.supabaseAnonKey) {
@@ -41,6 +49,25 @@ export async function getAccessToken() {
   return data.session?.access_token || ''
 }
 
+export async function listOrganizationMembers(orgId: string): Promise<OrganizationMember[]> {
+  if (!client || orgId === 'local') return []
+  const { data, error } = await client.rpc('list_org_members', { target_org: orgId })
+  if (error) throw error
+  return (data || []).map((row: Record<string, unknown>) => ({
+    userId: String(row.user_id || ''),
+    email: String(row.email || ''),
+    displayName: String(row.display_name || row.email || ''),
+    role: String(row.role || 'viewer'),
+    createdAt: row.created_at ? String(row.created_at) : undefined,
+  }))
+}
+
+export async function setOrganizationMemberRole(orgId: string, email: string, role: string) {
+  if (!client || orgId === 'local') throw new Error('ניהול משתמשים זמין לאחר חיבור מסד הנתונים')
+  const { error } = await client.rpc('set_org_member_role', { target_org: orgId, target_email: email, target_role: role })
+  if (error) throw error
+}
+
 export async function loadOrganizationWorkspace(userId: string): Promise<{ orgId: string; role: string; workspace: Workspace }> {
   if (!client) return { orgId: 'local', role: 'admin', workspace: loadLocalWorkspace() }
   let { data: membership, error: membershipError } = await client
@@ -69,7 +96,10 @@ export async function loadOrganizationWorkspace(userId: string): Promise<{ orgId
     saveLocalWorkspace(workspace)
     return { orgId, role: String(membership.role), workspace }
   }
+
   const workspace = { ...cloneWorkspace(), ...(state.data as Workspace) }
+  workspace.checklistTemplates = (workspace.checklistTemplates || []).filter((template) => template.id !== 'tpl-supervision')
+  if (workspace.settings.defaultInspector === 'אודי מאיר') workspace.settings.defaultInspector = ''
   saveLocalWorkspace(workspace)
   return { orgId, role: String(membership.role), workspace }
 }
@@ -113,7 +143,9 @@ export function loadLocalWorkspace(): Workspace {
   try {
     const raw = localStorage.getItem('rameng-workspace')
     return raw ? { ...cloneWorkspace(), ...JSON.parse(raw) as Workspace } : cloneWorkspace()
-  } catch { return cloneWorkspace() }
+  } catch {
+    return cloneWorkspace()
+  }
 }
 
 export function saveLocalWorkspace(workspace: Workspace) {
