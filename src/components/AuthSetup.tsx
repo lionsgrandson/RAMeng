@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { Building2, KeyRound, LockKeyhole } from 'lucide-react'
 import { bootstrapServer } from '../lib/api'
-import { signIn, updatePassword } from '../lib/backend'
+import { requestPasswordReset, signIn, updatePassword } from '../lib/backend'
 import { Field } from './common'
 
 export function SetupScreen() {
@@ -55,18 +55,26 @@ export function SetupScreen() {
 
 export function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
   const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
+  const [resetMode, setResetMode] = useState(false)
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const data = new FormData(event.currentTarget)
     setLoading(true)
     setError('')
+    setMessage('')
     try {
-      await signIn(String(data.get('email') || ''), String(data.get('password') || ''))
-      onSuccess()
+      if (resetMode) {
+        await requestPasswordReset(String(data.get('email') || ''))
+        setMessage('אם קיים חשבון עם המייל הזה, נשלח אליו קישור להגדרת סיסמה חדשה.')
+      } else {
+        await signIn(String(data.get('email') || ''), String(data.get('password') || ''))
+        onSuccess()
+      }
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'התחברות נכשלה')
+      setError(e instanceof Error ? e.message : resetMode ? 'שליחת קישור האיפוס נכשלה' : 'התחברות נכשלה')
     } finally {
       setLoading(false)
     }
@@ -75,14 +83,16 @@ export function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
   return <div className="auth-screen">
     <div className="auth-brand"><img src="/rameng-mark.svg" /><div><strong>ר.א.ם הנדסה</strong><span>ניהול ופיקוח</span></div></div>
     <section className="login-card">
-      <span className="login-icon"><LockKeyhole /></span>
-      <h1>כניסה למערכת</h1>
-      <p>הזינו את פרטי ההתחברות שלכם.</p>
+      <span className="login-icon">{resetMode ? <KeyRound /> : <LockKeyhole />}</span>
+      <h1>{resetMode ? 'איפוס סיסמה' : 'כניסה למערכת'}</h1>
+      <p>{resetMode ? 'הזינו את המייל שלכם ונשלח קישור להגדרת סיסמה חדשה.' : 'הזינו את פרטי ההתחברות שלכם.'}</p>
       {error && <div className="error-banner">{error}</div>}
+      {message && <div className="success-banner">{message}</div>}
       <form className="form-grid" onSubmit={(e) => void submit(e)}>
         <Field label="מייל"><input name="email" type="email" required autoComplete="email" /></Field>
-        <Field label="סיסמה"><input name="password" type="password" required autoComplete="current-password" /></Field>
-        <button className="primary login-submit" disabled={loading}>{loading ? 'מתחבר...' : 'כניסה'}</button>
+        {!resetMode && <Field label="סיסמה"><input name="password" type="password" required autoComplete="current-password" /></Field>}
+        <button className="primary login-submit" disabled={loading}>{loading ? 'שולח...' : resetMode ? 'שליחת קישור' : 'כניסה'}</button>
+        <button className="secondary" type="button" disabled={loading} onClick={() => { setResetMode((value) => !value); setError(''); setMessage('') }}>{resetMode ? 'חזרה להתחברות' : 'שכחתי סיסמה'}</button>
       </form>
     </section>
   </div>
