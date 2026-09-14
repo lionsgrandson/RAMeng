@@ -1,32 +1,112 @@
 import { useEffect, useState } from 'react'
-import { CheckCircle2, Cloud, ExternalLink, KeyRound, Plus, RefreshCw, Save, Trash2 } from 'lucide-react'
+import { Cloud, RefreshCw, Save } from 'lucide-react'
 import { integrationsApi, type AdminConfig } from '../lib/api'
-import type { ChecklistTemplate, Workspace } from '../types'
-import { Chip, Field, uid } from './common'
+import type { Workspace } from '../types'
+import { Chip, Field } from './common'
 
 export default function SettingsPage({ workspace, setWorkspace }: { workspace: Workspace; setWorkspace: React.Dispatch<React.SetStateAction<Workspace>> }) {
-  const [tab, setTab] = useState<'organization' | 'integrations' | 'templates'>('organization')
-  return <div className="settings-layout"><aside className="settings-nav card"><button className={tab === 'organization' ? 'active' : ''} onClick={() => setTab('organization')}>ארגון ומיתוג</button><button className={tab === 'integrations' ? 'active' : ''} onClick={() => setTab('integrations')}>חיבורים ותשתיות</button><button className={tab === 'templates' ? 'active' : ''} onClick={() => setTab('templates')}>תבניות צ׳ק ליסט</button></aside><main>{tab === 'organization' && <OrganizationSettings workspace={workspace} setWorkspace={setWorkspace} />}{tab === 'integrations' && <IntegrationSettings workspace={workspace} setWorkspace={setWorkspace} />}{tab === 'templates' && <TemplateSettings workspace={workspace} setWorkspace={setWorkspace} />}</main></div>
+  const [tab, setTab] = useState<'organization' | 'integrations'>('organization')
+  return <div className="settings-layout">
+    <aside className="settings-nav card">
+      <button className={tab === 'organization' ? 'active' : ''} onClick={() => setTab('organization')}>פרטי החברה</button>
+      <button className={tab === 'integrations' ? 'active' : ''} onClick={() => setTab('integrations')}>חיבורים</button>
+    </aside>
+    <main>
+      {tab === 'organization' && <OrganizationSettings workspace={workspace} setWorkspace={setWorkspace} />}
+      {tab === 'integrations' && <IntegrationSettings workspace={workspace} setWorkspace={setWorkspace} />}
+    </main>
+  </div>
 }
 
 function OrganizationSettings({ workspace, setWorkspace }: { workspace: Workspace; setWorkspace: React.Dispatch<React.SetStateAction<Workspace>> }) {
   const settings = workspace.settings
   const patch = (key: keyof typeof settings, value: string) => setWorkspace((current) => ({ ...current, settings: { ...current.settings, [key]: value } }))
-  return <section className="card settings-card"><div className="card-head"><div><h2>ארגון ומיתוג</h2><p>ברירת המחדל מבוססת על ראם הנדסה והמיתוג הירוק של החברה.</p></div><Chip tone="brand">עברית · RTL</Chip></div><div className="settings-form"><Field label="שם החברה"><input value={settings.organizationName} onChange={(e) => patch('organizationName', e.target.value)} /></Field><Field label="שם קצר"><input value={settings.organizationShortName} onChange={(e) => patch('organizationShortName', e.target.value)} /></Field><Field label="טלפון"><input value={settings.phone} onChange={(e) => patch('phone', e.target.value)} /></Field><Field label="מייל"><input value={settings.email} onChange={(e) => patch('email', e.target.value)} /></Field><Field label="מייל נוסף"><input value={settings.secondaryEmail} onChange={(e) => patch('secondaryEmail', e.target.value)} /></Field><Field label="אתר"><input value={settings.website} onChange={(e) => patch('website', e.target.value)} /></Field><Field label="צבע מותג"><div className="color-input"><input type="color" value={settings.brandColor} onChange={(e) => patch('brandColor', e.target.value)} /><input value={settings.brandColor} onChange={(e) => patch('brandColor', e.target.value)} /></div></Field><Field label="כתובת לוגו" hint="אופציונלי. אם ריק, מוצג סימן ראם המובנה."><input value={settings.logoUrl} onChange={(e) => patch('logoUrl', e.target.value)} /></Field><Field label="מפקח ברירת מחדל"><input value={settings.defaultInspector} onChange={(e) => patch('defaultInspector', e.target.value)} /></Field><Field label="תיקיית שורש ב-Google Drive"><input value={settings.driveRootFolderId} onChange={(e) => patch('driveRootFolderId', e.target.value)} /></Field></div></section>
+
+  return <section className="card settings-card">
+    <div className="card-head"><div><h2>פרטי החברה</h2><p>הפרטים שמופיעים במערכת ובדוחות.</p></div><Chip tone="brand">ראם הנדסה</Chip></div>
+    <div className="settings-form">
+      <Field label="שם החברה"><input value={settings.organizationName} onChange={(e) => patch('organizationName', e.target.value)} /></Field>
+      <Field label="שם קצר"><input value={settings.organizationShortName} onChange={(e) => patch('organizationShortName', e.target.value)} /></Field>
+      <Field label="טלפון"><input value={settings.phone} onChange={(e) => patch('phone', e.target.value)} /></Field>
+      <Field label="מייל"><input value={settings.email} onChange={(e) => patch('email', e.target.value)} /></Field>
+      <Field label="מייל נוסף"><input value={settings.secondaryEmail} onChange={(e) => patch('secondaryEmail', e.target.value)} /></Field>
+      <Field label="אתר"><input value={settings.website} onChange={(e) => patch('website', e.target.value)} /></Field>
+      <Field label="כתובת לוגו"><input value={settings.logoUrl} onChange={(e) => patch('logoUrl', e.target.value)} /></Field>
+    </div>
+  </section>
 }
 
 function IntegrationSettings({ workspace, setWorkspace }: { workspace: Workspace; setWorkspace: React.Dispatch<React.SetStateAction<Workspace>> }) {
-  const [config, setConfig] = useState<AdminConfig>({}); const [status, setStatus] = useState<{ google: { connected: boolean; email?: string }; openai: { configured: boolean }; configured: boolean } | null>(null); const [loading, setLoading] = useState(true); const [saving, setSaving] = useState(false); const [message, setMessage] = useState(''); const [error, setError] = useState('')
-  const refresh = async () => { setLoading(true); setError(''); try { const [current, health] = await Promise.all([integrationsApi.adminConfig(), integrationsApi.status()]); setConfig(current); setStatus(health) } catch (e) { setError(e instanceof Error ? e.message : 'לא ניתן לטעון הגדרות') } finally { setLoading(false) } }
-  useEffect(() => { void refresh() }, [])
-  const save = async () => { setSaving(true); setError(''); setMessage(''); try { await integrationsApi.saveAdminConfig({ ...config, driveRootFolderId: workspace.settings.driveRootFolderId, openaiModel: workspace.settings.openaiModel }); setMessage('ההגדרות נשמרו ב-Cloudflare באופן מאובטח. שדות סודיים ריקים משאירים את הסוד הקיים ללא שינוי.'); await refresh() } catch (e) { setError(e instanceof Error ? e.message : 'שמירה נכשלה') } finally { setSaving(false) } }
-  const connectGoogle = async () => { try { const { url } = await integrationsApi.googleAuthUrl(); window.location.href = url } catch (e) { setError(e instanceof Error ? e.message : 'לא ניתן להתחיל חיבור Google') } }
-  if (loading) return <section className="card settings-card"><div className="loading-state"><RefreshCw className="spin" /> טוען חיבורים...</div></section>
-  return <section className="card settings-card"><div className="card-head"><div><h2>חיבורים ותשתיות</h2><p>מסך אחד לחיבור Supabase, Cloudflare, Gmail, Calendar, Drive ו-OpenAI.</p></div><button className="secondary" onClick={() => void refresh()}><RefreshCw /> בדיקה מחדש</button></div>{error && <div className="error-banner">{error}</div>}{message && <div className="success-banner">{message}</div>}<div className="integration-health"><article><Cloud /><div><strong>Backend</strong><span>Cloudflare + Supabase</span></div><Chip tone={status?.configured ? 'good' : 'warn'}>{status?.configured ? 'מוגדר' : 'דורש הגדרה'}</Chip></article><article><span className="google-g">G</span><div><strong>Google Workspace</strong><span>{status?.google.email || 'Gmail · Calendar · Drive'}</span></div><Chip tone={status?.google.connected ? 'good' : 'warn'}>{status?.google.connected ? 'מחובר' : 'לא מחובר'}</Chip><button className="secondary" onClick={() => void connectGoogle()}>{status?.google.connected ? 'חיבור מחדש' : 'חיבור Google'}</button></article><article><KeyRound /><div><strong>OpenAI</strong><span>ניסוח דוחות והערות</span></div><Chip tone={status?.openai.configured ? 'good' : 'warn'}>{status?.openai.configured ? 'מוגדר' : 'לא מוגדר'}</Chip></article></div><div className="integration-form"><h3>הגדרות ציבוריות</h3><Field label="Supabase Project URL"><input value={config.supabaseUrl || ''} onChange={(e) => setConfig({ ...config, supabaseUrl: e.target.value })} placeholder="https://xxxxx.supabase.co" /></Field><Field label="Supabase anon key"><textarea rows={3} value={config.supabaseAnonKey || ''} onChange={(e) => setConfig({ ...config, supabaseAnonKey: e.target.value })} /></Field><Field label="כתובות מייל מנהלים" hint="מופרד בפסיקים"><input value={(config.adminEmails || []).join(', ')} onChange={(e) => setConfig({ ...config, adminEmails: e.target.value.split(',').map((value) => value.trim()).filter(Boolean) })} /></Field><Field label="Google OAuth Client ID"><input value={config.googleClientId || ''} onChange={(e) => setConfig({ ...config, googleClientId: e.target.value })} /></Field><h3>סודות שרת</h3><p className="security-note">הסודות נשלחים ל-Worker ונשמרים מוצפנים ב-KV. הם אינם נשמרים ב-localStorage ואינם מוחזרים לדפדפן.</p><Field label="Google OAuth Client Secret"><input type="password" value={config.googleClientSecret || ''} onChange={(e) => setConfig({ ...config, googleClientSecret: e.target.value })} placeholder="השאירו ריק כדי לשמור את הקיים" /></Field><Field label="OpenAI API Key"><input type="password" value={config.openaiApiKey || ''} onChange={(e) => setConfig({ ...config, openaiApiKey: e.target.value })} placeholder="השאירו ריק כדי לשמור את הקיים" /></Field><Field label="מודל OpenAI"><input value={workspace.settings.openaiModel} onChange={(e) => setWorkspace((current) => ({ ...current, settings: { ...current.settings, openaiModel: e.target.value } }))} /></Field><div className="form-actions"><button className="primary" disabled={saving} onClick={() => void save()}><Save /> {saving ? 'שומר...' : 'שמירת הגדרות'}</button></div></div></section>
-}
+  const [config, setConfig] = useState<AdminConfig>({})
+  const [status, setStatus] = useState<{ google: { connected: boolean; email?: string }; openai: { configured: boolean }; configured: boolean } | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [message, setMessage] = useState('')
+  const [error, setError] = useState('')
 
-function TemplateSettings({ workspace, setWorkspace }: { workspace: Workspace; setWorkspace: React.Dispatch<React.SetStateAction<Workspace>> }) {
-  const [name, setName] = useState(''); const [items, setItems] = useState('')
-  const add = () => { const templateName = name.trim(); const lines = items.split('\n').map((line) => line.trim()).filter(Boolean); if (!templateName || !lines.length) return; const template: ChecklistTemplate = { id: uid('tpl'), name: templateName, items: lines.map((line) => ({ id: uid('tpl-item'), title: line })) }; setWorkspace((current) => ({ ...current, checklistTemplates: [...current.checklistTemplates, template] })); setName(''); setItems('') }
-  return <section className="card settings-card"><div className="card-head"><div><h2>תבניות צ׳ק ליסט</h2><p>צ׳ק ליסט קבוע שניתן להחיל בלחיצה על כל פרויקט ואז לשנות אותו נקודתית.</p></div></div><div className="template-list">{workspace.checklistTemplates.map((template) => <article key={template.id}><div><strong>{template.name}</strong><span>{template.items.length} משימות ראשיות</span></div><button className="icon-btn danger" onClick={() => setWorkspace((current) => ({ ...current, checklistTemplates: current.checklistTemplates.filter((item) => item.id !== template.id) }))}><Trash2 /></button></article>)}</div><div className="new-template"><h3>תבנית חדשה</h3><Field label="שם"><input value={name} onChange={(e) => setName(e.target.value)} /></Field><Field label="משימות" hint="משימה אחת בכל שורה"><textarea rows={8} value={items} onChange={(e) => setItems(e.target.value)} /></Field><button className="primary" onClick={add}><Plus /> הוספת תבנית</button></div></section>
+  const refresh = async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const [current, health] = await Promise.all([integrationsApi.adminConfig(), integrationsApi.status()])
+      setConfig(current)
+      setStatus(health)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'לא ניתן לטעון את החיבורים')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { void refresh() }, [])
+
+  const save = async () => {
+    setSaving(true)
+    setError('')
+    setMessage('')
+    try {
+      await integrationsApi.saveAdminConfig({
+        ...config,
+        driveRootFolderId: workspace.settings.driveRootFolderId,
+        openaiApiKey: undefined,
+        openaiModel: undefined,
+      })
+      setMessage('החיבורים נשמרו.')
+      await refresh()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'שמירה נכשלה')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const connectGoogle = async () => {
+    try {
+      const { url } = await integrationsApi.googleAuthUrl()
+      window.location.href = url
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'לא ניתן להתחיל את חיבור Google')
+    }
+  }
+
+  if (loading) return <section className="card settings-card"><div className="loading-state"><RefreshCw className="spin" /> טוען חיבורים...</div></section>
+
+  return <section className="card settings-card">
+    <div className="card-head"><div><h2>חיבורים</h2><p>הגדרת מסד הנתונים ושירותי Google.</p></div><button className="secondary" onClick={() => void refresh()}><RefreshCw /> רענון</button></div>
+    {error && <div className="error-banner">{error}</div>}
+    {message && <div className="success-banner">{message}</div>}
+    <div className="integration-health">
+      <article><Cloud /><div><strong>מערכת נתונים</strong><span>{status?.configured ? 'מחוברת' : 'לא מחוברת'}</span></div><Chip tone={status?.configured ? 'good' : 'warn'}>{status?.configured ? 'מחובר' : 'דורש הגדרה'}</Chip></article>
+      <article><span className="google-g">G</span><div><strong>Google</strong><span>{status?.google.email || 'Gmail · Calendar · Drive'}</span></div><Chip tone={status?.google.connected ? 'good' : 'warn'}>{status?.google.connected ? 'מחובר' : 'לא מחובר'}</Chip><button className="secondary" onClick={() => void connectGoogle()}>{status?.google.connected ? 'חיבור מחדש' : 'חיבור Google'}</button></article>
+    </div>
+    <div className="integration-form">
+      <Field label="Supabase Project URL"><input value={config.supabaseUrl || ''} onChange={(e) => setConfig({ ...config, supabaseUrl: e.target.value })} placeholder="https://xxxxx.supabase.co" /></Field>
+      <Field label="Supabase anon key"><textarea rows={3} value={config.supabaseAnonKey || ''} onChange={(e) => setConfig({ ...config, supabaseAnonKey: e.target.value })} /></Field>
+      <Field label="מייל מפתח"><input value={(config.adminEmails || []).join(', ')} onChange={(e) => setConfig({ ...config, adminEmails: e.target.value.split(',').map((value) => value.trim()).filter(Boolean) })} /></Field>
+      <Field label="Google OAuth Client ID"><input value={config.googleClientId || ''} onChange={(e) => setConfig({ ...config, googleClientId: e.target.value })} /></Field>
+      <Field label="Google OAuth Client Secret"><input type="password" value={config.googleClientSecret || ''} onChange={(e) => setConfig({ ...config, googleClientSecret: e.target.value })} placeholder="השאירו ריק אם אין שינוי" /></Field>
+      <Field label="תיקיית Google Drive ראשית"><input value={workspace.settings.driveRootFolderId} onChange={(e) => setWorkspace((current) => ({ ...current, settings: { ...current.settings, driveRootFolderId: e.target.value } }))} /></Field>
+      <div className="form-actions"><button className="primary" disabled={saving} onClick={() => void save()}><Save /> {saving ? 'שומר...' : 'שמירה'}</button></div>
+    </div>
+  </section>
 }
