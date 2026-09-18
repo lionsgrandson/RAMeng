@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { User } from '@supabase/supabase-js'
-import { BarChart3, Bell, CalendarDays, ChevronDown, ContactRound, FileInput, FileText, FolderKanban, LayoutDashboard, ListChecks, LogOut, Menu, Search, Settings, UsersRound, X } from 'lucide-react'
+import { BarChart3, Bell, CalendarDays, ChevronDown, ContactRound, FileInput, FileText, FolderKanban, LayoutDashboard, ListChecks, LogOut, Menu, Plus, Search, Settings, UsersRound, X } from 'lucide-react'
 import type { Workspace } from './types'
 import { cloneWorkspace } from './seed'
 import { configureBackend, getBackend, getCurrentUser, loadOrganizationWorkspace, saveOrganizationWorkspace, signOut, subscribeWorkspace } from './lib/backend'
@@ -18,24 +18,30 @@ import UserManagement from './components/UserManagement'
 
 type Page = 'overview' | 'clients' | 'projects' | 'tasks' | 'calendar' | 'files' | 'reports' | 'team' | 'imports' | 'settings'
 
-const pageInfo: Record<Page, [string, string]> = {
-  overview: ['מרכז שליטה', 'תמונת מצב של פרויקטים, משימות, פיקוח ומועדים.'],
-  clients: ['לקוחות ולידים', 'אנשי קשר, פעילות ומידע עסקי במקום אחד.'],
-  projects: ['פרויקטים', 'כל פרויקט מנוהל בנפרד עם משימות, מיילים, פגישות, דוחות ומסמכים.'],
-  tasks: ['משימות ומעקב', 'משימות, תתי משימות, אחראים, סטטוסים ותאריכים.'],
-  calendar: ['יומן', 'פגישות, תאריכי יעד ומועדי מעקב.'],
-  files: ['קבצים ומסמכים', 'תכניות, תמונות ומסמכי פרויקט.'],
-  reports: ['דוחות פיקוח', 'יצירה, מעקב והפקה של דוחות פיקוח לפי פרויקט.'],
-  team: ['משתמשים והרשאות', 'ניהול משתמשים, תפקידים והרשאות גישה.'],
-  imports: ['ייבוא מידע', 'ייבוא לקוחות ומשימות מקבצי Excel ו-CSV.'],
-  settings: ['הגדרות מפתח', 'פרטי החברה וחיבורי המערכת.'],
+const pageInfo: Record<Page, string> = {
+  overview: 'סקירה',
+  clients: 'לקוחות',
+  projects: 'פרויקטים',
+  tasks: 'משימות',
+  calendar: 'יומן',
+  files: 'קבצים',
+  reports: 'דוחות',
+  team: 'משתמשים',
+  imports: 'ייבוא',
+  settings: 'הגדרות',
 }
 
-const navGroups: { label: string; items: { id: Page; label: string; icon: typeof LayoutDashboard }[] }[] = [
-  { label: 'עבודה', items: [{ id: 'overview', label: 'מרכז שליטה', icon: LayoutDashboard }, { id: 'clients', label: 'לקוחות ולידים', icon: ContactRound }] },
-  { label: 'פרויקטים', items: [{ id: 'projects', label: 'פרויקטים', icon: FolderKanban }, { id: 'tasks', label: 'משימות', icon: ListChecks }, { id: 'calendar', label: 'יומן', icon: CalendarDays }, { id: 'files', label: 'קבצים', icon: FileText }] },
-  { label: 'פיקוח', items: [{ id: 'reports', label: 'דוחות פיקוח', icon: BarChart3 }] },
-  { label: 'מערכת', items: [{ id: 'team', label: 'משתמשים והרשאות', icon: UsersRound }, { id: 'imports', label: 'ייבוא', icon: FileInput }, { id: 'settings', label: 'הגדרות מפתח', icon: Settings }] },
+const navItems: { id: Page; label: string; icon: typeof LayoutDashboard }[] = [
+  { id: 'overview', label: 'סקירה', icon: LayoutDashboard },
+  { id: 'clients', label: 'לקוחות', icon: ContactRound },
+  { id: 'projects', label: 'פרויקטים', icon: FolderKanban },
+  { id: 'tasks', label: 'משימות', icon: ListChecks },
+  { id: 'calendar', label: 'יומן', icon: CalendarDays },
+  { id: 'files', label: 'קבצים', icon: FileText },
+  { id: 'reports', label: 'דוחות', icon: BarChart3 },
+  { id: 'team', label: 'משתמשים', icon: UsersRound },
+  { id: 'imports', label: 'ייבוא', icon: FileInput },
+  { id: 'settings', label: 'הגדרות', icon: Settings },
 ]
 
 const roleLabel = (role: string, isDeveloper: boolean) => {
@@ -177,7 +183,7 @@ export default function App() {
     <div className="main">
       <Topbar search={search} setSearch={setSearch} searchResults={searchResults} urgentCount={urgentCount} onMenu={() => setSidebarOpen(true)} quickOpen={quickOpen} setQuickOpen={setQuickOpen} setPage={(next) => { if (next === 'clients') setSelectedClient(null); setPage(next) }} saveState={saveState} canEdit={canEdit} />
       <main className="page-wrap">
-        <header className="page-heading"><div><span className="eyebrow">ר.א.ם הנדסה · מערכת ניהול</span><h1>{pageInfo[page][0]}</h1><p>{pageInfo[page][1]}</p></div>{(role || isDeveloper) && <span className="role-badge">{roleLabel(role, isDeveloper)}</span>}</header>
+        <header className="page-heading"><h1>{pageInfo[page]}</h1>{(role || isDeveloper) && <span className="role-badge">{roleLabel(role, isDeveloper)}</span>}</header>
         {page === 'overview' && <Dashboard workspace={workspace} onProject={(id) => setSelectedProject(id)} />}
         {page === 'clients' && <ClientsCenter workspace={workspace} setWorkspace={editableSetWorkspace} selectedClientId={selectedClient} onSelectClient={setSelectedClient} onProject={(id) => { setSelectedProject(id); setPage('projects') }} canEdit={canEdit} isAdmin={canViewAdminData} actor={user.email || 'משתמש'} />}
         {page === 'projects' && <ProjectsPage workspace={workspace} setWorkspace={editableSetWorkspace} onOpen={(id) => setSelectedProject(id)} />}
@@ -194,26 +200,23 @@ export default function App() {
 }
 
 function Sidebar({ page, setPage, workspace, open, setOpen, user, onLogout, isDeveloper, canManageUsers }: { page: Page; setPage: (page: Page) => void; workspace: Workspace; open: boolean; setOpen: (value: boolean) => void; user: User; onLogout: () => void; isDeveloper: boolean; canManageUsers: boolean }) {
-  const visibleGroups = navGroups.map((group) => ({
-    ...group,
-    items: group.items.filter((item) => {
-      if (item.id === 'settings') return isDeveloper
-      if (item.id === 'team' || item.id === 'imports') return canManageUsers
-      return true
-    }),
-  })).filter((group) => group.items.length)
+  const visibleItems = navItems.filter((item) => {
+    if (item.id === 'settings') return isDeveloper
+    if (item.id === 'team' || item.id === 'imports') return canManageUsers
+    return true
+  })
 
   return <>
     <div className={`sidebar-overlay ${open ? 'show' : ''}`} onClick={() => setOpen(false)} />
     <aside className={`sidebar ${open ? 'open' : ''}`}>
-      <div className="brand"><img src={workspace.settings.logoUrl || '/rameng-mark.svg'} /><div><strong>{workspace.settings.organizationShortName}</strong><span>ניהול ופיקוח</span></div><button className="sidebar-close" onClick={() => setOpen(false)}><X /></button></div>
-      <nav>{visibleGroups.map((group) => <div className="nav-group" key={group.label}><span className="nav-label">{group.label}</span>{group.items.map((item) => { const Icon = item.icon; const count = item.id === 'tasks' ? workspace.tasks.filter((task) => !['בוצע', 'סגור'].includes(task.status)).length : item.id === 'projects' ? workspace.projects.filter((project) => project.status === 'בביצוע').length : 0; return <button key={item.id} className={page === item.id ? 'active' : ''} onClick={() => setPage(item.id)}><Icon /><span>{item.label}</span>{count > 0 && <em>{count}</em>}</button> })}</div>)}</nav>
-      <div className="sidebar-footer"><div className="profile"><span className="avatar">{(user.email || 'R').slice(0, 2).toUpperCase()}</span><div><strong>{user.email}</strong><small>מחובר</small></div><button className="icon-btn" onClick={onLogout} title="יציאה"><LogOut /></button></div><a href={workspace.settings.website} target="_blank" rel="noreferrer">{workspace.settings.website.replace(/^https?:\/\//, '')}</a></div>
+      <div className="brand"><img src={workspace.settings.logoUrl || '/rameng-mark.svg'} /><div><strong>{workspace.settings.organizationShortName}</strong></div><button className="sidebar-close" onClick={() => setOpen(false)}><X /></button></div>
+      <nav>{visibleItems.map((item) => { const Icon = item.icon; const count = item.id === 'tasks' ? workspace.tasks.filter((task) => !['בוצע', 'סגור'].includes(task.status)).length : item.id === 'projects' ? workspace.projects.filter((project) => project.status === 'בביצוע').length : 0; return <button key={item.id} className={page === item.id ? 'active' : ''} onClick={() => setPage(item.id)}><Icon /><span>{item.label}</span>{count > 0 && <em>{count}</em>}</button> })}</nav>
+      <div className="sidebar-bottom"><div className="profile"><span className="avatar">{(user.email || 'R').slice(0, 2).toUpperCase()}</span><div><strong>{user.email}</strong><small>מחובר</small></div><button className="icon-btn" onClick={onLogout} title="יציאה"><LogOut /></button></div><a href={workspace.settings.website} target="_blank" rel="noreferrer">{workspace.settings.website.replace(/^https?:\/\//, '')}</a></div>
     </aside>
   </>
 }
 
 type SearchResult = { id: string; type: string; label: string; detail: string; action: () => void }
 function Topbar({ search, setSearch, searchResults, urgentCount, onMenu, quickOpen, setQuickOpen, setPage, saveState, canEdit }: { search: string; setSearch: (value: string) => void; searchResults: SearchResult[]; urgentCount: number; onMenu: () => void; quickOpen: boolean; setQuickOpen: (value: boolean) => void; setPage: (page: Page) => void; saveState: string; canEdit: boolean }) {
-  return <header className="topbar"><button className="mobile-menu icon-btn" onClick={onMenu}><Menu /></button><div className="global-search"><Search /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="חיפוש בפרויקטים, משימות ולקוחות..." />{search && <button className="search-clear" onClick={() => setSearch('')}><X /></button>}{search && <div className="search-results">{searchResults.map((result) => <button key={`${result.type}-${result.id}`} onClick={() => { result.action(); setSearch('') }}><span>{result.type}</span><div><strong>{result.label}</strong><small>{result.detail}</small></div></button>)}{!searchResults.length && <div>לא נמצאו תוצאות</div>}</div>}</div><div className={`save-indicator ${!canEdit ? 'readonly' : saveState}`}>{!canEdit ? 'צפייה בלבד' : saveState === 'saving' ? 'שומר...' : saveState === 'saved' ? 'נשמר' : saveState === 'error' ? 'שגיאת שמירה' : ''}</div><button className="notification icon-btn" title={`${urgentCount} נושאים דורשים טיפול`} onClick={() => setPage('overview')}><Bell />{urgentCount > 0 && <i>{urgentCount > 9 ? '9+' : urgentCount}</i>}</button>{canEdit && <div className="quick-wrap"><button className="primary quick-button" onClick={() => setQuickOpen(!quickOpen)}>חדש <ChevronDown /></button>{quickOpen && <div className="quick-menu"><button onClick={() => { setPage('projects'); setQuickOpen(false) }}><FolderKanban /> פרויקט חדש</button><button onClick={() => { setPage('clients'); setQuickOpen(false) }}><ContactRound /> לקוח חדש</button><button onClick={() => { setPage('tasks'); setQuickOpen(false) }}><ListChecks /> משימה חדשה</button><button onClick={() => { setPage('reports'); setQuickOpen(false) }}><BarChart3 /> דוח פיקוח</button></div>}</div>}</header>
+  return <header className="topbar"><button className="mobile-menu icon-btn" onClick={onMenu}><Menu /></button><div className="global-search"><Search /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="חיפוש..." />{search && <button className="search-clear" onClick={() => setSearch('')}><X /></button>}{search && <div className="search-results">{searchResults.map((result) => <button key={`${result.type}-${result.id}`} onClick={() => { result.action(); setSearch('') }}><span>{result.type}</span><div><strong>{result.label}</strong><small>{result.detail}</small></div></button>)}{!searchResults.length && <div>לא נמצאו תוצאות</div>}</div>}</div><div className={`save-state save-indicator ${!canEdit ? 'readonly' : saveState}`}>{!canEdit ? 'צפייה בלבד' : saveState === 'saving' ? 'שומר...' : saveState === 'saved' ? 'נשמר' : saveState === 'error' ? 'שגיאת שמירה' : ''}</div><button className="notification icon-btn" title={`${urgentCount} נושאים דורשים טיפול`} onClick={() => setPage('overview')}><Bell />{urgentCount > 0 && <i>{urgentCount > 9 ? '9+' : urgentCount}</i>}</button>{canEdit && <div className="quick-add-wrap"><button className="primary quick-button" onClick={() => setQuickOpen(!quickOpen)}><Plus /> חדש <ChevronDown /></button>{quickOpen && <div className="quick-add-menu"><button onClick={() => { setPage('projects'); setQuickOpen(false) }}><FolderKanban /> פרויקט חדש</button><button onClick={() => { setPage('clients'); setQuickOpen(false) }}><ContactRound /> לקוח חדש</button><button onClick={() => { setPage('tasks'); setQuickOpen(false) }}><ListChecks /> משימה חדשה</button><button onClick={() => { setPage('reports'); setQuickOpen(false) }}><BarChart3 /> דוח פיקוח</button></div>}</div>}</header>
 }

@@ -8,7 +8,7 @@ export default function SettingsPage({ workspace, setWorkspace }: { workspace: W
   const [tab, setTab] = useState<'organization' | 'integrations'>('organization')
   return <div className="settings-layout">
     <aside className="settings-nav card">
-      <button className={tab === 'organization' ? 'active' : ''} onClick={() => setTab('organization')}>פרטי החברה</button>
+      <button className={tab === 'organization' ? 'active' : ''} onClick={() => setTab('organization')}>חברה</button>
       <button className={tab === 'integrations' ? 'active' : ''} onClick={() => setTab('integrations')}>חיבורים</button>
     </aside>
     <main>
@@ -23,7 +23,7 @@ function OrganizationSettings({ workspace, setWorkspace }: { workspace: Workspac
   const patch = (key: keyof typeof settings, value: string) => setWorkspace((current) => ({ ...current, settings: { ...current.settings, [key]: value } }))
 
   return <section className="card settings-card">
-    <div className="card-head"><div><h2>פרטי החברה</h2><p>הפרטים שמופיעים במערכת ובדוחות.</p></div><Chip tone="brand">ראם הנדסה</Chip></div>
+    <div className="card-head"><h2>חברה</h2><Chip tone="brand">ראם הנדסה</Chip></div>
     <div className="settings-form">
       <Field label="שם החברה"><input value={settings.organizationName} onChange={(e) => patch('organizationName', e.target.value)} /></Field>
       <Field label="שם קצר"><input value={settings.organizationShortName} onChange={(e) => patch('organizationShortName', e.target.value)} /></Field>
@@ -92,11 +92,11 @@ function IntegrationSettings({ workspace, setWorkspace }: { workspace: Workspace
   if (loading) return <section className="card settings-card"><div className="loading-state"><RefreshCw className="spin" /> טוען חיבורים...</div></section>
 
   return <section className="card settings-card">
-    <div className="card-head"><div><h2>חיבורים</h2><p>הגדרת מסד הנתונים ושירותי Google.</p></div><button className="secondary" onClick={() => void refresh()}><RefreshCw /> רענון</button></div>
+    <div className="card-head"><h2>חיבורים</h2><button className="secondary" onClick={() => void refresh()}><RefreshCw /> רענון</button></div>
     {error && <div className="error-banner">{error}</div>}
     {message && <div className="success-banner">{message}</div>}
     <div className="integration-health">
-      <article><Cloud /><div><strong>מערכת נתונים</strong><span>{status?.configured ? 'מחוברת' : 'לא מחוברת'}</span></div><Chip tone={status?.configured ? 'good' : 'warn'}>{status?.configured ? 'מחובר' : 'דורש הגדרה'}</Chip></article>
+      <article><Cloud /><div><strong>Supabase</strong><span>{status?.configured ? 'מחוברת' : 'לא מחוברת'}</span></div><Chip tone={status?.configured ? 'good' : 'warn'}>{status?.configured ? 'מחובר' : 'דורש הגדרה'}</Chip></article>
       <article><span className="google-g">G</span><div><strong>Google</strong><span>{status?.google.email || 'Gmail · Calendar · Drive'}</span></div><Chip tone={status?.google.connected ? 'good' : 'warn'}>{status?.google.connected ? 'מחובר' : 'לא מחובר'}</Chip><button className="secondary" onClick={() => void connectGoogle()}>{status?.google.connected ? 'חיבור מחדש' : 'חיבור Google'}</button></article>
     </div>
     <div className="integration-form">

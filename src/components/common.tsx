@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { X } from 'lucide-react'
+import { Inbox, X } from 'lucide-react'
 
 export const uid = (prefix = 'id') => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 export const nowIso = () => new Date().toISOString()
@@ -18,7 +18,7 @@ export function Modal({ title, children, onClose, wide = false }: { title: strin
 }
 
 export function EmptyState({ title, text, action }: { title: string; text: string; action?: ReactNode }) {
-  return <div className="empty-state"><div className="empty-mark">ראם</div><h3>{title}</h3><p>{text}</p>{action}</div>
+  return <div className="empty-state"><div className="empty-mark"><Inbox /></div><h3>{title}</h3><p>{text}</p>{action}</div>
 }
 
 export function Chip({ children, tone = 'neutral' }: { children: ReactNode; tone?: 'neutral' | 'good' | 'warn' | 'bad' | 'brand' }) {
