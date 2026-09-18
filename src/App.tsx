@@ -20,12 +20,12 @@ type Page = 'overview' | 'clients' | 'projects' | 'tasks' | 'calendar' | 'files'
 
 const pageInfo: Record<Page, string> = {
   overview: 'סקירה',
-  clients: 'לקוחות',
-  projects: 'פרויקטים',
-  tasks: 'משימות',
-  calendar: 'יומן',
-  files: 'קבצים',
-  reports: 'דוחות',
+  clients: 'כל הלקוחות',
+  projects: 'כל הפרויקטים',
+  tasks: 'כל המשימות',
+  calendar: 'יומן כללי',
+  files: 'כל הקבצים',
+  reports: 'כל הדוחות',
   team: 'משתמשים',
   imports: 'ייבוא',
   settings: 'הגדרות',
@@ -223,7 +223,6 @@ export default function App() {
         } catch (error) {
           pendingSaveSnapshotRef.current = ''
           setSaveState(error instanceof Error && error.name === 'WorkspaceConflictError' ? 'conflict' : 'error')
-          throw error
         }
       })
     }, 650)
