@@ -184,7 +184,7 @@ button svg,.primary svg,.secondary svg,.back-button svg,.upload-button svg{width
 .sidebar nav button.active{box-shadow:none;background:rgba(255,255,255,.12)}
 .sidebar nav button svg{width:17px;height:17px}
 .sidebar nav button em{min-width:20px;height:20px;font-size:10px}
-.sidebar-footer>a{display:none}
+.sidebar-bottom>a{display:none}
 .profile{padding:10px 8px}
 .profile small{display:none}
 
@@ -194,7 +194,7 @@ button svg,.primary svg,.secondary svg,.back-button svg,.upload-button svg{width
 .save-indicator{font-size:10px}
 .notification{width:34px;height:34px}
 .quick-button{height:36px;min-height:36px}
-.quick-menu{min-width:190px}
+.quick-add-menu{min-width:190px}
 
 .page-wrap{width:min(1500px,100%);padding:22px 22px 48px}
 .page-heading{align-items:center;margin-bottom:14px}
@@ -389,13 +389,13 @@ textarea{min-height:80px}
   .topbar{min-height:56px;height:auto;padding:8px 10px;flex-wrap:wrap}
   .mobile-menu{order:0}
   .notification{order:1}
-  .quick-wrap{order:2;margin-inline-start:auto}
+  .quick-add-wrap{order:2;margin-inline-start:auto}
   .save-indicator{order:3}
   .global-search{order:4;width:100%;flex-basis:100%}
   .quick-button{font-size:0;width:36px;padding:0}
   .quick-button svg{width:16px;height:16px}
   .quick-button svg:last-child{display:none}
-  .quick-menu{left:0;right:auto}
+  .quick-add-menu{left:0;right:auto}
   .page-wrap{padding:14px 10px 36px}
   .page-heading{margin-bottom:10px}
   .page-heading h1{font-size:20px}
