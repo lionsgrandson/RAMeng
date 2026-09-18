@@ -9,7 +9,7 @@ export function Dashboard({ workspace, onProject }: { workspace: Workspace; onPr
   const openTasks = workspace.tasks.filter((task) => !['בוצע', 'סגור'].includes(task.status))
   const overdue = openTasks.filter((task) => task.followUpDate && new Date(task.followUpDate).getTime() < Date.now())
   const openReportItems = workspace.reports.flatMap((report) => report.sections.flatMap((section) => section.items.map((item) => ({ ...item, report })))).filter((item) => !['בוצע', 'תקין', 'סגור'].includes(item.status))
-  const activeProjects = workspace.projects.filter((project) => !['הושלם', 'מוקפא'].includes(project.status))
+  const activeProjects = [...workspace.projects].filter((project) => project.status !== 'הושלם').sort((a, b) => b.createdAt.localeCompare(a.createdAt))
   const upcoming = workspace.events.filter((event) => new Date(event.start).getTime() >= Date.now()).length
 
   return <>
@@ -20,7 +20,7 @@ export function Dashboard({ workspace, onProject }: { workspace: Workspace; onPr
       <article className="metric card"><span className="metric-icon neutral"><CalendarDays /></span><div><small>ביומן</small><strong>{upcoming}</strong></div></article>
     </div>
     <div className="dashboard-grid compact-dashboard">
-      <section className="card"><div className="card-head"><h2>פרויקטים פעילים</h2></div><div className="card-body project-health-list">{activeProjects.length ? activeProjects.slice(0, 10).map((project) => {
+      <section className="card"><div className="card-head"><h2>פרויקטים אחרונים</h2></div><div className="card-body project-health-list">{activeProjects.length ? activeProjects.slice(0, 10).map((project) => {
         const tasks = openTasks.filter((task) => task.projectId === project.id)
         const urgent = tasks.filter((task) => task.priority === 'דחופה' || task.status === 'דורש מעקב').length
         return <button className="project-health" key={project.id} onClick={() => onProject(project.id)}><div><strong>{project.name}</strong><span>{project.address || 'ללא כתובת'}</span></div><div className="progress"><i style={{ width: `${project.progress}%` }} /></div><div className="health-meta"><Chip tone={urgent ? 'bad' : 'brand'}>{tasks.length}</Chip><span>{project.progress}%</span></div></button>
