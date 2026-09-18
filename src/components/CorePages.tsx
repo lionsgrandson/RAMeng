@@ -5,7 +5,7 @@ import type { Contact, Deal, DealStage, Quote, TeamMember, Workspace } from '../
 import { integrationsApi } from '../lib/api'
 import { Chip, EmptyState, Field, Modal, dateLabel, money, nowIso, uid } from './common'
 
-export function Dashboard({ workspace, onProject }: { workspace: Workspace; onProject: (id: string) => void }) {
+export function Dashboard({ workspace, onProject, onTask, onReport }: { workspace: Workspace; onProject: (id: string) => void; onTask: (id: string) => void; onReport: (reportId: string, itemId: string) => void }) {
   const openTasks = workspace.tasks.filter((task) => !['בוצע', 'סגור'].includes(task.status))
   const overdue = openTasks.filter((task) => task.followUpDate && new Date(task.followUpDate).getTime() < Date.now())
   const openReportItems = workspace.reports.flatMap((report) => report.sections.flatMap((section) => section.items.map((item) => ({ ...item, report })))).filter((item) => !['בוצע', 'תקין', 'סגור'].includes(item.status))
@@ -25,7 +25,10 @@ export function Dashboard({ workspace, onProject }: { workspace: Workspace; onPr
         const urgent = tasks.filter((task) => task.priority === 'דחופה' || task.status === 'דורש מעקב').length
         return <button className="project-health" key={project.id} onClick={() => onProject(project.id)}><div><strong>{project.name}</strong><span>{project.address || 'ללא כתובת'}</span></div><div className="progress"><i style={{ width: `${project.progress}%` }} /></div><div className="health-meta"><Chip tone={urgent ? 'bad' : 'brand'}>{tasks.length}</Chip><span>{project.progress}%</span></div></button>
       }) : <EmptyState title="אין פרויקטים" text="צרו פרויקט ראשון." />}</div></section>
-      <section className="card"><div className="card-head"><h2>דורש טיפול</h2></div><div className="card-body attention-list">{[...overdue.slice(0, 6).map((task) => ({ id: task.id, title: task.title, text: dateLabel(task.followUpDate), tone: 'bad' as const })), ...openReportItems.slice(0, 6).map((item) => ({ id: `${item.report.id}-${item.id}`, title: item.description, text: item.report.title, tone: 'warn' as const }))].slice(0, 10).map((item) => <div className="attention-item" key={item.id}><span className={`dot ${item.tone}`} /><div><strong>{item.title}</strong><small>{item.text}</small></div></div>)}{!overdue.length && !openReportItems.length && <EmptyState title="הכול מעודכן" text="אין כרגע פריטים דחופים." />}</div></section>
+      <section className="card"><div className="card-head"><h2>דורש טיפול</h2></div><div className="card-body attention-list">{[
+        ...overdue.slice(0, 6).map((task) => ({ id: task.id, title: task.title, text: dateLabel(task.followUpDate), tone: 'bad' as const, action: () => onTask(task.id) })),
+        ...openReportItems.slice(0, 6).map((item) => ({ id: `${item.report.id}-${item.id}`, title: item.description, text: item.report.title, tone: 'warn' as const, action: () => onReport(item.report.id, item.id) })),
+      ].slice(0, 10).map((item) => <button type="button" className="attention-item attention-action" key={item.id} onClick={item.action}><span className={`dot ${item.tone}`} /><div><strong>{item.title}</strong><small>{item.text}</small></div><ArrowLeft aria-hidden="true" /></button>)}{!overdue.length && !openReportItems.length && <EmptyState title="הכול מעודכן" text="אין כרגע פריטים דחופים." />}</div></section>
     </div>
   </>
 }
