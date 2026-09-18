@@ -103,7 +103,7 @@ export default function UserManagement({ orgId, canManage, isDeveloper, workspac
 
   return <section className="card">
     <div className="card-head">
-      <div><h2><UsersRound /> משתמשים והרשאות</h2><p>המשתמשים מסונכרנים עם Supabase ומקבלים גישה לפי התפקיד שלהם.</p></div>
+      <h2><UsersRound /> משתמשים</h2>
       <div className="page-action-row">
         <button className="secondary" onClick={() => void refresh()}><RefreshCw /> רענון</button>
         {canManage && <button className="primary" onClick={() => setAdding(true)}><Plus /> הוספת משתמש</button>}
@@ -127,12 +127,12 @@ export default function UserManagement({ orgId, canManage, isDeveloper, workspac
           <td><Chip tone={member.role === 'viewer' ? 'neutral' : 'good'}>{member.role === 'viewer' ? 'קריאה' : 'עבודה'}</Chip></td>
         </tr>)}</tbody>
       </table>
-      {!members.length && <EmptyState title="אין משתמשים נוספים" text="אפשר להזמין משתמש חדש ולבחור עבורו תפקיד." />}
+      {!members.length && <EmptyState title="אין משתמשים נוספים" text="הוסיפו משתמש." />}
     </div>}
 
     {adding && <Modal title="הוספת משתמש" onClose={() => !submitting && setAdding(false)}>
       <form className="form-grid" onSubmit={(e) => void add(e)}>
-        <div className="info-banner"><MailPlus /> אם המייל עדיין לא קיים ב-Supabase, תישלח אליו הזמנה להגדרת החשבון והסיסמה.</div>
+        <div className="info-banner"><MailPlus /> משתמש חדש יקבל הזמנה במייל.</div>
         <Field label="שם"><input name="name" autoComplete="name" /></Field>
         <Field label="מייל"><input name="email" type="email" required autoComplete="email" /></Field>
         <Field label="תפקיד"><select name="role" defaultValue="assistant">{assignableRoles.map((role) => <option key={role} value={role}>{roleLabels[role]}</option>)}</select></Field>
