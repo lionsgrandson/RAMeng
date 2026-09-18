@@ -14,6 +14,17 @@ type Props = {
 type TaskView = 'active' | 'archive'
 
 const COMPLETED_STATUSES = ['בוצע', 'סגור']
+const TASK_COLOR_OPTIONS = [
+  { id: '', label: 'ללא צבע', hex: '#d5dbd6' },
+  { id: 'red', label: 'אדום', hex: '#d65a5a' },
+  { id: 'orange', label: 'כתום', hex: '#dc8b3d' },
+  { id: 'yellow', label: 'צהוב', hex: '#d5b63f' },
+  { id: 'green', label: 'ירוק', hex: '#4f9a68' },
+  { id: 'blue', label: 'כחול', hex: '#4f78c8' },
+  { id: 'purple', label: 'סגול', hex: '#7d62bd' },
+  { id: 'gray', label: 'אפור', hex: '#7d8780' },
+] as const
+const taskColor = (id?: string) => TASK_COLOR_OPTIONS.find((item) => item.id === (id || '')) || TASK_COLOR_OPTIONS[0]
 const isCompleted = (task: Task) => Boolean(task.completedAt) || COMPLETED_STATUSES.includes(task.status)
 
 const fieldValue = (task: Task, column: TaskColumn) => {
@@ -26,6 +37,7 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
   const [statusFilter, setStatusFilter] = useState('הכל')
   const [projectFilter, setProjectFilter] = useState('הכל')
   const [assigneeFilter, setAssigneeFilter] = useState('הכל')
+  const [colorFilter, setColorFilter] = useState('הכל')
   const [view, setView] = useState<TaskView>('active')
   const [creatingFor, setCreatingFor] = useState<{ parentId?: string } | null>(null)
   const [showColumns, setShowColumns] = useState(false)
@@ -52,6 +64,10 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
     if (assigneeFilter !== 'הכל') {
       if (assigneeFilter === '__none__' && task.assigneeId) return false
       if (assigneeFilter !== '__none__' && task.assigneeId !== assigneeFilter) return false
+    }
+    if (colorFilter !== 'הכל') {
+      if (colorFilter === '__none__' && task.colorTag) return false
+      if (colorFilter !== '__none__' && task.colorTag !== colorFilter) return false
     }
     if (view === 'active' && isCompleted(task)) return false
     if (view === 'archive' && !isCompleted(task)) return false
@@ -150,6 +166,7 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
       dueDate: String(data.get('dueDate') || '') || undefined,
       followUpDate: String(data.get('followUpDate') || '') || undefined,
       emailTo: String(data.get('emailTo') || '') || undefined,
+      colorTag: String(data.get('colorTag') || '') || undefined,
       custom: {},
       order: workspace.tasks.length + 1,
       createdAt: nowIso(),
@@ -248,6 +265,7 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
       {!projectId && <label className="task-filter-field"><span>פרויקט</span><select aria-label="סינון לפי פרויקט" value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)}><option value="הכל">כל הפרויקטים</option><option value="__none__">ללא פרויקט</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>}
       <label className="task-filter-field"><span>סטטוס</span><select aria-label="סינון לפי סטטוס" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}><option>הכל</option>{workspace.taskStatuses.map((status) => <option key={status}>{status}</option>)}</select></label>
       <label className="task-filter-field"><span>אחראי</span><select aria-label="סינון לפי אחראי" value={assigneeFilter} onChange={(e) => setAssigneeFilter(e.target.value)}><option value="הכל">כל האחראים</option><option value="__none__">ללא אחראי</option>{workspace.team.filter((member) => member.active).map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select></label>
+      <label className="task-filter-field"><span>צבע</span><select aria-label="סינון לפי צבע" value={colorFilter} onChange={(e) => setColorFilter(e.target.value)}><option value="הכל">כל הצבעים</option><option value="__none__">ללא צבע</option>{TASK_COLOR_OPTIONS.filter((item) => item.id).map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
       {canEdit && projectId && <label className="task-filter-field"><span>תבנית</span><select aria-label="החלת צ׳ק ליסט" defaultValue="" onChange={(e) => { const template = workspace.checklistTemplates.find((item) => item.id === e.target.value); if (template) applyTemplate(template.items); e.target.value = '' }}><option value="">בחירת צ׳ק ליסט</option>{workspace.checklistTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}</select></label>}
       {canEdit && <button type="button" className="secondary board-settings-button" aria-expanded={showColumns} onClick={() => setShowColumns((value) => !value)}><Settings2 /> הגדרות תצוגה</button>}
       {canEdit && <button type="button" className="primary board-create-button" onClick={() => setCreatingFor({})}><Plus /> משימה חדשה</button>}
@@ -269,10 +287,11 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
 
     <div className="table-scroll task-table-wrap">
       <table className="data-table task-table">
-        <thead><tr><th className="complete-col">בוצע</th>{!projectId && <th style={{ minWidth: 180 }}>פרויקט</th>}{visibleColumns.map((column) => <th key={column.id} style={{ minWidth: column.width }}>{column.label}</th>)}<th className="actions-col">פעולות</th></tr></thead>
+        <thead><tr><th className="complete-col">בוצע</th><th className="color-col">קטלוג</th>{!projectId && <th style={{ minWidth: 180 }}>פרויקט</th>}{visibleColumns.map((column) => <th key={column.id} style={{ minWidth: column.width }}>{column.label}</th>)}<th className="actions-col">פעולות</th></tr></thead>
         <tbody>
           {rows.map(({ task, depth }) => <tr key={task.id} className={`${task.parentId ? 'subtask-row' : ''} ${isCompleted(task) ? 'completed-row' : ''}`}>
             <td className="complete-cell"><input type="checkbox" aria-label={isCompleted(task) ? `שחזור ${task.title} לאזור הפעיל` : `סימון ${task.title} כבוצעה`} checked={isCompleted(task)} disabled={!canEdit} onChange={(e) => toggleTaskCompleted(task, e.target.checked)} /></td>
+            <td className="color-cell"><label className="task-color-picker"><span className="color-dot" style={{ backgroundColor: taskColor(task.colorTag).hex }} /><select aria-label={`צבע קטלוג עבור ${task.title}`} disabled={!canEdit} value={task.colorTag || ''} onChange={(e) => updateTask(task.id, { colorTag: e.target.value || undefined })}>{TASK_COLOR_OPTIONS.map((item) => <option key={item.id || 'none'} value={item.id}>{item.label}</option>)}</select></label></td>
             {!projectId && <td><select className="cell-input" disabled={!canEdit} aria-label={`פרויקט עבור ${task.title}`} value={task.projectId || ''} onChange={(e) => changeTaskProject(task.id, e.target.value || undefined)}><option value="">ללא פרויקט</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></td>}
             {visibleColumns.map((column) => <td key={column.id}>
               {column.key === 'title' ? <input className="cell-input task-title-input" disabled={!canEdit} aria-label="שם משימה" style={{ paddingInlineStart: 8 + depth * 22 }} value={task.title} onChange={(e) => updateTask(task.id, { title: e.target.value })} />
@@ -285,7 +304,7 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
             </td>)}
             <td className="row-actions">{canEdit && <div className="task-row-actions"><button type="button" className="secondary task-action-btn" onClick={() => setCreatingFor({ parentId: task.id })}><Plus /> תת-משימה</button><button type="button" className="secondary danger task-action-btn" onClick={() => removeTask(task.id)}><Trash2 /> מחיקה</button></div>}</td>
           </tr>)}
-          {!rows.length && <tr><td colSpan={visibleColumns.length + (projectId ? 2 : 3)}><div className="table-empty">{view === 'archive' ? 'אין משימות בארכיון.' : 'אין משימות פעילות שמתאימות לסינון.'}</div></td></tr>}
+          {!rows.length && <tr><td colSpan={visibleColumns.length + (projectId ? 3 : 4)}><div className="table-empty">{view === 'archive' ? 'אין משימות בארכיון.' : 'אין משימות פעילות שמתאימות לסינון.'}</div></td></tr>}
         </tbody>
       </table>
     </div>
@@ -298,6 +317,7 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
         <Field label="אחראי"><select name="assigneeId"><option value="">לא משויך</option>{workspace.team.filter((member) => member.active).map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select></Field>
         <Field label="סטטוס"><select name="status" defaultValue={workspace.taskStatuses[0] || 'טרם התחיל'}>{workspace.taskStatuses.map((status) => <option key={status}>{status}</option>)}</select></Field>
         <Field label="עדיפות"><select name="priority" defaultValue="רגילה"><option>נמוכה</option><option>רגילה</option><option>גבוהה</option><option>דחופה</option></select></Field>
+        <Field label="צבע / קטלוג"><select name="colorTag" defaultValue=""><option value="">ללא צבע</option>{TASK_COLOR_OPTIONS.filter((item) => item.id).map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></Field>
         <Field label="תאריך התחלה"><input name="startDate" type="date" /></Field>
         <Field label="יעד"><input name="dueDate" type="date" /></Field>
         <Field label="מועד מעקב"><input name="followUpDate" type="date" /></Field>
