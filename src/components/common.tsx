@@ -30,7 +30,11 @@ export function Modal({ title, children, onClose, wide = false }: { title: strin
       }
     }
     document.addEventListener('keydown', onKeyDown)
-    window.setTimeout(() => dialogRef.current?.querySelector<HTMLElement>('input, select, textarea, button')?.focus(), 0)
+    window.setTimeout(() => {
+      const target = dialogRef.current?.querySelector<HTMLElement>('.modal-content input:not([disabled]), .modal-content select:not([disabled]), .modal-content textarea:not([disabled]), .modal-content button:not([disabled])')
+        || dialogRef.current?.querySelector<HTMLElement>('button:not([disabled])')
+      target?.focus()
+    }, 0)
     return () => {
       document.removeEventListener('keydown', onKeyDown)
       document.body.style.overflow = oldOverflow
