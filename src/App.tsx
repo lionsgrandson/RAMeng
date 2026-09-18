@@ -7,7 +7,8 @@ import { configureBackend, getBackend, getCurrentUser, loadOrganizationWorkspace
 import { loadRuntimeConfig, type RuntimeConfig } from './lib/runtime'
 import { integrationsApi } from './lib/api'
 import { LoginScreen, SetPasswordScreen, SetupScreen } from './components/AuthSetup'
-import { ClientsPage, Dashboard, ImportCenter } from './components/CorePages'
+import { Dashboard, ImportCenter } from './components/CorePages'
+import ClientsCenter from './components/ClientCenter'
 import { CalendarPage, FilesPage } from './components/CalendarFiles'
 import { ProjectsPage, ProjectWorkspace } from './components/ProjectWorkspace'
 import ReportsPage from './components/Reports'
@@ -43,7 +44,7 @@ const roleLabel = (role: string, isDeveloper: boolean) => {
   if (role === 'assistant') return 'עוזר/ת'
   if (role === 'inspector') return 'מפקח/ת'
   if (role === 'engineer') return 'מהנדס/ת'
-  if (role === 'viewer') return 'צפייה בלבד'
+  if (role === 'viewer' || role === 'reviewer') return 'סוקר/ת · צפייה בלבד'
   return role
 }
 
@@ -64,6 +65,7 @@ export default function App() {
   const [loadError, setLoadError] = useState('')
   const [page, setPage] = useState<Page>('overview')
   const [selectedProject, setSelectedProject] = useState<string | null>(null)
+  const [selectedClient, setSelectedClient] = useState<string | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [search, setSearch] = useState('')
   const [quickOpen, setQuickOpen] = useState(false)
@@ -113,7 +115,8 @@ export default function App() {
   }, [user?.id])
 
   const canManageUsers = isDeveloper || role === 'developer' || role === 'admin' || role === 'manager'
-  const canEdit = isDeveloper || role === 'developer' || role !== 'viewer'
+  const canViewAdminData = isDeveloper || ['developer', 'admin', 'manager'].includes(role)
+  const canEdit = isDeveloper || role === 'developer' || !['viewer', 'reviewer'].includes(role)
   const editableSetWorkspace: typeof setWorkspace = (action) => {
     if (!canEdit) return
     setWorkspace(action)
@@ -148,7 +151,7 @@ export default function App() {
     return [
       ...workspace.projects.filter((item) => `${item.name} ${item.address}`.toLowerCase().includes(q)).slice(0, 5).map((item) => ({ id: item.id, type: 'פרויקט', label: item.name, detail: item.address, action: () => { setSelectedProject(item.id); setPage('projects') } })),
       ...workspace.tasks.filter((item) => `${item.title} ${item.description || ''}`.toLowerCase().includes(q)).slice(0, 5).map((item) => ({ id: item.id, type: 'משימה', label: item.title, detail: workspace.projects.find((project) => project.id === item.projectId)?.name || '', action: () => setPage('tasks') })),
-      ...workspace.contacts.filter((item) => `${item.name} ${item.company || ''} ${item.email || ''}`.toLowerCase().includes(q)).slice(0, 5).map((item) => ({ id: item.id, type: 'לקוח', label: item.name, detail: item.company || item.email || '', action: () => setPage('clients') })),
+      ...workspace.contacts.filter((item) => `${item.name} ${item.company || ''} ${item.email || ''}`.toLowerCase().includes(q)).slice(0, 5).map((item) => ({ id: item.id, type: 'לקוח', label: item.name, detail: item.company || item.email || '', action: () => { setSelectedClient(item.id); setPage('clients') } })),
     ].slice(0, 10)
   }, [search, workspace])
 
@@ -167,16 +170,16 @@ export default function App() {
   if (loadError) return <div className="auth-screen"><section className="login-card"><h1>לא ניתן לטעון את סביבת העבודה</h1><div className="error-banner">{loadError}</div><p>ודאו שהגדרת מסד הנתונים הושלמה ושיש למשתמש הרשאה למערכת.</p><button className="secondary" onClick={() => window.location.reload()}>ניסיון מחדש</button></section></div>
   if (!loaded) return <div className="app-loading"><img src="/rameng-mark.svg" /><span>טוען פרויקטים...</span></div>
 
-  if (selectedProject) return <div className="app-shell project-mode"><Sidebar page={page} setPage={(next) => { setSelectedProject(null); setPage(next) }} workspace={workspace} open={sidebarOpen} setOpen={setSidebarOpen} user={user} onLogout={() => void signOut()} isDeveloper={isDeveloper} canManageUsers={canManageUsers} /><div className="main"><Topbar search={search} setSearch={setSearch} searchResults={searchResults} urgentCount={urgentCount} onMenu={() => setSidebarOpen(true)} quickOpen={quickOpen} setQuickOpen={setQuickOpen} setPage={(next) => { setSelectedProject(null); setPage(next) }} saveState={saveState} canEdit={canEdit} /><main className="page-wrap project-page-wrap"><ProjectWorkspace projectId={selectedProject} workspace={workspace} setWorkspace={editableSetWorkspace} orgId={orgId} onBack={() => { setSelectedProject(null); setPage('projects') }} /></main></div></div>
+  if (selectedProject) return <div className={`app-shell project-mode ${!canEdit ? 'read-only-mode' : ''}`}><Sidebar page={page} setPage={(next) => { setSelectedProject(null); setPage(next) }} workspace={workspace} open={sidebarOpen} setOpen={setSidebarOpen} user={user} onLogout={() => void signOut()} isDeveloper={isDeveloper} canManageUsers={canManageUsers} /><div className="main"><Topbar search={search} setSearch={setSearch} searchResults={searchResults} urgentCount={urgentCount} onMenu={() => setSidebarOpen(true)} quickOpen={quickOpen} setQuickOpen={setQuickOpen} setPage={(next) => { setSelectedProject(null); setPage(next) }} saveState={saveState} canEdit={canEdit} /><main className="page-wrap project-page-wrap"><ProjectWorkspace projectId={selectedProject} workspace={workspace} setWorkspace={editableSetWorkspace} orgId={orgId} onBack={() => { setSelectedProject(null); setPage('projects') }} /></main></div></div>
 
-  return <div className="app-shell">
-    <Sidebar page={page} setPage={(next) => { setPage(next); setSidebarOpen(false) }} workspace={workspace} open={sidebarOpen} setOpen={setSidebarOpen} user={user} onLogout={() => void signOut()} isDeveloper={isDeveloper} canManageUsers={canManageUsers} />
+  return <div className={`app-shell ${!canEdit ? 'read-only-mode' : ''}`}>
+    <Sidebar page={page} setPage={(next) => { if (next === 'clients') setSelectedClient(null); setPage(next); setSidebarOpen(false) }} workspace={workspace} open={sidebarOpen} setOpen={setSidebarOpen} user={user} onLogout={() => void signOut()} isDeveloper={isDeveloper} canManageUsers={canManageUsers} />
     <div className="main">
-      <Topbar search={search} setSearch={setSearch} searchResults={searchResults} urgentCount={urgentCount} onMenu={() => setSidebarOpen(true)} quickOpen={quickOpen} setQuickOpen={setQuickOpen} setPage={setPage} saveState={saveState} canEdit={canEdit} />
+      <Topbar search={search} setSearch={setSearch} searchResults={searchResults} urgentCount={urgentCount} onMenu={() => setSidebarOpen(true)} quickOpen={quickOpen} setQuickOpen={setQuickOpen} setPage={(next) => { if (next === 'clients') setSelectedClient(null); setPage(next) }} saveState={saveState} canEdit={canEdit} />
       <main className="page-wrap">
         <header className="page-heading"><div><span className="eyebrow">ר.א.ם הנדסה · מערכת ניהול</span><h1>{pageInfo[page][0]}</h1><p>{pageInfo[page][1]}</p></div>{(role || isDeveloper) && <span className="role-badge">{roleLabel(role, isDeveloper)}</span>}</header>
         {page === 'overview' && <Dashboard workspace={workspace} onProject={(id) => setSelectedProject(id)} />}
-        {page === 'clients' && <ClientsPage workspace={workspace} setWorkspace={editableSetWorkspace} />}
+        {page === 'clients' && <ClientsCenter workspace={workspace} setWorkspace={editableSetWorkspace} selectedClientId={selectedClient} onSelectClient={setSelectedClient} onProject={(id) => { setSelectedProject(id); setPage('projects') }} canEdit={canEdit} isAdmin={canViewAdminData} actor={user.email || 'משתמש'} />}
         {page === 'projects' && <ProjectsPage workspace={workspace} setWorkspace={editableSetWorkspace} onOpen={(id) => setSelectedProject(id)} />}
         {page === 'tasks' && <section className="card board-card"><TaskBoard workspace={workspace} setWorkspace={editableSetWorkspace} onEmail={(task) => { if (task.projectId) { setSelectedProject(task.projectId); setPage('projects') } }} /></section>}
         {page === 'calendar' && <CalendarPage workspace={workspace} setWorkspace={editableSetWorkspace} />}
@@ -212,5 +215,5 @@ function Sidebar({ page, setPage, workspace, open, setOpen, user, onLogout, isDe
 
 type SearchResult = { id: string; type: string; label: string; detail: string; action: () => void }
 function Topbar({ search, setSearch, searchResults, urgentCount, onMenu, quickOpen, setQuickOpen, setPage, saveState, canEdit }: { search: string; setSearch: (value: string) => void; searchResults: SearchResult[]; urgentCount: number; onMenu: () => void; quickOpen: boolean; setQuickOpen: (value: boolean) => void; setPage: (page: Page) => void; saveState: string; canEdit: boolean }) {
-  return <header className="topbar"><button className="mobile-menu icon-btn" onClick={onMenu}><Menu /></button><div className="global-search"><Search /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="חיפוש בפרויקטים, משימות ולקוחות..." />{search && <button className="search-clear" onClick={() => setSearch('')}><X /></button>}{search && <div className="search-results">{searchResults.map((result) => <button key={`${result.type}-${result.id}`} onClick={() => { result.action(); setSearch('') }}><span>{result.type}</span><div><strong>{result.label}</strong><small>{result.detail}</small></div></button>)}{!searchResults.length && <div>לא נמצאו תוצאות</div>}</div>}</div><div className={`save-indicator ${saveState}`}>{saveState === 'saving' ? 'שומר...' : saveState === 'saved' ? 'נשמר' : saveState === 'error' ? 'שגיאת שמירה' : ''}</div><button className="notification icon-btn" title={`${urgentCount} נושאים דורשים טיפול`} onClick={() => setPage('overview')}><Bell />{urgentCount > 0 && <i>{urgentCount > 9 ? '9+' : urgentCount}</i>}</button>{canEdit && <div className="quick-wrap"><button className="primary quick-button" onClick={() => setQuickOpen(!quickOpen)}>חדש <ChevronDown /></button>{quickOpen && <div className="quick-menu"><button onClick={() => { setPage('projects'); setQuickOpen(false) }}><FolderKanban /> פרויקט חדש</button><button onClick={() => { setPage('clients'); setQuickOpen(false) }}><ContactRound /> לקוח חדש</button><button onClick={() => { setPage('tasks'); setQuickOpen(false) }}><ListChecks /> משימה חדשה</button><button onClick={() => { setPage('reports'); setQuickOpen(false) }}><BarChart3 /> דוח פיקוח</button></div>}</div>}</header>
+  return <header className="topbar"><button className="mobile-menu icon-btn" onClick={onMenu}><Menu /></button><div className="global-search"><Search /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="חיפוש בפרויקטים, משימות ולקוחות..." />{search && <button className="search-clear" onClick={() => setSearch('')}><X /></button>}{search && <div className="search-results">{searchResults.map((result) => <button key={`${result.type}-${result.id}`} onClick={() => { result.action(); setSearch('') }}><span>{result.type}</span><div><strong>{result.label}</strong><small>{result.detail}</small></div></button>)}{!searchResults.length && <div>לא נמצאו תוצאות</div>}</div>}</div><div className={`save-indicator ${!canEdit ? 'readonly' : saveState}`}>{!canEdit ? 'צפייה בלבד' : saveState === 'saving' ? 'שומר...' : saveState === 'saved' ? 'נשמר' : saveState === 'error' ? 'שגיאת שמירה' : ''}</div><button className="notification icon-btn" title={`${urgentCount} נושאים דורשים טיפול`} onClick={() => setPage('overview')}><Bell />{urgentCount > 0 && <i>{urgentCount > 9 ? '9+' : urgentCount}</i>}</button>{canEdit && <div className="quick-wrap"><button className="primary quick-button" onClick={() => setQuickOpen(!quickOpen)}>חדש <ChevronDown /></button>{quickOpen && <div className="quick-menu"><button onClick={() => { setPage('projects'); setQuickOpen(false) }}><FolderKanban /> פרויקט חדש</button><button onClick={() => { setPage('clients'); setQuickOpen(false) }}><ContactRound /> לקוח חדש</button><button onClick={() => { setPage('tasks'); setQuickOpen(false) }}><ListChecks /> משימה חדשה</button><button onClick={() => { setPage('reports'); setQuickOpen(false) }}><BarChart3 /> דוח פיקוח</button></div>}</div>}</header>
 }
