@@ -228,7 +228,7 @@ function Topbar({ search, setSearch, searchResults, urgentCount, onMenu, setPage
     <button type="button" className="mobile-menu icon-btn" onClick={onMenu} aria-label="פתיחת תפריט"><Menu /></button>
     <div className="global-search">
       <Search aria-hidden="true" />
-      <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="חיפוש..." aria-label="חיפוש במערכת" role="combobox" aria-expanded={Boolean(search)} aria-controls="global-search-results" />
+      <input value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape') setSearch('') }} placeholder="חיפוש..." aria-label="חיפוש במערכת" role="combobox" aria-autocomplete="list" aria-expanded={Boolean(search)} aria-controls="global-search-results" />
       {search && <button type="button" className="search-clear" onClick={() => setSearch('')} aria-label="ניקוי חיפוש"><X /></button>}
       {search && <div className="search-results" id="global-search-results" role="listbox">{searchResults.map((result) => <button type="button" role="option" key={`${result.type}-${result.id}`} onClick={() => { result.action(); setSearch('') }}><span>{result.type}</span><div><strong>{result.label}</strong><small>{result.detail}</small></div></button>)}{!searchResults.length && <div className="search-empty">לא נמצאו תוצאות</div>}</div>}
     </div>
