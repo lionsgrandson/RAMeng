@@ -476,3 +476,60 @@ textarea{min-height:80px}
   .card-head .primary,.card-head .secondary{min-height:34px}
   .data-table{min-width:640px}
 }
+
+
+/* QA/usability pass v3 */
+html{scroll-behavior:smooth}
+button,a,input,select,textarea{touch-action:manipulation}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,[tabindex]:focus-visible{
+  outline:2px solid var(--brand-dark);
+  outline-offset:2px;
+}
+button:focus:not(:focus-visible),a:focus:not(:focus-visible){outline:none}
+.card,.card-head,.card-body,.toolbar,.list-toolbar,.project-title,.client-title-row,.mail-main-head,.editor-top{min-width:0}
+.card strong,.card p,.card small,.card span,.data-table td,.data-table th{overflow-wrap:anywhere}
+.table-scroll,.task-table-wrap{scrollbar-width:thin;-webkit-overflow-scrolling:touch;overscroll-behavior-x:contain}
+.table-scroll::-webkit-scrollbar,.task-table-wrap::-webkit-scrollbar{height:8px}
+.table-scroll::-webkit-scrollbar-thumb,.task-table-wrap::-webkit-scrollbar-thumb{background:#c9d2ca;border-radius:999px}
+.table-scroll::-webkit-scrollbar-track,.task-table-wrap::-webkit-scrollbar-track{background:#f2f5f2}
+.search-empty{padding:12px;color:var(--muted);font-size:11px;text-align:center}
+.search-clear{display:grid;place-items:center;width:28px;height:28px;padding:0;border:0;border-radius:7px;background:transparent;color:var(--muted)}
+.search-clear:hover{background:#e9efea;color:var(--ink)}
+.search-clear svg{width:14px;height:14px}
+.client-detail-list a{color:var(--brand-dark);text-decoration:none}
+.client-detail-list a:hover{text-decoration:underline}
+[role="tab"]{cursor:pointer}
+[role="tab"]:focus-visible{position:relative;z-index:1}
+.error-banner,.success-banner,.info-banner{overflow-wrap:anywhere}
+.file-label:focus-within{outline:2px solid var(--brand-dark);outline-offset:2px}
+.file-label input:focus{outline:none}
+.modal-backdrop{overscroll-behavior:contain}
+.modal-card{overscroll-behavior:contain}
+.modal-content{min-width:0}
+.read-only-banner{font-weight:700}
+.save-indicator:empty{display:none}
+.save-indicator.error{color:var(--bad);background:var(--bad-soft);border-color:#efcaca}
+
+@media(pointer:coarse){
+  .primary,.secondary,.back-button,.upload-button{min-height:44px}
+  .icon-btn,.sidebar-close,.search-clear{min-width:44px;min-height:44px}
+  .sidebar nav button{min-height:44px;height:44px}
+  .project-tabs button,.client-tabs button{min-height:44px}
+  .text-button{min-height:36px;padding:6px 2px}
+  input,select{min-height:44px}
+}
+
+@media(max-width:720px){
+  .topbar{padding-top:max(8px,env(safe-area-inset-top));padding-left:max(10px,env(safe-area-inset-left));padding-right:max(10px,env(safe-area-inset-right))}
+  .page-wrap{padding-bottom:max(36px,env(safe-area-inset-bottom))}
+  .sidebar{padding-top:max(16px,env(safe-area-inset-top));padding-bottom:max(18px,env(safe-area-inset-bottom))}
+  .table-scroll{margin-inline:-1px}
+  .client-workspace-header,.project-header{position:relative}
+  .project-tabs,.client-tabs{scroll-snap-type:x proximity}
+  .project-tabs button,.client-tabs button{scroll-snap-align:start}
+  .calendar-list>article,.file-list>a,.drive-list>a,.client-file-list>a{min-height:58px}
+}
+
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
+}

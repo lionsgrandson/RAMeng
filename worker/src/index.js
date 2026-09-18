@@ -108,6 +108,30 @@ async function requireDeveloper(request, env, config) {
   return user
 }
 
+async function requireEditor(request, env, config) {
+  const user = await getAuthenticatedUser(request, env, config)
+  if (isDeveloper(user, config)) {
+    await ensureDeveloperMembership(env, config, user)
+    return user
+  }
+
+  const auth = request.headers.get('authorization') || ''
+  const url = new URL(`${config.supabaseUrl.replace(/\/$/, '')}/rest/v1/memberships`)
+  url.searchParams.set('select', 'role')
+  url.searchParams.set('user_id', `eq.${user.id}`)
+  const response = await fetch(url.toString(), {
+    headers: {
+      authorization: auth,
+      apikey: config.supabaseAnonKey,
+      accept: 'application/json',
+    },
+  })
+  const memberships = response.ok ? await response.json() : []
+  const canEdit = Array.isArray(memberships) && memberships.some((membership) => membership?.role && !['viewer', 'reviewer'].includes(membership.role))
+  if (!canEdit) throw Object.assign(new Error('החשבון מוגדר לצפייה בלבד'), { status: 403 })
+  return user
+}
+
 async function requireOrgManager(request, env, config, orgId) {
   const user = await getAuthenticatedUser(request, env, config)
   if (isDeveloper(user, config)) {
@@ -349,7 +373,7 @@ async function handleGmailSearch(request, env, config) {
 }
 
 async function handleGmailSend(request, env, config) {
-  await requireUser(request, env, config)
+  await requireEditor(request, env, config)
   const body = await parseBody(request)
   const to = cleanString(body.to)
   const subject = cleanString(body.subject)
@@ -402,7 +426,7 @@ function isoWithDefaultEnd(start, end) {
 }
 
 async function handleCalendarCreate(request, env, config) {
-  await requireUser(request, env, config)
+  await requireEditor(request, env, config)
   const body = await parseBody(request)
   const summary = cleanString(body.summary)
   const start = cleanString(body.start)
@@ -429,7 +453,7 @@ function escapeDriveQuery(value) {
 }
 
 async function handleDriveProjectFolder(request, env, config) {
-  await requireUser(request, env, config)
+  await requireEditor(request, env, config)
   const body = await parseBody(request)
   const projectId = cleanString(body.projectId)
   const name = cleanString(body.name)
@@ -476,7 +500,7 @@ async function handleDriveFiles(request, env, config) {
 }
 
 async function handleAiRewrite(request, env, config) {
-  await requireUser(request, env, config)
+  await requireEditor(request, env, config)
   if (!config.openaiApiKey) throw Object.assign(new Error('OpenAI API Key אינו מוגדר'), { status: 409 })
   const body = await parseBody(request)
   const text = cleanString(body.text)

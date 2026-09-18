@@ -34,19 +34,19 @@ export function SetupScreen() {
   }
 
   return <div className="auth-screen">
-    <div className="auth-brand"><img src="/rameng-mark.svg" /><div><strong>ר.א.ם הנדסה</strong><span>מערכת ניהול ופיקוח פרויקטים</span></div></div>
+    <div className="auth-brand"><img src="/rameng-mark.svg" alt="ר.א.ם הנדסה" /><div><strong>ר.א.ם הנדסה</strong><span>מערכת ניהול ופיקוח פרויקטים</span></div></div>
     <section className="setup-card">
       <div className="setup-intro"><span><Building2 /></span><h1>הגדרה ראשונית</h1><p>הזינו את פרטי המערכת הראשוניים. את חיבור Google אפשר להשלים גם בהמשך.</p></div>
       {error && <div className="error-banner">{error}</div>}
       {done && <div className="success-banner">ההגדרה נשמרה. המערכת נטענת מחדש...</div>}
       <form className="form-grid" onSubmit={(e) => void submit(e)}>
-        <Field label="קוד הגדרה"><input name="setupToken" type="password" required /></Field>
-        <Field label="Supabase Project URL"><input name="supabaseUrl" required placeholder="https://xxxxx.supabase.co" /></Field>
+        <Field label="קוד הגדרה"><input name="setupToken" type="password" required autoComplete="off" /></Field>
+        <Field label="Supabase Project URL"><input name="supabaseUrl" inputMode="url" autoComplete="url" required placeholder="https://xxxxx.supabase.co" /></Field>
         <Field label="Supabase anon key"><textarea name="supabaseAnonKey" rows={3} required /></Field>
-        <Field label="מייל מפתח"><input name="adminEmails" type="email" required /></Field>
+        <Field label="מייל מפתח"><input name="adminEmails" type="email" required autoComplete="email" /></Field>
         <div className="setup-divider">Google — אפשר לחבר גם אחר כך</div>
         <Field label="Google OAuth Client ID"><input name="googleClientId" /></Field>
-        <Field label="Google OAuth Client Secret"><input name="googleClientSecret" type="password" /></Field>
+        <Field label="Google OAuth Client Secret"><input name="googleClientSecret" type="password" autoComplete="off" /></Field>
         <button className="primary setup-submit" disabled={loading}><KeyRound /> {loading ? 'שומר...' : 'שמירת הגדרה'}</button>
       </form>
     </section>
@@ -81,7 +81,7 @@ export function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
   }
 
   return <div className="auth-screen">
-    <div className="auth-brand"><img src="/rameng-mark.svg" /><div><strong>ר.א.ם הנדסה</strong><span>ניהול ופיקוח</span></div></div>
+    <div className="auth-brand"><img src="/rameng-mark.svg" alt="ר.א.ם הנדסה" /><div><strong>ר.א.ם הנדסה</strong><span>ניהול ופיקוח</span></div></div>
     <section className="login-card">
       <span className="login-icon">{resetMode ? <KeyRound /> : <LockKeyhole />}</span>
       <h1>{resetMode ? 'איפוס סיסמה' : 'כניסה למערכת'}</h1>
@@ -122,7 +122,7 @@ export function SetPasswordScreen({ onSuccess }: { onSuccess: () => void }) {
   }
 
   return <div className="auth-screen">
-    <div className="auth-brand"><img src="/rameng-mark.svg" /><div><strong>ר.א.ם הנדסה</strong><span>ניהול ופיקוח</span></div></div>
+    <div className="auth-brand"><img src="/rameng-mark.svg" alt="ר.א.ם הנדסה" /><div><strong>ר.א.ם הנדסה</strong><span>ניהול ופיקוח</span></div></div>
     <section className="login-card">
       <span className="login-icon"><KeyRound /></span>
       <h1>הגדרת סיסמה</h1>
