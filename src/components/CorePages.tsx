@@ -67,17 +67,48 @@ export function TeamPage({ workspace, setWorkspace }: { workspace: Workspace; se
 
 export function ImportCenter({ workspace, setWorkspace }: { workspace: Workspace; setWorkspace: React.Dispatch<React.SetStateAction<Workspace>> }) {
   const [message, setMessage] = useState('')
+  const [error, setError] = useState('')
+
   const importFile = async (file: File, kind: 'contacts' | 'tasks') => {
-    const buffer = await file.arrayBuffer(); const workbook = XLSX.read(buffer, { type: 'array' }); const first = workbook.Sheets[workbook.SheetNames[0]]; const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(first, { defval: '' })
-    if (kind === 'contacts') {
-      const contacts: Contact[] = rows.map((row) => ({ id: uid('contact'), name: String(row['שם'] || row.name || row.Name || ''), company: String(row['חברה'] || row.company || ''), phone: String(row['טלפון'] || row.phone || ''), email: String(row['מייל'] || row.email || ''), status: 'פעיל', tags: [], createdAt: nowIso() })).filter((item) => item.name)
-      setWorkspace((current) => ({ ...current, contacts: [...current.contacts, ...contacts] })); setMessage(`יובאו ${contacts.length} לקוחות`)
-    } else {
-      const tasks = rows.map((row, index) => ({ id: uid('task'), projectId: String(row['projectId'] || '') || undefined, title: String(row['משימה'] || row.title || row.Task || ''), description: String(row['הערות'] || row.notes || ''), status: String(row['סטטוס'] || 'טרם התחיל'), priority: 'רגילה' as const, startDate: String(row['תאריך התחלה'] || '') || undefined, followUpDate: String(row['מועד מעקב'] || row['תאריך סיום'] || '') || undefined, emailTo: String(row['מייל'] || '') || undefined, custom: {}, order: workspace.tasks.length + index + 1, createdAt: nowIso() })).filter((item) => item.title)
-      setWorkspace((current) => ({ ...current, tasks: [...current.tasks, ...tasks] })); setMessage(`יובאו ${tasks.length} משימות`)
+    setMessage('')
+    setError('')
+    try {
+      const buffer = await file.arrayBuffer()
+      const workbook = XLSX.read(buffer, { type: 'array' })
+      const firstName = workbook.SheetNames[0]
+      if (!firstName) throw new Error('הקובץ לא מכיל גיליון נתונים')
+      const first = workbook.Sheets[firstName]
+      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(first, { defval: '' })
+      if (!rows.length) throw new Error('לא נמצאו שורות לייבוא')
+
+      if (kind === 'contacts') {
+        const contacts: Contact[] = rows.map((row) => ({ id: uid('contact'), name: String(row['שם'] || row.name || row.Name || ''), company: String(row['חברה'] || row.company || ''), phone: String(row['טלפון'] || row.phone || ''), email: String(row['מייל'] || row.email || ''), status: 'פעיל', tags: [], createdAt: nowIso() })).filter((item) => item.name)
+        if (!contacts.length) throw new Error('לא נמצאה עמודת שם תקינה')
+        setWorkspace((current) => ({ ...current, contacts: [...current.contacts, ...contacts] }))
+        setMessage(`יובאו ${contacts.length} לקוחות`)
+      } else {
+        const tasks = rows.map((row, index) => ({ id: uid('task'), projectId: String(row['projectId'] || '') || undefined, title: String(row['משימה'] || row.title || row.Task || ''), description: String(row['הערות'] || row.notes || ''), status: String(row['סטטוס'] || 'טרם התחיל'), priority: 'רגילה' as const, startDate: String(row['תאריך התחלה'] || '') || undefined, followUpDate: String(row['מועד מעקב'] || row['תאריך סיום'] || '') || undefined, emailTo: String(row['מייל'] || '') || undefined, custom: {}, order: workspace.tasks.length + index + 1, createdAt: nowIso() })).filter((item) => item.title)
+        if (!tasks.length) throw new Error('לא נמצאה עמודת משימה תקינה')
+        setWorkspace((current) => ({ ...current, tasks: [...current.tasks, ...tasks] }))
+        setMessage(`יובאו ${tasks.length} משימות`)
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'ייבוא הקובץ נכשל')
     }
   }
-  return <div className="import-grid"><section className="card import-card"><span><UsersRound /></span><h2>ייבוא לקוחות</h2><p>Excel או CSV עם עמודות שם, חברה, טלפון ומייל.</p><label className="upload-button"><Upload /> בחירת קובץ<input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => e.target.files?.[0] && void importFile(e.target.files[0], 'contacts')} /></label></section><section className="card import-card"><span><ListChecks /></span><h2>ייבוא משימות</h2><p>Excel או CSV עם משימה, סטטוס, תאריכים, הערות ומייל.</p><label className="upload-button"><FileSpreadsheet /> בחירת קובץ<input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => e.target.files?.[0] && void importFile(e.target.files[0], 'tasks')} /></label></section>{message && <div className="success-banner">{message}</div>}</div>
+
+  const onPick = (event: React.ChangeEvent<HTMLInputElement>, kind: 'contacts' | 'tasks') => {
+    const file = event.currentTarget.files?.[0]
+    event.currentTarget.value = ''
+    if (file) void importFile(file, kind)
+  }
+
+  return <div className="import-grid">
+    <section className="card import-card"><span><UsersRound /></span><h2>ייבוא לקוחות</h2><p>Excel או CSV עם עמודות שם, חברה, טלפון ומייל.</p><label className="upload-button"><Upload /> בחירת קובץ<input aria-label="ייבוא קובץ לקוחות" type="file" accept=".xlsx,.xls,.csv" onChange={(e) => onPick(e, 'contacts')} /></label></section>
+    <section className="card import-card"><span><ListChecks /></span><h2>ייבוא משימות</h2><p>Excel או CSV עם משימה, סטטוס, תאריכים, הערות ומייל.</p><label className="upload-button"><FileSpreadsheet /> בחירת קובץ<input aria-label="ייבוא קובץ משימות" type="file" accept=".xlsx,.xls,.csv" onChange={(e) => onPick(e, 'tasks')} /></label></section>
+    {message && <div className="success-banner" role="status">{message}</div>}
+    {error && <div className="error-banner" role="alert">{error}</div>}
+  </div>
 }
 
 export function AIStudio() {
