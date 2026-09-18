@@ -685,13 +685,19 @@ button:focus:not(:focus-visible),a:focus:not(:focus-visible){outline:none}
 
 .compact-task-list>button{
   width:100%;
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:12px;
+  padding:11px 17px;
   border:0;
   border-bottom:1px solid #edf0ed;
-  background:transparent;
+  background:#fff;
   color:inherit;
-  text-align:inherit;
+  text-align:right;
   cursor:pointer;
 }
+.compact-task-list>button>div{display:flex;flex-direction:column;min-width:0}
 .compact-task-list>button:hover{background:#f6f8f6}
 
 .file-link-loading{opacity:.65;cursor:progress}
@@ -705,6 +711,7 @@ button:focus:not(:focus-visible),a:focus:not(:focus-visible){outline:none}
 }
 
 @media(max-width:720px){
+  .client-metrics>button{border-bottom:1px solid var(--line)}
   .project-tabs,.client-tabs{
     overflow:visible;
     flex-wrap:wrap;
