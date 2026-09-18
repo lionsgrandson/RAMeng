@@ -61,6 +61,7 @@ export interface Task {
   followUpDate?: string
   emailTo?: string
   gmailThreadId?: string
+  colorTag?: string
   custom: Record<string, string>
   order: number
   createdAt: string
