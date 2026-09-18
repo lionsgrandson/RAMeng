@@ -105,21 +105,21 @@ export default function UserManagement({ orgId, canManage, isDeveloper, workspac
     <div className="card-head">
       <h2><UsersRound /> משתמשים</h2>
       <div className="page-action-row">
-        <button className="secondary" onClick={() => void refresh()}><RefreshCw /> רענון</button>
-        {canManage && <button className="primary" onClick={() => setAdding(true)}><Plus /> הוספת משתמש</button>}
+        <button type="button" className="secondary" onClick={() => void refresh()}><RefreshCw /> רענון</button>
+        {canManage && <button type="button" className="primary" onClick={() => setAdding(true)}><Plus /> הוספת משתמש</button>}
       </div>
     </div>
 
-    {error && <div className="error-banner">{error}</div>}
-    {message && <div className="success-banner">{message}</div>}
+    {error && <div className="error-banner" role="alert">{error}</div>}
+    {message && <div className="success-banner" role="status">{message}</div>}
     {loading ? <div className="loading-state"><RefreshCw className="spin" /> טוען משתמשים...</div> : <div className="table-scroll">
       <table className="data-table">
-        <thead><tr><th>משתמש</th><th>מייל</th><th>תפקיד</th><th>גישה</th></tr></thead>
+        <thead><tr><th scope="col">משתמש</th><th scope="col">מייל</th><th scope="col">תפקיד</th><th scope="col">גישה</th></tr></thead>
         <tbody>{members.map((member) => <tr key={member.userId}>
-          <td><strong>{member.displayName}</strong></td>
+          <td><strong>{member.displayName || member.email}</strong></td>
           <td>{member.email}</td>
           <td>{canManage && (member.role !== 'developer' || isDeveloper)
-            ? <select className="cell-input" value={member.role === 'developer' ? 'developer' : assignableRoles.includes(member.role as typeof assignableRoles[number]) ? member.role : 'viewer'} disabled={member.role === 'developer'} onChange={(e) => void changeRole(member, e.target.value)}>
+            ? <select className="cell-input" aria-label={`תפקיד עבור ${member.displayName || member.email}`} value={member.role === 'developer' ? 'developer' : assignableRoles.includes(member.role as typeof assignableRoles[number]) ? member.role : 'viewer'} disabled={member.role === 'developer'} onChange={(e) => void changeRole(member, e.target.value)}>
                 {member.role === 'developer' && <option value="developer">{roleLabels.developer}</option>}
                 {assignableRoles.map((role) => <option key={role} value={role}>{roleLabels[role]}</option>)}
               </select>
