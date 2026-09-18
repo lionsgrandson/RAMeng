@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { ChevronDown, ChevronUp, Columns3, Mail, Plus, Settings2, Trash2 } from 'lucide-react'
 import type { ChecklistTemplateItem, Priority, Task, TaskColumn, TaskColumnType, Workspace } from '../types'
 import { Chip, Field, Modal, confirmDelete, dateInput, nowIso, uid } from './common'
@@ -9,6 +9,9 @@ type Props = {
   projectId?: string
   onEmail?: (task: Task) => void
   canEdit?: boolean
+  focusTaskId?: string | null
+  attentionOnly?: boolean
+  onClearAttention?: () => void
 }
 
 type TaskView = 'active' | 'archive'
@@ -32,7 +35,7 @@ const fieldValue = (task: Task, column: TaskColumn) => {
   return String((task as unknown as Record<string, unknown>)[column.key] ?? '')
 }
 
-export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail, canEdit = true }: Props) {
+export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail, canEdit = true, focusTaskId, attentionOnly = false, onClearAttention }: Props) {
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('הכל')
   const [projectFilter, setProjectFilter] = useState('הכל')
@@ -71,6 +74,7 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
     }
     if (view === 'active' && isCompleted(task)) return false
     if (view === 'archive' && !isCompleted(task)) return false
+    if (attentionOnly && !(task.status === 'דורש מעקב' || task.priority === 'דחופה' || (task.followUpDate && new Date(task.followUpDate).getTime() < Date.now()))) return false
     return true
   })
 
@@ -101,6 +105,22 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
     walk('root', 0)
     return result
   }, [filteredTasks, search, statusFilter, workspace.projects, workspace.team])
+
+  useEffect(() => {
+    if (!focusTaskId) return
+    const target = workspace.tasks.find((task) => task.id === focusTaskId)
+    if (!target) return
+    setSearch('')
+    setStatusFilter('הכל')
+    setAssigneeFilter('הכל')
+    setColorFilter('הכל')
+    setProjectFilter('הכל')
+    setView(isCompleted(target) ? 'archive' : 'active')
+    const timer = window.setTimeout(() => {
+      document.querySelector<HTMLElement>(`[data-task-id="${CSS.escape(focusTaskId)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' })
+    }, 60)
+    return () => window.clearTimeout(timer)
+  }, [focusTaskId, workspace.tasks])
 
   const updateTask = (id: string, patch: Partial<Task>) => setWorkspace((current) => ({
     ...current,
@@ -255,6 +275,7 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
   const defaultProjectId = selectedParent?.projectId || projectId || (projectFilter !== 'הכל' && projectFilter !== '__none__' ? projectFilter : '')
 
   return <div className="task-board-wrap">
+    {attentionOnly && <div className="attention-filter-banner" role="status"><strong>מציג רק נושאים שדורשים טיפול</strong>{onClearAttention && <button type="button" className="secondary" onClick={onClearAttention}>הצגת כל המשימות</button>}</div>}
     <div className="task-view-tabs" role="tablist" aria-label="תצוגת משימות">
       <button type="button" role="tab" aria-selected={view === 'active'} className={view === 'active' ? 'active' : ''} onClick={() => setView('active')}>פעילות <span>{activeCount}</span></button>
       <button type="button" role="tab" aria-selected={view === 'archive'} className={view === 'archive' ? 'active' : ''} onClick={() => setView('archive')}>ארכיון <span>{archivedCount}</span></button>
@@ -289,7 +310,7 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
       <table className="data-table task-table">
         <thead><tr><th className="complete-col">בוצע</th><th className="color-col">קטלוג</th>{!projectId && <th style={{ minWidth: 180 }}>פרויקט</th>}{visibleColumns.map((column) => <th key={column.id} style={{ minWidth: column.width }}>{column.label}</th>)}<th className="actions-col">פעולות</th></tr></thead>
         <tbody>
-          {rows.map(({ task, depth }) => <tr key={task.id} className={`${task.parentId ? 'subtask-row' : ''} ${isCompleted(task) ? 'completed-row' : ''}`} style={{ borderInlineStartColor: task.colorTag ? taskColor(task.colorTag).hex : 'transparent' }}>
+          {rows.map(({ task, depth }) => <tr key={task.id} data-task-id={task.id} className={`${task.parentId ? 'subtask-row' : ''} ${isCompleted(task) ? 'completed-row' : ''} ${focusTaskId === task.id ? 'focused-task-row' : ''}`} style={{ borderInlineStartColor: task.colorTag ? taskColor(task.colorTag).hex : 'transparent' }}>
             <td className="complete-cell"><input type="checkbox" aria-label={isCompleted(task) ? `שחזור ${task.title} לאזור הפעיל` : `סימון ${task.title} כבוצעה`} checked={isCompleted(task)} disabled={!canEdit} onChange={(e) => toggleTaskCompleted(task, e.target.checked)} /></td>
             <td className="color-cell"><label className="task-color-picker"><span className="color-dot" style={{ backgroundColor: taskColor(task.colorTag).hex }} /><select aria-label={`צבע קטלוג עבור ${task.title}`} disabled={!canEdit} value={task.colorTag || ''} onChange={(e) => updateTask(task.id, { colorTag: e.target.value || undefined })}>{TASK_COLOR_OPTIONS.map((item) => <option key={item.id || 'none'} value={item.id}>{item.label}</option>)}</select></label></td>
             {!projectId && <td><select className="cell-input" disabled={!canEdit} aria-label={`פרויקט עבור ${task.title}`} value={task.projectId || ''} onChange={(e) => changeTaskProject(task.id, e.target.value || undefined)}><option value="">ללא פרויקט</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></td>}
