@@ -21,16 +21,19 @@ create table if not exists public.memberships (
 
 alter table public.memberships drop constraint if exists memberships_role_check;
 alter table public.memberships add constraint memberships_role_check
-  check (role in ('developer','admin','assistant','inspector','engineer','viewer','manager','member'));
+  check (role in ('developer','admin','assistant','inspector','engineer','viewer','reviewer','manager','member'));
 
 create index if not exists memberships_user_idx on public.memberships(user_id);
 
 create table if not exists public.workspace_state (
   org_id uuid primary key references public.organizations(id) on delete cascade,
   data jsonb not null default '{}'::jsonb,
+  version bigint not null default 0,
   updated_by uuid references auth.users(id) on delete set null,
   updated_at timestamptz not null default now()
 );
+
+alter table public.workspace_state add column if not exists version bigint not null default 0;
 
 alter table public.organizations enable row level security;
 alter table public.memberships enable row level security;
@@ -89,15 +92,106 @@ language sql
 stable
 security definer
 set search_path = public
-as $$
+as $
   select exists (
     select 1
     from public.memberships m
     where m.org_id = target_org
       and m.user_id = auth.uid()
-      and m.role <> 'viewer'
+      and m.role in ('developer','admin','manager','assistant','inspector','engineer')
   );
-$$;
+$;
+
+create or replace function public.save_workspace_state(
+  target_org uuid,
+  next_data jsonb,
+  expected_version bigint
+)
+returns bigint
+language plpgsql
+security definer
+set search_path = public
+as $
+declare
+  caller_role text;
+  current_data jsonb;
+  current_version bigint;
+  changed_key text;
+  allowed_keys text[];
+  next_version bigint;
+begin
+  select m.role into caller_role
+  from public.memberships m
+  where m.org_id = target_org
+    and m.user_id = auth.uid()
+  limit 1;
+
+  if caller_role is null then
+    raise exception 'Access denied';
+  end if;
+
+  if caller_role in ('viewer','reviewer','member') then
+    raise exception 'This account is read-only';
+  end if;
+
+  select ws.data, ws.version
+    into current_data, current_version
+  from public.workspace_state ws
+  where ws.org_id = target_org
+  for update;
+
+  if current_version is null then
+    raise exception 'Workspace not initialized';
+  end if;
+
+  if current_version <> expected_version then
+    raise exception 'WORKSPACE_VERSION_CONFLICT';
+  end if;
+
+  if caller_role in ('developer','admin','manager') then
+    allowed_keys := array[
+      'contacts','deals','projects','tasks','events','files','quotes','team',
+      'taskColumns','taskStatuses','checklistTemplates','reports','reportTemplates',
+      'audit','clientNotes','settings'
+    ];
+  elsif caller_role = 'assistant' then
+    allowed_keys := array[
+      'contacts','deals','projects','tasks','events','files','quotes','clientNotes','audit'
+    ];
+  elsif caller_role in ('inspector','engineer') then
+    allowed_keys := array[
+      'projects','tasks','events','files','reports','clientNotes','audit'
+    ];
+  else
+    raise exception 'This role is not allowed to edit the workspace';
+  end if;
+
+  for changed_key in
+    select key
+    from (
+      select jsonb_object_keys(coalesce(current_data, '{}'::jsonb)) as key
+      union
+      select jsonb_object_keys(coalesce(next_data, '{}'::jsonb)) as key
+    ) keys
+    where coalesce(current_data -> key, 'null'::jsonb) is distinct from coalesce(next_data -> key, 'null'::jsonb)
+  loop
+    if not (changed_key = any(allowed_keys)) then
+      raise exception 'Role % cannot modify workspace section %', caller_role, changed_key;
+    end if;
+  end loop;
+
+  next_version := current_version + 1;
+
+  update public.workspace_state
+  set data = next_data,
+      version = next_version,
+      updated_by = auth.uid(),
+      updated_at = now()
+  where org_id = target_org;
+
+  return next_version;
+end;
+$;
 
 -- The first authenticated user initializes the organization. The configured
 -- developer email is promoted to the protected developer role by the Worker.
@@ -243,6 +337,7 @@ revoke all on function public.is_org_member(uuid) from public, anon;
 revoke all on function public.is_org_developer(uuid) from public, anon;
 revoke all on function public.is_org_admin(uuid) from public, anon;
 revoke all on function public.can_org_edit(uuid) from public, anon;
+revoke all on function public.save_workspace_state(uuid, jsonb, bigint) from public, anon;
 revoke all on function public.bootstrap_first_admin() from public, anon;
 revoke all on function public.list_org_members(uuid) from public, anon;
 revoke all on function public.set_org_member_role(uuid, text, text) from public, anon;
@@ -251,6 +346,7 @@ grant execute on function public.is_org_member(uuid) to authenticated;
 grant execute on function public.is_org_developer(uuid) to authenticated;
 grant execute on function public.is_org_admin(uuid) to authenticated;
 grant execute on function public.can_org_edit(uuid) to authenticated;
+grant execute on function public.save_workspace_state(uuid, jsonb, bigint) to authenticated;
 grant execute on function public.bootstrap_first_admin() to authenticated;
 grant execute on function public.list_org_members(uuid) to authenticated;
 grant execute on function public.set_org_member_role(uuid, text, text) to authenticated;
@@ -314,17 +410,11 @@ to authenticated
 using (public.is_org_member(org_id));
 
 drop policy if exists workspace_insert_member on public.workspace_state;
-create policy workspace_insert_member
-on public.workspace_state for insert
-to authenticated
-with check (public.can_org_edit(org_id));
-
 drop policy if exists workspace_update_member on public.workspace_state;
-create policy workspace_update_member
-on public.workspace_state for update
-to authenticated
-using (public.can_org_edit(org_id))
-with check (public.can_org_edit(org_id));
+
+-- Workspace writes go through save_workspace_state(), which validates the caller's
+-- role, the changed top-level sections and the optimistic version atomically.
+-- Direct client writes are intentionally not granted by RLS.
 
 -- File storage. Files are stored under <org-id>/<project-id>/...
 insert into storage.buckets (id, name, public, file_size_limit)
