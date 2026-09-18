@@ -127,7 +127,7 @@ async function requireEditor(request, env, config) {
     },
   })
   const memberships = response.ok ? await response.json() : []
-  const canEdit = Array.isArray(memberships) && memberships.some((membership) => membership?.role && !['viewer', 'reviewer'].includes(membership.role))
+  const canEdit = Array.isArray(memberships) && memberships.some((membership) => ['developer', 'admin', 'manager', 'assistant', 'inspector', 'engineer'].includes(membership?.role))
   if (!canEdit) throw Object.assign(new Error('החשבון מוגדר לצפייה בלבד'), { status: 403 })
   return user
 }
@@ -528,7 +528,7 @@ async function handleUserInvite(request, env, config) {
   const name = cleanString(body.name)
   const requestedRole = cleanString(body.role) || 'viewer'
   if (!orgId || !email || !email.includes('@')) throw Object.assign(new Error('יש להזין מייל תקין'), { status: 400 })
-  if (!['admin', 'assistant', 'inspector', 'engineer', 'viewer'].includes(requestedRole)) throw Object.assign(new Error('תפקיד לא תקין'), { status: 400 })
+  if (!['admin', 'assistant', 'inspector', 'engineer', 'viewer', 'reviewer'].includes(requestedRole)) throw Object.assign(new Error('תפקיד לא תקין'), { status: 400 })
 
   await requireOrgManager(request, env, config, orgId)
   const admin = supabaseAdmin(env, config)
