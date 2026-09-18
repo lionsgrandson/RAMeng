@@ -1,5 +1,7 @@
 # RAM Engineering CRM production setup
 
+> **Existing installations:** after updating to the usability/concurrency release, run the latest `supabase/setup.sql` once in the client's Supabase SQL Editor. The frontend includes a temporary legacy fallback so an existing CRM does not stop saving before this migration is applied, but optimistic concurrency checks and database-enforced granular workspace permissions become active only after the SQL update.
+
 Use this checklist when the client sends access to the production accounts.
 
 ## What you need from the client
