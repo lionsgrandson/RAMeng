@@ -295,7 +295,7 @@ begin
     raise exception 'Only an administrator can manage users';
   end if;
 
-  if target_role not in ('developer','admin','assistant','inspector','engineer','viewer') then
+  if target_role not in ('developer','admin','assistant','inspector','engineer','viewer','reviewer') then
     raise exception 'Invalid role';
   end if;
 
