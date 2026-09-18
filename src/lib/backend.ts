@@ -101,7 +101,12 @@ export async function loadOrganizationWorkspace(userId: string): Promise<{ orgId
   if (!membership) throw new Error('המשתמש אינו משויך לארגון. מנהל המערכת צריך להוסיף אותו.')
 
   const orgId = String(membership.org_id)
-  const { data: state, error: stateError } = await client.from('workspace_state').select('data, version').eq('org_id', orgId).maybeSingle()
+  let { data: state, error: stateError } = await client.from('workspace_state').select('data, version').eq('org_id', orgId).maybeSingle()
+  if (stateError && (stateError.code === '42703' || stateError.code === 'PGRST204' || stateError.message.toLowerCase().includes('version'))) {
+    const legacy = await client.from('workspace_state').select('data').eq('org_id', orgId).maybeSingle()
+    state = legacy.data ? { ...legacy.data, version: 0 } : null
+    stateError = legacy.error
+  }
   if (stateError) throw stateError
   if (!state?.data) {
     const workspace = cloneWorkspace()
@@ -132,6 +137,12 @@ export async function saveOrganizationWorkspace(orgId: string, userId: string, w
       conflict.name = 'WorkspaceConflictError'
       throw conflict
     }
+    const rpcMissing = error.code === 'PGRST202' || (error.message.includes('save_workspace_state') && error.message.toLowerCase().includes('schema cache'))
+    if (rpcMissing) {
+      const legacy = await client.from('workspace_state').upsert({ org_id: orgId, data: workspace, updated_by: userId, updated_at: new Date().toISOString() }, { onConflict: 'org_id' })
+      if (legacy.error) throw legacy.error
+      return { version: expectedVersion + 1 }
+    }
     throw error
   }
   return { version: Number(data || expectedVersion + 1) }
@@ -142,7 +153,7 @@ export function subscribeWorkspace(orgId: string, onWorkspace: (workspace: Works
   return client.channel(`workspace:${orgId}`)
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'workspace_state', filter: `org_id=eq.${orgId}` }, (payload) => {
       const row = payload.new as { data?: Workspace; version?: number }
-      if (row.data) onWorkspace({ ...cloneWorkspace(), ...row.data }, Number(row.version || 0))
+      if (row.data) onWorkspace({ ...cloneWorkspace(), ...row.data }, typeof row.version === 'number' ? row.version : -1)
     })
     .subscribe()
 }
