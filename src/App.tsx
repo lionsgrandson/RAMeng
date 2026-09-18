@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { User } from '@supabase/supabase-js'
-import { BarChart3, Bell, CalendarDays, ChevronDown, ContactRound, FileInput, FileText, FolderKanban, LayoutDashboard, ListChecks, LogOut, Menu, Plus, Search, Settings, UsersRound, X } from 'lucide-react'
+import { BarChart3, Bell, CalendarDays, ContactRound, FileInput, FileText, FolderKanban, LayoutDashboard, ListChecks, LogOut, Menu, Search, Settings, UsersRound, X } from 'lucide-react'
 import type { Workspace } from './types'
 import { cloneWorkspace } from './seed'
 import { configureBackend, getBackend, getCurrentUser, loadOrganizationWorkspace, saveOrganizationWorkspace, signOut, subscribeWorkspace } from './lib/backend'
@@ -74,7 +74,6 @@ export default function App() {
   const [selectedClient, setSelectedClient] = useState<string | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [search, setSearch] = useState('')
-  const [quickOpen, setQuickOpen] = useState(false)
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
 
   useEffect(() => {
@@ -135,14 +134,21 @@ export default function App() {
 
   useEffect(() => {
     if (!loaded || !user || !canEdit) return
+    setSaveState('saving')
     const timer = window.setTimeout(() => {
-      setSaveState('saving')
       void saveOrganizationWorkspace(orgId, user.id, workspace)
         .then(() => { setSaveState('saved'); window.setTimeout(() => setSaveState('idle'), 1200) })
         .catch(() => setSaveState('error'))
     }, 650)
     return () => window.clearTimeout(timer)
   }, [workspace, loaded, user?.id, orgId, canEdit])
+
+  useEffect(() => {
+    if (saveState !== 'saving') return
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = '' }
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [saveState])
 
   useEffect(() => {
     if (!loaded || !orgId) return
@@ -161,9 +167,9 @@ export default function App() {
     ].slice(0, 10)
   }, [search, workspace])
 
-  if (!runtime) return <div className="app-loading"><img src="/rameng-mark.svg" /><span>טוען מערכת...</span></div>
+  if (!runtime) return <div className="app-loading"><img src="/rameng-mark.svg" alt="ר.א.ם הנדסה" /><span>טוען מערכת...</span></div>
   if (!runtime.configured) return <SetupScreen />
-  if (user === undefined) return <div className="app-loading"><img src="/rameng-mark.svg" /><span>בודק התחברות...</span></div>
+  if (user === undefined) return <div className="app-loading"><img src="/rameng-mark.svg" alt="ר.א.ם הנדסה" /><span>בודק התחברות...</span></div>
   if (!user) return <LoginScreen onSuccess={() => void getCurrentUser().then(setUser)} />
   if (inviteMode) return <SetPasswordScreen onSuccess={() => {
     const url = new URL(window.location.href)
@@ -174,14 +180,14 @@ export default function App() {
     setInviteMode(false)
   }} />
   if (loadError) return <div className="auth-screen"><section className="login-card"><h1>לא ניתן לטעון את סביבת העבודה</h1><div className="error-banner">{loadError}</div><p>ודאו שהגדרת מסד הנתונים הושלמה ושיש למשתמש הרשאה למערכת.</p><button className="secondary" onClick={() => window.location.reload()}>ניסיון מחדש</button></section></div>
-  if (!loaded) return <div className="app-loading"><img src="/rameng-mark.svg" /><span>טוען פרויקטים...</span></div>
+  if (!loaded) return <div className="app-loading"><img src="/rameng-mark.svg" alt="ר.א.ם הנדסה" /><span>טוען פרויקטים...</span></div>
 
-  if (selectedProject) return <div className={`app-shell project-mode ${!canEdit ? 'read-only-mode' : ''}`}><Sidebar page={page} setPage={(next) => { setSelectedProject(null); setPage(next) }} workspace={workspace} open={sidebarOpen} setOpen={setSidebarOpen} user={user} onLogout={() => void signOut()} isDeveloper={isDeveloper} canManageUsers={canManageUsers} /><div className="main"><Topbar search={search} setSearch={setSearch} searchResults={searchResults} urgentCount={urgentCount} onMenu={() => setSidebarOpen(true)} quickOpen={quickOpen} setQuickOpen={setQuickOpen} setPage={(next) => { setSelectedProject(null); setPage(next) }} saveState={saveState} canEdit={canEdit} /><main className="page-wrap project-page-wrap"><ProjectWorkspace projectId={selectedProject} workspace={workspace} setWorkspace={editableSetWorkspace} orgId={orgId} onBack={() => { setSelectedProject(null); setPage('projects') }} /></main></div></div>
+  if (selectedProject) return <div className={`app-shell project-mode ${!canEdit ? 'read-only-mode' : ''}`}><Sidebar page={page} setPage={(next) => { setSelectedProject(null); setPage(next); setSidebarOpen(false) }} workspace={workspace} open={sidebarOpen} setOpen={setSidebarOpen} user={user} onLogout={() => void signOut()} isDeveloper={isDeveloper} canManageUsers={canManageUsers} /><div className="main"><Topbar search={search} setSearch={setSearch} searchResults={searchResults} urgentCount={urgentCount} onMenu={() => setSidebarOpen(true)} setPage={(next) => { setSelectedProject(null); setPage(next) }} saveState={saveState} canEdit={canEdit} /><main className="page-wrap project-page-wrap"><ProjectWorkspace projectId={selectedProject} workspace={workspace} setWorkspace={editableSetWorkspace} orgId={orgId} onBack={() => { setSelectedProject(null); setPage('projects') }} /></main></div></div>
 
   return <div className={`app-shell ${!canEdit ? 'read-only-mode' : ''}`}>
     <Sidebar page={page} setPage={(next) => { if (next === 'clients') setSelectedClient(null); setPage(next); setSidebarOpen(false) }} workspace={workspace} open={sidebarOpen} setOpen={setSidebarOpen} user={user} onLogout={() => void signOut()} isDeveloper={isDeveloper} canManageUsers={canManageUsers} />
     <div className="main">
-      <Topbar search={search} setSearch={setSearch} searchResults={searchResults} urgentCount={urgentCount} onMenu={() => setSidebarOpen(true)} quickOpen={quickOpen} setQuickOpen={setQuickOpen} setPage={(next) => { if (next === 'clients') setSelectedClient(null); setPage(next) }} saveState={saveState} canEdit={canEdit} />
+      <Topbar search={search} setSearch={setSearch} searchResults={searchResults} urgentCount={urgentCount} onMenu={() => setSidebarOpen(true)} setPage={(next) => { if (next === 'clients') setSelectedClient(null); setPage(next) }} saveState={saveState} canEdit={canEdit} />
       <main className="page-wrap">
         <header className="page-heading"><h1>{pageInfo[page]}</h1>{(role || isDeveloper) && <span className="role-badge">{roleLabel(role, isDeveloper)}</span>}</header>
         {page === 'overview' && <Dashboard workspace={workspace} onProject={(id) => setSelectedProject(id)} />}
@@ -209,14 +215,24 @@ function Sidebar({ page, setPage, workspace, open, setOpen, user, onLogout, isDe
   return <>
     <div className={`sidebar-overlay ${open ? 'show' : ''}`} onClick={() => setOpen(false)} />
     <aside className={`sidebar ${open ? 'open' : ''}`}>
-      <div className="brand"><img src={workspace.settings.logoUrl || '/rameng-mark.svg'} /><div><strong>{workspace.settings.organizationShortName}</strong></div><button className="sidebar-close" onClick={() => setOpen(false)}><X /></button></div>
-      <nav>{visibleItems.map((item) => { const Icon = item.icon; const count = item.id === 'tasks' ? workspace.tasks.filter((task) => !['בוצע', 'סגור'].includes(task.status)).length : item.id === 'projects' ? workspace.projects.filter((project) => project.status === 'בביצוע').length : 0; return <button key={item.id} className={page === item.id ? 'active' : ''} onClick={() => setPage(item.id)}><Icon /><span>{item.label}</span>{count > 0 && <em>{count}</em>}</button> })}</nav>
-      <div className="sidebar-bottom"><div className="profile"><span className="avatar">{(user.email || 'R').slice(0, 2).toUpperCase()}</span><div><strong>{user.email}</strong><small>מחובר</small></div><button className="icon-btn" onClick={onLogout} title="יציאה"><LogOut /></button></div><a href={workspace.settings.website} target="_blank" rel="noreferrer">{workspace.settings.website.replace(/^https?:\/\//, '')}</a></div>
+      <div className="brand"><img src={workspace.settings.logoUrl || '/rameng-mark.svg'} alt={workspace.settings.organizationShortName} /><div><strong>{workspace.settings.organizationShortName}</strong></div><button type="button" className="sidebar-close" onClick={() => setOpen(false)} aria-label="סגירת תפריט"><X /></button></div>
+      <nav>{visibleItems.map((item) => { const Icon = item.icon; const count = item.id === 'tasks' ? workspace.tasks.filter((task) => !['בוצע', 'סגור'].includes(task.status)).length : item.id === 'projects' ? workspace.projects.filter((project) => project.status === 'בביצוע').length : 0; return <button type="button" key={item.id} className={page === item.id ? 'active' : ''} aria-current={page === item.id ? 'page' : undefined} onClick={() => setPage(item.id)}><Icon /><span>{item.label}</span>{count > 0 && <em aria-label={`${count} פריטים`}>{count}</em>}</button> })}</nav>
+      <div className="sidebar-bottom"><div className="profile"><span className="avatar">{(user.email || 'R').slice(0, 2).toUpperCase()}</span><div><strong>{user.email}</strong><small>מחובר</small></div><button type="button" className="icon-btn" onClick={onLogout} title="יציאה" aria-label="יציאה"><LogOut /></button></div><a href={workspace.settings.website} target="_blank" rel="noreferrer">{workspace.settings.website.replace(/^https?:\/\//, '')}</a></div>
     </aside>
   </>
 }
 
 type SearchResult = { id: string; type: string; label: string; detail: string; action: () => void }
-function Topbar({ search, setSearch, searchResults, urgentCount, onMenu, quickOpen, setQuickOpen, setPage, saveState, canEdit }: { search: string; setSearch: (value: string) => void; searchResults: SearchResult[]; urgentCount: number; onMenu: () => void; quickOpen: boolean; setQuickOpen: (value: boolean) => void; setPage: (page: Page) => void; saveState: string; canEdit: boolean }) {
-  return <header className="topbar"><button className="mobile-menu icon-btn" onClick={onMenu}><Menu /></button><div className="global-search"><Search /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="חיפוש..." />{search && <button className="search-clear" onClick={() => setSearch('')}><X /></button>}{search && <div className="search-results">{searchResults.map((result) => <button key={`${result.type}-${result.id}`} onClick={() => { result.action(); setSearch('') }}><span>{result.type}</span><div><strong>{result.label}</strong><small>{result.detail}</small></div></button>)}{!searchResults.length && <div>לא נמצאו תוצאות</div>}</div>}</div><div className={`save-state save-indicator ${!canEdit ? 'readonly' : saveState}`}>{!canEdit ? 'צפייה בלבד' : saveState === 'saving' ? 'שומר...' : saveState === 'saved' ? 'נשמר' : saveState === 'error' ? 'שגיאת שמירה' : ''}</div><button className="notification icon-btn" title={`${urgentCount} נושאים דורשים טיפול`} onClick={() => setPage('overview')}><Bell />{urgentCount > 0 && <i>{urgentCount > 9 ? '9+' : urgentCount}</i>}</button>{canEdit && <div className="quick-add-wrap"><button className="primary quick-button" onClick={() => setQuickOpen(!quickOpen)}><Plus /> חדש <ChevronDown /></button>{quickOpen && <div className="quick-add-menu"><button onClick={() => { setPage('projects'); setQuickOpen(false) }}><FolderKanban /> פרויקט חדש</button><button onClick={() => { setPage('clients'); setQuickOpen(false) }}><ContactRound /> לקוח חדש</button><button onClick={() => { setPage('tasks'); setQuickOpen(false) }}><ListChecks /> משימה חדשה</button><button onClick={() => { setPage('reports'); setQuickOpen(false) }}><BarChart3 /> דוח פיקוח</button></div>}</div>}</header>
+function Topbar({ search, setSearch, searchResults, urgentCount, onMenu, setPage, saveState, canEdit }: { search: string; setSearch: (value: string) => void; searchResults: SearchResult[]; urgentCount: number; onMenu: () => void; setPage: (page: Page) => void; saveState: string; canEdit: boolean }) {
+  return <header className="topbar">
+    <button type="button" className="mobile-menu icon-btn" onClick={onMenu} aria-label="פתיחת תפריט"><Menu /></button>
+    <div className="global-search">
+      <Search aria-hidden="true" />
+      <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="חיפוש..." aria-label="חיפוש במערכת" role="combobox" aria-expanded={Boolean(search)} aria-controls="global-search-results" />
+      {search && <button type="button" className="search-clear" onClick={() => setSearch('')} aria-label="ניקוי חיפוש"><X /></button>}
+      {search && <div className="search-results" id="global-search-results" role="listbox">{searchResults.map((result) => <button type="button" role="option" key={`${result.type}-${result.id}`} onClick={() => { result.action(); setSearch('') }}><span>{result.type}</span><div><strong>{result.label}</strong><small>{result.detail}</small></div></button>)}{!searchResults.length && <div className="search-empty">לא נמצאו תוצאות</div>}</div>}
+    </div>
+    <div className={`save-state save-indicator ${!canEdit ? 'readonly' : saveState}`} role="status" aria-live="polite">{!canEdit ? 'צפייה בלבד' : saveState === 'saving' ? 'שומר...' : saveState === 'saved' ? 'נשמר' : saveState === 'error' ? 'שגיאת שמירה' : ''}</div>
+    <button type="button" className="notification icon-btn" title={`${urgentCount} נושאים דורשים טיפול`} aria-label={urgentCount ? `${urgentCount} נושאים דורשים טיפול` : 'אין נושאים דחופים'} onClick={() => setPage('overview')}><Bell />{urgentCount > 0 && <i aria-hidden="true">{urgentCount > 9 ? '9+' : urgentCount}</i>}</button>
+  </header>
 }
