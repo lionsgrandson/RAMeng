@@ -239,17 +239,18 @@ export default function App() {
   useEffect(() => {
     if (!loaded || !orgId) return
     const channel = subscribeWorkspace(orgId, (incoming, version) => setWorkspace((current) => {
-      if (version <= workspaceVersionRef.current) return current
+      const versioned = version >= 0
+      if (versioned && version <= workspaceVersionRef.current) return current
       const serialized = JSON.stringify(incoming)
       if (serialized === pendingSaveSnapshotRef.current || serialized === lastSavedSnapshotRef.current) {
-        workspaceVersionRef.current = version
+        if (versioned) workspaceVersionRef.current = version
         return current
       }
       if (dirtyRef.current) {
-        setSaveState('conflict')
+        if (versioned) setSaveState('conflict')
         return current
       }
-      workspaceVersionRef.current = version
+      if (versioned) workspaceVersionRef.current = version
       lastSavedSnapshotRef.current = serialized
       return JSON.stringify(current) === serialized ? current : incoming
     }))
