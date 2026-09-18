@@ -1,5 +1,7 @@
-import { useEffect, useId, useRef, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { Inbox, X } from 'lucide-react'
+import type { FileRecord } from '../types'
+import { refreshSignedUrl } from '../lib/backend'
 
 export const uid = (prefix = 'id') => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 export const nowIso = () => new Date().toISOString()
@@ -7,6 +9,23 @@ export const dateInput = (value?: string) => value ? value.slice(0, 10) : ''
 export const dateLabel = (value?: string) => value ? new Intl.DateTimeFormat('he-IL', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(value)) : 'ללא תאריך'
 export const dateTimeLabel = (value?: string) => value ? new Intl.DateTimeFormat('he-IL', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value)) : ''
 export const money = (value = 0) => new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 }).format(value)
+
+export function StoredFileLink({ file, className, children }: { file: FileRecord; className?: string; children: ReactNode }) {
+  const [resolvedUrl, setResolvedUrl] = useState(file.storagePath ? '' : file.url)
+
+  useEffect(() => {
+    let active = true
+    setResolvedUrl(file.storagePath ? '' : file.url)
+    if (!file.storagePath) return () => { active = false }
+    void refreshSignedUrl(file.storagePath)
+      .then((url) => { if (active) setResolvedUrl(url || file.url) })
+      .catch(() => { if (active) setResolvedUrl(file.url) })
+    return () => { active = false }
+  }, [file.storagePath, file.url])
+
+  if (!resolvedUrl) return <span className={`${className || ''} file-link-loading`.trim()} aria-busy="true">{children}</span>
+  return <a className={className} href={resolvedUrl} target="_blank" rel="noreferrer" aria-label={`פתיחת הקובץ ${file.name}`}>{children}</a>
+}
 
 export function Modal({ title, children, onClose, wide = false }: { title: string; children: ReactNode; onClose: () => void; wide?: boolean }) {
   const titleId = useId()
