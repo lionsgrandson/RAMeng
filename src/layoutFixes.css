@@ -635,3 +635,85 @@ button:focus:not(:focus-visible),a:focus:not(:focus-visible){outline:none}
   .color-col{width:100px;min-width:100px}
   .color-cell{min-width:100px}
 }
+
+
+/* Usability audit fixes */
+.attention-action{
+  width:100%;
+  border:0;
+  background:transparent;
+  text-align:inherit;
+  color:inherit;
+  cursor:pointer;
+}
+.attention-action:hover{background:#f4f7f4}
+.attention-action>svg{width:15px;height:15px;margin-inline-start:auto;color:var(--muted)}
+
+.attention-filter-banner{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  margin:8px;
+  padding:9px 10px;
+  border:1px solid #ead9b5;
+  border-radius:8px;
+  background:#fff9ea;
+  font-size:11px;
+}
+.focused-task-row{outline:2px solid var(--brand-dark);outline-offset:-2px;background:#f3f7f3!important}
+.focused-report-item{outline:2px solid var(--brand-dark);outline-offset:-2px;background:#f7faf7}
+
+.client-metrics>button{
+  appearance:none;
+  border:0;
+  border-inline-end:1px solid var(--line);
+  background:transparent;
+  color:inherit;
+  text-align:inherit;
+  padding:13px;
+  display:flex;
+  flex-direction:column;
+  align-items:stretch;
+  cursor:pointer;
+}
+.client-metrics>button:last-child{border-inline-end:0}
+.client-metrics>button:hover{background:#f6f8f6}
+.client-metrics>button small{color:var(--muted);font-size:10px}
+.client-metrics>button strong{font-size:21px;line-height:1.1;margin-top:3px}
+.client-metrics>button span{font-size:9px;color:var(--muted);margin-top:3px}
+
+.compact-task-list>button{
+  width:100%;
+  border:0;
+  border-bottom:1px solid #edf0ed;
+  background:transparent;
+  color:inherit;
+  text-align:inherit;
+  cursor:pointer;
+}
+.compact-task-list>button:hover{background:#f6f8f6}
+
+.file-link-loading{opacity:.65;cursor:progress}
+.save-indicator.conflict{
+  color:#8a5a00;
+  background:#fff5d8;
+  border-color:#ead59b;
+  max-width:260px;
+  white-space:normal;
+  line-height:1.25;
+}
+
+@media(max-width:720px){
+  .project-tabs,.client-tabs{
+    overflow:visible;
+    flex-wrap:wrap;
+    white-space:normal;
+  }
+  .project-tabs button,.client-tabs button{
+    flex:1 1 auto;
+    min-width:max-content;
+  }
+  .attention-filter-banner{align-items:stretch;flex-direction:column}
+  .attention-filter-banner .secondary{width:100%}
+}
