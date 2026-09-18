@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { User } from '@supabase/supabase-js'
 import { BarChart3, Bell, CalendarDays, ContactRound, FileInput, FileText, FolderKanban, LayoutDashboard, ListChecks, LogOut, Menu, Search, Settings, UsersRound, X } from 'lucide-react'
 import type { Workspace } from './types'
@@ -59,6 +59,53 @@ const invitedFromUrl = () => {
   return params.get('invite') === '1' || window.location.hash.includes('type=invite')
 }
 
+const permissionsFor = (role: string, isDeveloper: boolean) => {
+  const effectiveRole = isDeveloper ? 'developer' : role
+  const admin = ['developer', 'admin', 'manager'].includes(effectiveRole)
+  const operational = admin || ['assistant', 'inspector', 'engineer'].includes(effectiveRole)
+  return {
+    any: operational,
+    contacts: admin || effectiveRole === 'assistant',
+    projects: operational,
+    tasks: operational,
+    calendar: operational,
+    files: operational,
+    reports: admin || ['inspector', 'engineer'].includes(effectiveRole),
+    finance: admin || effectiveRole === 'assistant',
+    communication: operational,
+  }
+}
+
+const changedEntity = (before: unknown, after: unknown) => {
+  if (!Array.isArray(before) || !Array.isArray(after)) return undefined
+  const beforeById = new Map(before.filter((item) => item && typeof item === 'object' && 'id' in item).map((item) => [String((item as { id: unknown }).id), item]))
+  const afterById = new Map(after.filter((item) => item && typeof item === 'object' && 'id' in item).map((item) => [String((item as { id: unknown }).id), item]))
+  const ids = new Set([...beforeById.keys(), ...afterById.keys()])
+  const changed = [...ids].filter((id) => JSON.stringify(beforeById.get(id)) !== JSON.stringify(afterById.get(id)))
+  return changed.length === 1 ? changed[0] : undefined
+}
+
+const appendAutomaticAudit = (current: Workspace, next: Workspace, actor: string): Workspace => {
+  if (next.audit !== current.audit) return next
+  const sections: [keyof Workspace, string][] = [
+    ['contacts', 'לקוחות'], ['deals', 'עסקאות'], ['projects', 'פרויקטים'], ['tasks', 'משימות'],
+    ['events', 'יומן'], ['files', 'קבצים'], ['quotes', 'כספים'], ['team', 'צוות'],
+    ['taskColumns', 'עמודות משימות'], ['taskStatuses', 'סטטוסים'], ['checklistTemplates', 'תבניות'],
+    ['reports', 'דוחות'], ['reportTemplates', 'תבניות דוח'], ['clientNotes', 'תקשורת'], ['settings', 'הגדרות'],
+  ]
+  const changed = sections.filter(([key]) => JSON.stringify(current[key]) !== JSON.stringify(next[key]))
+  if (!changed.length) return next
+  const entries = changed.map(([key, label]) => ({
+    id: `audit-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    at: new Date().toISOString(),
+    actor,
+    action: `עדכון ${label}`,
+    entity: label,
+    entityId: changedEntity(current[key], next[key]),
+  }))
+  return { ...next, audit: [...entries, ...(current.audit || [])].slice(0, 1000) }
+}
+
 export default function App() {
   const [runtime, setRuntime] = useState<RuntimeConfig | null>(null)
   const [user, setUser] = useState<User | null | undefined>(undefined)
@@ -72,9 +119,19 @@ export default function App() {
   const [page, setPage] = useState<Page>('overview')
   const [selectedProject, setSelectedProject] = useState<string | null>(null)
   const [selectedClient, setSelectedClient] = useState<string | null>(null)
+  const [selectedTask, setSelectedTask] = useState<string | null>(null)
+  const [selectedReport, setSelectedReport] = useState<string | null>(null)
+  const [selectedReportItem, setSelectedReportItem] = useState<string | null>(null)
+  const [attentionMode, setAttentionMode] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [search, setSearch] = useState('')
-  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error' | 'conflict'>('idle')
+  const workspaceVersionRef = useRef(0)
+  const localRevisionRef = useRef(0)
+  const dirtyRef = useRef(false)
+  const pendingSaveSnapshotRef = useRef('')
+  const lastSavedSnapshotRef = useRef('')
+  const saveQueueRef = useRef<Promise<void>>(Promise.resolve())
 
   useEffect(() => {
     void loadRuntimeConfig().then((config) => {
@@ -114,6 +171,11 @@ export default function App() {
       setOrgId(result.orgId)
       setRole(result.role)
       setWorkspace(result.workspace)
+      workspaceVersionRef.current = result.version
+      localRevisionRef.current = 0
+      dirtyRef.current = false
+      pendingSaveSnapshotRef.current = ''
+      lastSavedSnapshotRef.current = JSON.stringify(result.workspace)
       setLoaded(true)
     }).catch((error) => { if (active) setLoadError(error instanceof Error ? error.message : 'טעינת הנתונים נכשלה') })
     return () => { active = false }
@@ -121,10 +183,17 @@ export default function App() {
 
   const canManageUsers = isDeveloper || role === 'developer' || role === 'admin' || role === 'manager'
   const canViewAdminData = isDeveloper || ['developer', 'admin', 'manager'].includes(role)
-  const canEdit = isDeveloper || role === 'developer' || !['viewer', 'reviewer'].includes(role)
+  const permissions = permissionsFor(role, isDeveloper)
+  const canEdit = permissions.any
   const editableSetWorkspace: typeof setWorkspace = (action) => {
     if (!canEdit) return
-    setWorkspace(action)
+    setWorkspace((current) => {
+      const next = typeof action === 'function' ? action(current) : action
+      if (next === current || JSON.stringify(next) === JSON.stringify(current)) return current
+      localRevisionRef.current += 1
+      dirtyRef.current = true
+      return appendAutomaticAudit(current, next, user?.email || 'משתמש')
+    })
   }
 
   useEffect(() => {
@@ -133,12 +202,30 @@ export default function App() {
   }, [page, isDeveloper, canManageUsers])
 
   useEffect(() => {
-    if (!loaded || !user || !canEdit) return
+    if (!loaded || !user || !canEdit || !dirtyRef.current) return
     setSaveState('saving')
+    const snapshot = workspace
+    const revision = localRevisionRef.current
+    const serialized = JSON.stringify(snapshot)
     const timer = window.setTimeout(() => {
-      void saveOrganizationWorkspace(orgId, user.id, workspace)
-        .then(() => { setSaveState('saved'); window.setTimeout(() => setSaveState('idle'), 1200) })
-        .catch(() => setSaveState('error'))
+      saveQueueRef.current = saveQueueRef.current.catch(() => undefined).then(async () => {
+        pendingSaveSnapshotRef.current = serialized
+        try {
+          const result = await saveOrganizationWorkspace(orgId, user.id, snapshot, workspaceVersionRef.current)
+          workspaceVersionRef.current = result.version
+          lastSavedSnapshotRef.current = serialized
+          pendingSaveSnapshotRef.current = ''
+          if (revision === localRevisionRef.current) {
+            dirtyRef.current = false
+            setSaveState('saved')
+            window.setTimeout(() => setSaveState((current) => current === 'saved' ? 'idle' : current), 1200)
+          }
+        } catch (error) {
+          pendingSaveSnapshotRef.current = ''
+          setSaveState(error instanceof Error && error.name === 'WorkspaceConflictError' ? 'conflict' : 'error')
+          throw error
+        }
+      })
     }, 650)
     return () => window.clearTimeout(timer)
   }, [workspace, loaded, user?.id, orgId, canEdit])
@@ -152,7 +239,21 @@ export default function App() {
 
   useEffect(() => {
     if (!loaded || !orgId) return
-    const channel = subscribeWorkspace(orgId, (incoming) => setWorkspace((current) => JSON.stringify(current) === JSON.stringify(incoming) ? current : incoming))
+    const channel = subscribeWorkspace(orgId, (incoming, version) => setWorkspace((current) => {
+      if (version <= workspaceVersionRef.current) return current
+      const serialized = JSON.stringify(incoming)
+      if (serialized === pendingSaveSnapshotRef.current || serialized === lastSavedSnapshotRef.current) {
+        workspaceVersionRef.current = version
+        return current
+      }
+      if (dirtyRef.current) {
+        setSaveState('conflict')
+        return current
+      }
+      workspaceVersionRef.current = version
+      lastSavedSnapshotRef.current = serialized
+      return JSON.stringify(current) === serialized ? current : incoming
+    }))
     return () => { if (channel) void getBackend()?.removeChannel(channel) }
   }, [loaded, orgId])
 
@@ -162,7 +263,7 @@ export default function App() {
     if (!q) return []
     return [
       ...workspace.projects.filter((item) => `${item.name} ${item.address}`.toLowerCase().includes(q)).slice(0, 5).map((item) => ({ id: item.id, type: 'פרויקט', label: item.name, detail: item.address, action: () => { setSelectedProject(item.id); setPage('projects') } })),
-      ...workspace.tasks.filter((item) => `${item.title} ${item.description || ''}`.toLowerCase().includes(q)).slice(0, 5).map((item) => ({ id: item.id, type: 'משימה', label: item.title, detail: workspace.projects.find((project) => project.id === item.projectId)?.name || '', action: () => setPage('tasks') })),
+      ...workspace.tasks.filter((item) => `${item.title} ${item.description || ''}`.toLowerCase().includes(q)).slice(0, 5).map((item) => ({ id: item.id, type: 'משימה', label: item.title, detail: workspace.projects.find((project) => project.id === item.projectId)?.name || '', action: () => { setSelectedTask(item.id); setAttentionMode(false); setPage('tasks') } })),
       ...workspace.contacts.filter((item) => `${item.name} ${item.company || ''} ${item.email || ''}`.toLowerCase().includes(q)).slice(0, 5).map((item) => ({ id: item.id, type: 'לקוח', label: item.name, detail: item.company || item.email || '', action: () => { setSelectedClient(item.id); setPage('clients') } })),
     ].slice(0, 10)
   }, [search, workspace])
@@ -182,21 +283,21 @@ export default function App() {
   if (loadError) return <div className="auth-screen"><section className="login-card"><h1>לא ניתן לטעון את סביבת העבודה</h1><div className="error-banner">{loadError}</div><p>ודאו שהגדרת מסד הנתונים הושלמה ושיש למשתמש הרשאה למערכת.</p><button className="secondary" onClick={() => window.location.reload()}>ניסיון מחדש</button></section></div>
   if (!loaded) return <div className="app-loading"><img src="/rameng-mark.svg" alt="ר.א.ם הנדסה" /><span>טוען פרויקטים...</span></div>
 
-  if (selectedProject) return <div className={`app-shell project-mode ${!canEdit ? 'read-only-mode' : ''}`}><Sidebar page={page} setPage={(next) => { setSelectedProject(null); setPage(next); setSidebarOpen(false) }} workspace={workspace} open={sidebarOpen} setOpen={setSidebarOpen} user={user} onLogout={() => void signOut()} isDeveloper={isDeveloper} canManageUsers={canManageUsers} /><div className="main"><Topbar search={search} setSearch={setSearch} searchResults={searchResults} urgentCount={urgentCount} onMenu={() => setSidebarOpen(true)} setPage={(next) => { setSelectedProject(null); setPage(next) }} saveState={saveState} canEdit={canEdit} /><main className="page-wrap project-page-wrap"><ProjectWorkspace projectId={selectedProject} workspace={workspace} setWorkspace={editableSetWorkspace} orgId={orgId} canEdit={canEdit} onBack={() => { setSelectedProject(null); setPage('projects') }} /></main></div></div>
+  if (selectedProject) return <div className={`app-shell project-mode ${!canEdit ? 'read-only-mode' : ''}`}><Sidebar page={page} setPage={(next) => { setSelectedProject(null); setSelectedTask(null); setSelectedReport(null); setSelectedReportItem(null); setAttentionMode(false); setPage(next); setSidebarOpen(false) }} workspace={workspace} open={sidebarOpen} setOpen={setSidebarOpen} user={user} onLogout={() => void signOut()} isDeveloper={isDeveloper} canManageUsers={canManageUsers} /><div className="main"><Topbar search={search} setSearch={setSearch} searchResults={searchResults} urgentCount={urgentCount} onMenu={() => setSidebarOpen(true)} setPage={(next) => { setSelectedProject(null); setPage(next) }} onAttention={() => { setSelectedProject(null); setSelectedTask(null); setAttentionMode(true); setPage('tasks') }} saveState={saveState} canEdit={canEdit} /><main className="page-wrap project-page-wrap"><ProjectWorkspace projectId={selectedProject} workspace={workspace} setWorkspace={editableSetWorkspace} orgId={orgId} canEditProject={permissions.projects} canEditTasks={permissions.tasks} canEditCalendar={permissions.calendar} canEditFiles={permissions.files} canEditReports={permissions.reports} canEditMail={permissions.communication} onBack={() => { setSelectedProject(null); setPage('projects') }} /></main></div></div>
 
   return <div className={`app-shell ${!canEdit ? 'read-only-mode' : ''}`}>
-    <Sidebar page={page} setPage={(next) => { if (next === 'clients') setSelectedClient(null); setPage(next); setSidebarOpen(false) }} workspace={workspace} open={sidebarOpen} setOpen={setSidebarOpen} user={user} onLogout={() => void signOut()} isDeveloper={isDeveloper} canManageUsers={canManageUsers} />
+    <Sidebar page={page} setPage={(next) => { if (next === 'clients') setSelectedClient(null); if (next !== 'tasks') { setSelectedTask(null); setAttentionMode(false) } if (next !== 'reports') { setSelectedReport(null); setSelectedReportItem(null) } setPage(next); setSidebarOpen(false) }} workspace={workspace} open={sidebarOpen} setOpen={setSidebarOpen} user={user} onLogout={() => void signOut()} isDeveloper={isDeveloper} canManageUsers={canManageUsers} />
     <div className="main">
-      <Topbar search={search} setSearch={setSearch} searchResults={searchResults} urgentCount={urgentCount} onMenu={() => setSidebarOpen(true)} setPage={(next) => { if (next === 'clients') setSelectedClient(null); setPage(next) }} saveState={saveState} canEdit={canEdit} />
+      <Topbar search={search} setSearch={setSearch} searchResults={searchResults} urgentCount={urgentCount} onMenu={() => setSidebarOpen(true)} setPage={(next) => { if (next === 'clients') setSelectedClient(null); if (next !== 'tasks') { setSelectedTask(null); setAttentionMode(false) } if (next !== 'reports') { setSelectedReport(null); setSelectedReportItem(null) } setPage(next) }} onAttention={() => { setSelectedTask(null); setAttentionMode(true); setPage('tasks') }} saveState={saveState} canEdit={canEdit} />
       <main className="page-wrap">
         <header className="page-heading"><h1>{pageInfo[page]}</h1>{(role || isDeveloper) && <span className="role-badge">{roleLabel(role, isDeveloper)}</span>}</header>
-        {page === 'overview' && <Dashboard workspace={workspace} onProject={(id) => { setSelectedProject(id); setPage('projects') }} />}
-        {page === 'clients' && <ClientsCenter workspace={workspace} setWorkspace={editableSetWorkspace} selectedClientId={selectedClient} onSelectClient={setSelectedClient} onProject={(id) => { setSelectedProject(id); setPage('projects') }} canEdit={canEdit} isAdmin={canViewAdminData} actor={user.email || 'משתמש'} />}
-        {page === 'projects' && <ProjectsPage workspace={workspace} setWorkspace={editableSetWorkspace} onOpen={(id) => setSelectedProject(id)} />}
-        {page === 'tasks' && <section className="card board-card"><TaskBoard workspace={workspace} setWorkspace={editableSetWorkspace} canEdit={canEdit} onEmail={(task) => { if (task.projectId) { setSelectedProject(task.projectId); setPage('projects') } }} /></section>}
-        {page === 'calendar' && <CalendarPage workspace={workspace} setWorkspace={editableSetWorkspace} canEdit={canEdit} />}
-        {page === 'files' && <FilesPage workspace={workspace} setWorkspace={editableSetWorkspace} orgId={orgId} canEdit={canEdit} />}
-        {page === 'reports' && <ReportsPage workspace={workspace} setWorkspace={editableSetWorkspace} orgId={orgId} canEdit={canEdit} />}
+        {page === 'overview' && <Dashboard workspace={workspace} onProject={(id) => { setSelectedProject(id); setPage('projects') }} onTask={(id) => { setSelectedTask(id); setAttentionMode(false); setPage('tasks') }} onReport={(reportId, itemId) => { setSelectedReport(reportId); setSelectedReportItem(itemId); setPage('reports') }} />}
+        {page === 'clients' && <ClientsCenter workspace={workspace} setWorkspace={editableSetWorkspace} selectedClientId={selectedClient} onSelectClient={setSelectedClient} onProject={(id) => { setSelectedProject(id); setPage('projects') }} canEditContacts={permissions.contacts} canEditProjects={permissions.projects} canEditTasks={permissions.tasks} canEditCommunication={permissions.communication} canEditFinance={permissions.finance} isAdmin={canViewAdminData} actor={user.email || 'משתמש'} />}
+        {page === 'projects' && <ProjectsPage workspace={workspace} setWorkspace={editableSetWorkspace} onOpen={(id) => setSelectedProject(id)} canEdit={permissions.projects} />}
+        {page === 'tasks' && <section className="card board-card"><TaskBoard workspace={workspace} setWorkspace={editableSetWorkspace} canEdit={permissions.tasks} focusTaskId={selectedTask} attentionOnly={attentionMode} onClearAttention={() => setAttentionMode(false)} onEmail={(task) => { if (task.projectId) { setSelectedProject(task.projectId); setPage('projects') } }} /></section>}
+        {page === 'calendar' && <CalendarPage workspace={workspace} setWorkspace={editableSetWorkspace} canEdit={permissions.calendar} />}
+        {page === 'files' && <FilesPage workspace={workspace} setWorkspace={editableSetWorkspace} orgId={orgId} canEdit={permissions.files} />}
+        {page === 'reports' && <ReportsPage workspace={workspace} setWorkspace={editableSetWorkspace} orgId={orgId} canEdit={permissions.reports} initialReportId={selectedReport} focusItemId={selectedReportItem} />}
         {page === 'team' && canManageUsers && <UserManagement orgId={orgId} canManage={canManageUsers} isDeveloper={isDeveloper} workspace={workspace} setWorkspace={editableSetWorkspace} />}
         {page === 'imports' && canManageUsers && <ImportCenter workspace={workspace} setWorkspace={editableSetWorkspace} />}
         {page === 'settings' && isDeveloper && <SettingsPage workspace={workspace} setWorkspace={editableSetWorkspace} />}
@@ -223,7 +324,7 @@ function Sidebar({ page, setPage, workspace, open, setOpen, user, onLogout, isDe
 }
 
 type SearchResult = { id: string; type: string; label: string; detail: string; action: () => void }
-function Topbar({ search, setSearch, searchResults, urgentCount, onMenu, setPage, saveState, canEdit }: { search: string; setSearch: (value: string) => void; searchResults: SearchResult[]; urgentCount: number; onMenu: () => void; setPage: (page: Page) => void; saveState: string; canEdit: boolean }) {
+function Topbar({ search, setSearch, searchResults, urgentCount, onMenu, setPage, onAttention, saveState, canEdit }: { search: string; setSearch: (value: string) => void; searchResults: SearchResult[]; urgentCount: number; onMenu: () => void; setPage: (page: Page) => void; onAttention: () => void; saveState: string; canEdit: boolean }) {
   return <header className="topbar">
     <button type="button" className="mobile-menu icon-btn" onClick={onMenu} aria-label="פתיחת תפריט"><Menu /></button>
     <div className="global-search">
@@ -232,7 +333,7 @@ function Topbar({ search, setSearch, searchResults, urgentCount, onMenu, setPage
       {search && <button type="button" className="search-clear" onClick={() => setSearch('')} aria-label="ניקוי חיפוש"><X /></button>}
       {search && <div className="search-results" id="global-search-results" role="listbox">{searchResults.map((result) => <button type="button" role="option" key={`${result.type}-${result.id}`} onClick={() => { result.action(); setSearch('') }}><span>{result.type}</span><div><strong>{result.label}</strong><small>{result.detail}</small></div></button>)}{!searchResults.length && <div className="search-empty">לא נמצאו תוצאות</div>}</div>}
     </div>
-    <div className={`save-state save-indicator ${!canEdit ? 'readonly' : saveState}`} role="status" aria-live="polite">{!canEdit ? 'צפייה בלבד' : saveState === 'saving' ? 'שומר...' : saveState === 'saved' ? 'נשמר' : saveState === 'error' ? 'שגיאת שמירה' : ''}</div>
-    <button type="button" className="notification icon-btn" title={`${urgentCount} נושאים דורשים טיפול`} aria-label={urgentCount ? `${urgentCount} נושאים דורשים טיפול` : 'אין נושאים דחופים'} onClick={() => setPage('overview')}><Bell />{urgentCount > 0 && <i aria-hidden="true">{urgentCount > 9 ? '9+' : urgentCount}</i>}</button>
+    <div className={`save-state save-indicator ${!canEdit ? 'readonly' : saveState}`} role="status" aria-live="polite">{!canEdit ? 'צפייה בלבד' : saveState === 'saving' ? 'שומר...' : saveState === 'saved' ? 'נשמר' : saveState === 'conflict' ? 'גרסה חדשה קיימת — רענון נדרש' : saveState === 'error' ? 'שגיאת שמירה' : ''}</div>
+    <button type="button" className="notification icon-btn" title={`${urgentCount} נושאים דורשים טיפול`} aria-label={urgentCount ? `${urgentCount} נושאים דורשים טיפול` : 'אין נושאים דחופים'} onClick={onAttention}><Bell />{urgentCount > 0 && <i aria-hidden="true">{urgentCount > 9 ? '9+' : urgentCount}</i>}</button>
   </header>
 }
