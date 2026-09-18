@@ -16,6 +16,18 @@ type Props = {
 
 type ClientTab = 'overview' | 'projects' | 'tasks' | 'timeline' | 'messages' | 'files' | 'finance' | 'activity'
 
+const CLIENT_TASK_COLORS = [
+  { id: '', label: 'ללא צבע', hex: '#d5dbd6' },
+  { id: 'red', label: 'אדום', hex: '#d65a5a' },
+  { id: 'orange', label: 'כתום', hex: '#dc8b3d' },
+  { id: 'yellow', label: 'צהוב', hex: '#d5b63f' },
+  { id: 'green', label: 'ירוק', hex: '#4f9a68' },
+  { id: 'blue', label: 'כחול', hex: '#4f78c8' },
+  { id: 'purple', label: 'סגול', hex: '#7d62bd' },
+  { id: 'gray', label: 'אפור', hex: '#7d8780' },
+] as const
+const clientTaskColor = (id?: string) => CLIENT_TASK_COLORS.find((item) => item.id === (id || '')) || CLIENT_TASK_COLORS[0]
+
 export default function ClientsCenter(props: Props) {
   if (!props.selectedClientId) return <ClientDirectory {...props} />
   return <ClientWorkspace {...props} clientId={props.selectedClientId} />
@@ -57,7 +69,7 @@ function ClientDirectory({ workspace, setWorkspace, onSelectClient, canEdit, act
       <h2>לקוחות</h2>
       {canEdit && <button type="button" className="primary" onClick={() => setAdding(true)}><Plus /> לקוח חדש</button>}
     </div>
-    <div className="client-directory-search search-box"><Search /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="חיפוש..." aria-label="חיפוש לקוחות" /></div>
+    <label className="client-directory-search search-box labeled-search"><span>חיפוש לקוחות</span><div><Search /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="שם, חברה, מייל או טלפון" aria-label="חיפוש לקוחות" /></div></label>
     <div className="client-card-grid">
       {rows.map((contact) => {
         const projects = workspace.projects.filter((project) => project.clientIds.includes(contact.id))
@@ -176,6 +188,7 @@ function ClientWorkspace({ workspace, setWorkspace, onSelectClient, onProject, c
       status: String(data.get('status') || workspace.taskStatuses[0] || 'טרם התחיל'),
       priority: String(data.get('priority') || 'רגילה') as Task['priority'],
       followUpDate: String(data.get('followUpDate') || '') || undefined,
+      colorTag: String(data.get('colorTag') || '') || undefined,
       custom: {},
       order: workspace.tasks.length + 1,
       createdAt: nowIso(),
@@ -258,11 +271,12 @@ function ClientWorkspace({ workspace, setWorkspace, onSelectClient, onProject, c
       </> : <><div><span>סטטוס</span><strong>{project.status}</strong></div><div><span>התקדמות</span><strong>{project.progress}%</strong></div><div><span>יעד</span><strong>{dateLabel(project.targetDate)}</strong></div></>}</div>
     </article>)}{!projects.length && <EmptyState title="אין פרויקטים" text="הלקוח עדיין לא משויך לפרויקט." />}</div></section>}
 
-    {tab === 'tasks' && <section className="card"><div className="card-head"><h2>משימות</h2>{canEdit && projects.length > 0 && <button type="button" className="primary" onClick={() => setAddingTask(true)}><Plus /> משימה חדשה</button>}</div><div className="client-task-table">{tasks.map((task) => <article key={task.id}>
-      <div className="client-task-title">{canEdit ? <input value={task.title} onChange={(e) => patchTask(task.id, { title: e.target.value })} /> : <strong>{task.title}</strong>}<small>{workspace.projects.find((project) => project.id === task.projectId)?.name || 'ללא פרויקט'}</small></div>
-      {canEdit ? <select value={task.status} onChange={(e) => patchTask(task.id, { status: e.target.value })}>{workspace.taskStatuses.map((status) => <option key={status}>{status}</option>)}</select> : <Chip tone={task.status === 'דורש מעקב' ? 'bad' : 'brand'}>{task.status}</Chip>}
-      {canEdit ? <select value={task.assigneeId || ''} onChange={(e) => patchTask(task.id, { assigneeId: e.target.value || undefined })}><option value="">ללא אחראי</option>{workspace.team.filter((member) => member.active).map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select> : <span>{workspace.team.find((member) => member.id === task.assigneeId)?.name || 'ללא אחראי'}</span>}
-      {canEdit ? <input type="date" value={task.followUpDate || ''} onChange={(e) => patchTask(task.id, { followUpDate: e.target.value || undefined })} /> : <span>{dateLabel(task.followUpDate || task.dueDate)}</span>}
+    {tab === 'tasks' && <section className="card"><div className="card-head"><h2>משימות</h2>{canEdit && projects.length > 0 && <button type="button" className="primary" onClick={() => setAddingTask(true)}><Plus /> משימה חדשה</button>}</div><div className="client-task-table">{tasks.map((task) => <article key={task.id} style={{ borderInlineStartColor: clientTaskColor(task.colorTag).hex }}>
+      <label className="client-task-title"><span>שם משימה</span>{canEdit ? <input value={task.title} onChange={(e) => patchTask(task.id, { title: e.target.value })} /> : <strong>{task.title}</strong>}<small>{workspace.projects.find((project) => project.id === task.projectId)?.name || 'ללא פרויקט'}</small></label>
+      <label className="inline-control-label"><span>סטטוס</span>{canEdit ? <select value={task.status} onChange={(e) => patchTask(task.id, { status: e.target.value })}>{workspace.taskStatuses.map((status) => <option key={status}>{status}</option>)}</select> : <Chip tone={task.status === 'דורש מעקב' ? 'bad' : 'brand'}>{task.status}</Chip>}</label>
+      <label className="inline-control-label"><span>אחראי</span>{canEdit ? <select value={task.assigneeId || ''} onChange={(e) => patchTask(task.id, { assigneeId: e.target.value || undefined })}><option value="">ללא אחראי</option>{workspace.team.filter((member) => member.active).map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select> : <span>{workspace.team.find((member) => member.id === task.assigneeId)?.name || 'ללא אחראי'}</span>}</label>
+      <label className="inline-control-label"><span>מעקב</span>{canEdit ? <input type="date" value={task.followUpDate || ''} onChange={(e) => patchTask(task.id, { followUpDate: e.target.value || undefined })} /> : <span>{dateLabel(task.followUpDate || task.dueDate)}</span>}</label>
+      <label className="inline-control-label color-label"><span>צבע</span>{canEdit ? <select value={task.colorTag || ''} onChange={(e) => patchTask(task.id, { colorTag: e.target.value || undefined })}>{CLIENT_TASK_COLORS.map((item) => <option key={item.id || 'none'} value={item.id}>{item.label}</option>)}</select> : <span className="color-readonly"><i style={{ backgroundColor: clientTaskColor(task.colorTag).hex }} />{clientTaskColor(task.colorTag).label}</span>}</label>
     </article>)}{!tasks.length && <EmptyState title="אין משימות ללקוח" text={projects.length ? 'הוסיפו משימה לאחד הפרויקטים.' : 'כדי ליצור משימה ללקוח יש ליצור קודם פרויקט.'} />}</div></section>}
 
     {tab === 'timeline' && <section className="card"><div className="card-head"><h2>ציר זמן</h2>{canEdit && <button type="button" className="primary" onClick={() => setAddingNoteKind('timeline')}><Plus /> עדכון</button>}</div><div className="client-timeline">{timeline.map((item) => <article key={`${item.type}-${item.id}`}><span className={`timeline-dot ${item.type}`} /><div><small>{dateTimeLabel(item.at)}</small><strong>{item.title}</strong><p>{item.text}</p>{item.type === 'note' && canEdit && <div className="timeline-actions"><button type="button" className="text-button" onClick={() => setEditingNote(item.note)}>עריכה</button><button type="button" className="text-button danger-text" onClick={() => removeNote(item.note)}>מחיקה</button></div>}</div></article>)}{!timeline.length && <EmptyState title="ציר הזמן ריק" text="הוסיפו עדכון או צרו משימות ואירועים בפרויקטים." />}</div></section>}
@@ -274,7 +288,7 @@ function ClientWorkspace({ workspace, setWorkspace, onSelectClient, onProject, c
 
     {tab === 'files' && <section className="card"><div className="card-head"><h2>קבצים</h2></div><div className="client-file-list">{files.map((file) => <a key={file.id} href={file.url} target="_blank" rel="noreferrer" aria-label={`פתיחת הקובץ ${file.name}`}><span className="file-icon"><FileText /></span><div><strong>{file.name}</strong><small>{workspace.projects.find((project) => project.id === file.projectId)?.name || ''} · {dateLabel(file.uploadedAt)}</small></div><ExternalLink /></a>)}{!files.length && <EmptyState title="אין קבצים" text="קבצים שיועלו לפרויקטים של הלקוח יופיעו כאן אוטומטית." />}</div></section>}
 
-    {tab === 'finance' && <section className="card"><div className="card-head"><h2>כספים</h2></div><div className="client-finance-list">{quotes.map((quote) => <article key={quote.id}><div><strong>{quote.title}</strong><small>{quote.number} · {workspace.projects.find((project) => project.id === quote.projectId)?.name || contact.name}</small></div><b>{money(quote.amount)}</b>{canEdit ? <input type="number" min="0" value={quote.paidAmount} onChange={(e) => setWorkspace((current) => ({ ...current, quotes: current.quotes.map((item) => item.id === quote.id ? { ...item, paidAmount: Number(e.target.value) } : item) }))} /> : <span>שולם {money(quote.paidAmount)}</span>}{canEdit ? <select value={quote.status} onChange={(e) => setWorkspace((current) => ({ ...current, quotes: current.quotes.map((item) => item.id === quote.id ? { ...item, status: e.target.value as typeof quote.status } : item) }))}><option>טיוטה</option><option>נשלחה</option><option>אושרה</option><option>נדחתה</option><option>שולמה חלקית</option><option>שולמה</option></select> : <Chip tone={quote.status === 'שולמה' ? 'good' : 'brand'}>{quote.status}</Chip>}</article>)}{!quotes.length && <EmptyState title="אין מסמכים כספיים" text="מסמכים שמקושרים ללקוח או לפרויקט שלו יופיעו כאן." />}</div></section>}
+    {tab === 'finance' && <section className="card"><div className="card-head"><h2>כספים</h2></div><div className="client-finance-list">{quotes.map((quote) => <article key={quote.id}><div><strong>{quote.title}</strong><small>{quote.number} · {workspace.projects.find((project) => project.id === quote.projectId)?.name || contact.name}</small></div><b>{money(quote.amount)}</b>{canEdit ? <label className="inline-control-label"><span>שולם</span><input type="number" min="0" value={quote.paidAmount} onChange={(e) => setWorkspace((current) => ({ ...current, quotes: current.quotes.map((item) => item.id === quote.id ? { ...item, paidAmount: Number(e.target.value) } : item) }))} /></label> : <span>שולם {money(quote.paidAmount)}</span>}{canEdit ? <label className="inline-control-label"><span>סטטוס תשלום</span><select value={quote.status} onChange={(e) => setWorkspace((current) => ({ ...current, quotes: current.quotes.map((item) => item.id === quote.id ? { ...item, status: e.target.value as typeof quote.status } : item) }))}><option>טיוטה</option><option>נשלחה</option><option>אושרה</option><option>נדחתה</option><option>שולמה חלקית</option><option>שולמה</option></select></label> : <Chip tone={quote.status === 'שולמה' ? 'good' : 'brand'}>{quote.status}</Chip>}</article>)}{!quotes.length && <EmptyState title="אין מסמכים כספיים" text="מסמכים שמקושרים ללקוח או לפרויקט שלו יופיעו כאן." />}</div></section>}
 
     {tab === 'activity' && isAdmin && <section className="card"><div className="card-head"><h2>פעילות</h2></div><div className="client-audit-list">{clientAudit.map((entry) => <article key={entry.id}><span><ListChecks /></span><div><strong>{entry.action}</strong><small>{entry.actor} · {entry.entity} · {dateTimeLabel(entry.at)}</small></div></article>)}{!clientAudit.length && <div className="table-empty">אין עדיין רשומות פעילות ללקוח הזה.</div>}</div></section>}
 
@@ -303,6 +317,7 @@ function ClientWorkspace({ workspace, setWorkspace, onSelectClient, onProject, c
       <Field label="משימה"><input name="title" required /></Field>
       <Field label="סטטוס"><select name="status">{workspace.taskStatuses.map((status) => <option key={status}>{status}</option>)}</select></Field>
       <Field label="עדיפות"><select name="priority"><option>נמוכה</option><option>רגילה</option><option>גבוהה</option><option>דחופה</option></select></Field>
+      <Field label="צבע / קטלוג"><select name="colorTag"><option value="">ללא צבע</option>{CLIENT_TASK_COLORS.filter((item) => item.id).map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></Field>
       <Field label="אחראי"><select name="assigneeId"><option value="">ללא אחראי</option>{workspace.team.filter((member) => member.active).map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select></Field>
       <Field label="מועד מעקב"><input name="followUpDate" type="date" /></Field>
       <Field label="תיאור"><textarea name="description" rows={4} /></Field>
