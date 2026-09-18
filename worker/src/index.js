@@ -127,7 +127,7 @@ async function requireEditor(request, env, config) {
     },
   })
   const memberships = response.ok ? await response.json() : []
-  const canEdit = Array.isArray(memberships) && memberships.some((membership) => membership?.role && membership.role !== 'viewer')
+  const canEdit = Array.isArray(memberships) && memberships.some((membership) => membership?.role && !['viewer', 'reviewer'].includes(membership.role))
   if (!canEdit) throw Object.assign(new Error('החשבון מוגדר לצפייה בלבד'), { status: 403 })
   return user
 }
