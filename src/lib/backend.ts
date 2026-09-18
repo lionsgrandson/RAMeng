@@ -82,8 +82,8 @@ export async function setOrganizationMemberRole(orgId: string, email: string, ro
   if (error) throw error
 }
 
-export async function loadOrganizationWorkspace(userId: string): Promise<{ orgId: string; role: string; workspace: Workspace }> {
-  if (!client) return { orgId: 'local', role: 'admin', workspace: loadLocalWorkspace() }
+export async function loadOrganizationWorkspace(userId: string): Promise<{ orgId: string; role: string; workspace: Workspace; version: number }> {
+  if (!client) return { orgId: 'local', role: 'admin', workspace: loadLocalWorkspace(), version: 0 }
   let { data: membership, error: membershipError } = await client
     .from('memberships')
     .select('org_id, role')
@@ -101,36 +101,48 @@ export async function loadOrganizationWorkspace(userId: string): Promise<{ orgId
   if (!membership) throw new Error('המשתמש אינו משויך לארגון. מנהל המערכת צריך להוסיף אותו.')
 
   const orgId = String(membership.org_id)
-  const { data: state, error: stateError } = await client.from('workspace_state').select('data').eq('org_id', orgId).maybeSingle()
+  const { data: state, error: stateError } = await client.from('workspace_state').select('data, version').eq('org_id', orgId).maybeSingle()
   if (stateError) throw stateError
   if (!state?.data) {
     const workspace = cloneWorkspace()
     const { error } = await client.from('workspace_state').upsert({ org_id: orgId, data: workspace, updated_by: userId }, { onConflict: 'org_id' })
     if (error) throw error
     saveLocalWorkspace(workspace)
-    return { orgId, role: String(membership.role), workspace }
+    return { orgId, role: String(membership.role), workspace, version: 0 }
   }
 
   const workspace = { ...cloneWorkspace(), ...(state.data as Workspace) }
   workspace.checklistTemplates = (workspace.checklistTemplates || []).filter((template) => template.id !== 'tpl-supervision')
   if (workspace.settings.defaultInspector === 'אודי מאיר') workspace.settings.defaultInspector = ''
   saveLocalWorkspace(workspace)
-  return { orgId, role: String(membership.role), workspace }
+  return { orgId, role: String(membership.role), workspace, version: Number(state.version || 0) }
 }
 
-export async function saveOrganizationWorkspace(orgId: string, userId: string, workspace: Workspace) {
+export async function saveOrganizationWorkspace(orgId: string, userId: string, workspace: Workspace, expectedVersion: number) {
   saveLocalWorkspace(workspace)
-  if (!client || orgId === 'local') return
-  const { error } = await client.from('workspace_state').upsert({ org_id: orgId, data: workspace, updated_by: userId, updated_at: new Date().toISOString() }, { onConflict: 'org_id' })
-  if (error) throw error
+  if (!client || orgId === 'local') return { version: expectedVersion + 1 }
+  const { data, error } = await client.rpc('save_workspace_state', {
+    target_org: orgId,
+    next_data: workspace,
+    expected_version: expectedVersion,
+  })
+  if (error) {
+    if (error.message.includes('WORKSPACE_VERSION_CONFLICT')) {
+      const conflict = new Error('הנתונים עודכנו במקביל על ידי משתמש אחר. השינויים המקומיים נשמרו במסך אך לא נדרסו בשרת. יש לרענן לפני המשך עריכה.')
+      conflict.name = 'WorkspaceConflictError'
+      throw conflict
+    }
+    throw error
+  }
+  return { version: Number(data || expectedVersion + 1) }
 }
 
-export function subscribeWorkspace(orgId: string, onWorkspace: (workspace: Workspace) => void): RealtimeChannel | null {
+export function subscribeWorkspace(orgId: string, onWorkspace: (workspace: Workspace, version: number) => void): RealtimeChannel | null {
   if (!client || orgId === 'local') return null
   return client.channel(`workspace:${orgId}`)
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'workspace_state', filter: `org_id=eq.${orgId}` }, (payload) => {
-      const next = (payload.new as { data?: Workspace }).data
-      if (next) onWorkspace({ ...cloneWorkspace(), ...next })
+      const row = payload.new as { data?: Workspace; version?: number }
+      if (row.data) onWorkspace({ ...cloneWorkspace(), ...row.data }, Number(row.version || 0))
     })
     .subscribe()
 }
