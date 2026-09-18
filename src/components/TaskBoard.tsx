@@ -131,19 +131,19 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail 
 
   return <div className="task-board-wrap">
     <div className="toolbar board-toolbar">
-      <div className="toolbar-grow"><input className="search-input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="חיפוש משימה..." /></div>
-      {!projectId && <select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)}><option value="הכל">כל הפרויקטים</option><option value="__none__">ללא פרויקט</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select>}
+      <div className="toolbar-grow"><input className="search-input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="חיפוש..." /></div>
+      {!projectId && <select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)}><option value="הכל">פרויקטים</option><option value="__none__">ללא פרויקט</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select>}
       <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}><option>הכל</option>{workspace.taskStatuses.map((status) => <option key={status}>{status}</option>)}</select>
-      <select value={assigneeFilter} onChange={(e) => setAssigneeFilter(e.target.value)}><option value="הכל">כל האחראים</option><option value="__none__">ללא אחראי</option>{workspace.team.filter((member) => member.active).map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select>
+      <select value={assigneeFilter} onChange={(e) => setAssigneeFilter(e.target.value)}><option value="הכל">אחראים</option><option value="__none__">ללא אחראי</option>{workspace.team.filter((member) => member.active).map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select>
       {projectId && <select defaultValue="" onChange={(e) => { const template = workspace.checklistTemplates.find((item) => item.id === e.target.value); if (template) applyTemplate(template.items); e.target.value = '' }}>
-        <option value="">החלת צ׳ק ליסט</option>{workspace.checklistTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
+        <option value="">צ׳ק ליסט</option>{workspace.checklistTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
       </select>}
-      <button className="secondary" onClick={() => setShowColumns((value) => !value)}><Settings2 /> התאמת לוח</button>
+      <button className="secondary" onClick={() => setShowColumns((value) => !value)}><Settings2 /> עמודות</button>
       <button className="primary" onClick={() => addTask()}><Plus /> משימה</button>
     </div>
 
     {showColumns && <div className="board-config card-soft">
-      <div className="config-title"><Columns3 /><strong>עמודות וסטטוסים</strong><span>ניתן להוסיף, להסיר, להסתיר ולשנות סדר ללא שינוי קוד.</span></div>
+      <div className="config-title"><Columns3 /><strong>עמודות וסטטוסים</strong></div>
       <div className="column-list">{workspace.taskColumns.map((column, index) => <div key={column.id} className="column-config-row">
         <input type="checkbox" checked={column.visible} onChange={(e) => setWorkspace((current) => ({ ...current, taskColumns: current.taskColumns.map((item) => item.id === column.id ? { ...item, visible: e.target.checked } : item) }))} />
         <input value={column.label} onChange={(e) => setWorkspace((current) => ({ ...current, taskColumns: current.taskColumns.map((item) => item.id === column.id ? { ...item, label: e.target.value } : item) }))} />
@@ -160,7 +160,7 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail 
       <table className="data-table task-table"><thead><tr>{!projectId && <th style={{ minWidth: 180 }}>פרויקט</th>}{visibleColumns.map((column) => <th key={column.id} style={{ minWidth: column.width }}>{column.label}</th>)}<th className="actions-col">פעולות</th></tr></thead>
         <tbody>{rows.map(({ task, depth }) => <tr key={task.id} className={task.parentId ? 'subtask-row' : ''}>{!projectId && <td><select className="cell-input" value={task.projectId || ''} onChange={(e) => changeTaskProject(task.id, e.target.value || undefined)}><option value="">ללא פרויקט</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></td>}{visibleColumns.map((column) => <td key={column.id}>{column.key === 'title' ? <input className="cell-input task-title-input" style={{ paddingInlineStart: 8 + depth * 22 }} value={task.title} onChange={(e) => updateTask(task.id, { title: e.target.value })} /> : column.type === 'status' ? <select className="cell-input" value={fieldValue(task, column)} onChange={(e) => editCell(task, column, e.target.value)}>{workspace.taskStatuses.map((status) => <option key={status}>{status}</option>)}</select> : column.type === 'member' ? <select className="cell-input" value={fieldValue(task, column)} onChange={(e) => editCell(task, column, e.target.value)}><option value="">לא משויך</option>{workspace.team.filter((member) => member.active).map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select> : column.type === 'date' ? <input className="cell-input" type="date" value={dateInput(fieldValue(task, column))} onChange={(e) => editCell(task, column, e.target.value)} /> : column.type === 'priority' ? <select className="cell-input" value={fieldValue(task, column)} onChange={(e) => editCell(task, column, e.target.value)}><option>נמוכה</option><option>רגילה</option><option>גבוהה</option><option>דחופה</option></select> : column.type === 'email' ? <div className="email-cell"><input className="cell-input" type="email" value={fieldValue(task, column)} onChange={(e) => editCell(task, column, e.target.value)} placeholder="name@example.com" />{onEmail && <button className="icon-btn" title="פתיחת התכתבות" onClick={() => onEmail(task)}><Mail /></button>}</div> : <input className="cell-input" value={fieldValue(task, column)} onChange={(e) => editCell(task, column, e.target.value)} />}</td>)}
           <td className="row-actions"><button className="icon-btn" title="הוסף תת משימה" onClick={() => addTask(task.id, 'תת משימה חדשה')}><Plus /></button><button className="icon-btn danger" title="מחיקה" onClick={() => removeTask(task.id)}><Trash2 /></button></td></tr>)}
-        {!rows.length && <tr><td colSpan={visibleColumns.length + extraColumns + 1}><div className="table-empty">אין משימות להצגה. הוסיפו משימה או החילו צ׳ק ליסט לפרויקט.</div></td></tr>}</tbody>
+        {!rows.length && <tr><td colSpan={visibleColumns.length + extraColumns + 1}><div className="table-empty">אין משימות.</div></td></tr>}</tbody>
       </table>
     </div>
   </div>
