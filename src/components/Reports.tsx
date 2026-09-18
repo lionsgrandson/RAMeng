@@ -16,8 +16,8 @@ export default function ReportsPage({ workspace, setWorkspace, orgId, projectId,
 
   useEffect(() => { void getCurrentUser().then((current) => setCurrentEmail(current?.email || '')) }, [])
   useEffect(() => {
-    if (initialReportId && workspace.reports.some((report) => report.id === initialReportId)) setEditingId(initialReportId)
-  }, [initialReportId, workspace.reports])
+    if (initialReportId) setEditingId(initialReportId)
+  }, [initialReportId])
 
   const currentInspector = workspace.team.find((member) => member.email.toLowerCase() === currentEmail.toLowerCase())?.name || currentEmail || workspace.settings.defaultInspector || ''
 
