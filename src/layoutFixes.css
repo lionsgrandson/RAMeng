@@ -603,14 +603,7 @@ button:focus:not(:focus-visible),a:focus:not(:focus-visible){outline:none}
 .task-color-picker .color-dot{width:11px;height:11px;min-width:11px;border-radius:50%;border:1px solid rgba(0,0,0,.08)}
 .task-color-picker select{min-width:82px;max-width:100px;border:0;background:transparent;padding:4px 2px;font-size:10px}
 .task-color-picker select:focus{background:#fff;border:1px solid var(--line)}
-.task-table tr:has(.task-color-picker select[value="red"]){--row-color:#d65a5a}
-.task-table tr:has(.task-color-picker select[value="orange"]){--row-color:#dc8b3d}
-.task-table tr:has(.task-color-picker select[value="yellow"]){--row-color:#d5b63f}
-.task-table tr:has(.task-color-picker select[value="green"]){--row-color:#4f9a68}
-.task-table tr:has(.task-color-picker select[value="blue"]){--row-color:#4f78c8}
-.task-table tr:has(.task-color-picker select[value="purple"]){--row-color:#7d62bd}
-.task-table tr:has(.task-color-picker select[value="gray"]){--row-color:#7d8780}
-.task-table tbody tr{border-inline-start:3px solid var(--row-color,transparent)}
+.task-table tbody tr{border-inline-start:3px solid transparent}
 
 .client-task-table>article{border-inline-start:4px solid transparent}
 .client-task-title{display:grid;gap:4px;min-width:0}
