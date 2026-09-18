@@ -26,6 +26,7 @@ export const emptyWorkspace: Workspace = {
     { id: 'report-photo', name: 'דוח תמונות', layout: 'photo', sectionTitles: ['בנייה', 'חשמל', 'אלומיניום', 'מיזוג אוויר'] },
   ],
   audit: [],
+  clientNotes: [],
   settings: {
     organizationName: 'ר.א.ם הנדסה',
     organizationShortName: 'ראם הנדסה',
