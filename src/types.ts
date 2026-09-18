@@ -188,6 +188,16 @@ export interface AuditEntry {
   entityId?: ID
 }
 
+export interface ClientNote {
+  id: ID
+  contactId: ID
+  projectId?: ID
+  kind: 'timeline' | 'message'
+  body: string
+  createdAt: string
+  createdBy: string
+}
+
 export interface AppSettings {
   organizationName: string
   organizationShortName: string
@@ -217,5 +227,6 @@ export interface Workspace {
   reports: InspectionReport[]
   reportTemplates: ReportTemplate[]
   audit: AuditEntry[]
+  clientNotes: ClientNote[]
   settings: AppSettings
 }
