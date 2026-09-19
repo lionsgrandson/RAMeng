@@ -5,30 +5,32 @@ import type { Contact, Deal, DealStage, Quote, TeamMember, Workspace } from '../
 import { integrationsApi } from '../lib/api'
 import { Chip, EmptyState, Field, Modal, dateLabel, money, nowIso, uid } from './common'
 
-export function Dashboard({ workspace, onProject, onTask, onReport }: { workspace: Workspace; onProject: (id: string) => void; onTask: (id: string) => void; onReport: (reportId: string, itemId: string) => void }) {
+type DashboardPage = 'clients' | 'projects' | 'tasks' | 'calendar' | 'reports'
+export function Dashboard({ workspace, onProject, onTask, onReport, onPage, onCreate, onUrgent, canCreate }: { workspace: Workspace; onProject: (id: string) => void; onTask: (id: string) => void; onReport: (reportId: string, itemId: string) => void; onPage: (page: DashboardPage) => void; onCreate: (page: DashboardPage) => void; onUrgent: () => void; canCreate: Partial<Record<DashboardPage, boolean>> }) {
   const openTasks = workspace.tasks.filter((task) => !['בוצע', 'סגור'].includes(task.status))
-  const overdue = openTasks.filter((task) => task.followUpDate && new Date(task.followUpDate).getTime() < Date.now())
+  const urgentTasks = openTasks.filter((task) => task.status === 'דורש מעקב' || task.priority === 'דחופה' || (task.followUpDate && new Date(task.followUpDate).getTime() < Date.now()))
   const openReportItems = workspace.reports.flatMap((report) => report.sections.flatMap((section) => section.items.map((item) => ({ ...item, report })))).filter((item) => !['בוצע', 'תקין', 'סגור'].includes(item.status))
   const activeProjects = [...workspace.projects].filter((project) => project.status !== 'הושלם').sort((a, b) => b.createdAt.localeCompare(a.createdAt))
   const upcoming = workspace.events.filter((event) => new Date(event.start).getTime() >= Date.now()).length
 
   return <>
+    {Object.values(canCreate).some(Boolean) && <div className="dashboard-actions" aria-label="פעולות מהירות"><span>מה רוצים לעשות?</span>{canCreate.tasks && <button type="button" className="primary" onClick={() => onCreate('tasks')}><Plus /> משימה חדשה</button>}{canCreate.projects && <button type="button" className="secondary" onClick={() => onCreate('projects')}><Plus /> פרויקט חדש</button>}{canCreate.clients && <button type="button" className="secondary" onClick={() => onCreate('clients')}><Plus /> לקוח חדש</button>}{canCreate.reports && <button type="button" className="secondary" onClick={() => onCreate('reports')}><Plus /> דוח חדש</button>}{canCreate.calendar && <button type="button" className="secondary" onClick={() => onCreate('calendar')}><Plus /> אירוע חדש</button>}</div>}
     <div className="metric-grid">
-      <article className="metric card"><span className="metric-icon brand"><BriefcaseBusiness /></span><div><small>פרויקטים</small><strong>{activeProjects.length}</strong></div></article>
-      <article className="metric card"><span className="metric-icon warn"><AlertTriangle /></span><div><small>לטיפול</small><strong>{overdue.length + openReportItems.length}</strong></div></article>
-      <article className="metric card"><span className="metric-icon good"><ListChecks /></span><div><small>משימות</small><strong>{openTasks.length}</strong></div></article>
-      <article className="metric card"><span className="metric-icon neutral"><CalendarDays /></span><div><small>ביומן</small><strong>{upcoming}</strong></div></article>
+      <button type="button" className="metric card metric-link" onClick={() => onPage('projects')}><span className="metric-icon brand"><BriefcaseBusiness /></span><div><small>פרויקטים</small><strong>{activeProjects.length}</strong></div></button>
+      <button type="button" className="metric card metric-link" onClick={onUrgent}><span className="metric-icon warn"><AlertTriangle /></span><div><small>משימות לטיפול</small><strong>{urgentTasks.length}</strong></div></button>
+      <button type="button" className="metric card metric-link" onClick={() => onPage('tasks')}><span className="metric-icon good"><ListChecks /></span><div><small>משימות</small><strong>{openTasks.length}</strong></div></button>
+      <button type="button" className="metric card metric-link" onClick={() => onPage('calendar')}><span className="metric-icon neutral"><CalendarDays /></span><div><small>ביומן</small><strong>{upcoming}</strong></div></button>
     </div>
     <div className="dashboard-grid compact-dashboard">
-      <section className="card"><div className="card-head"><h2>פרויקטים אחרונים</h2></div><div className="card-body project-health-list">{activeProjects.length ? activeProjects.slice(0, 10).map((project) => {
+      <section className="card"><div className="card-head"><h2>פרויקטים אחרונים</h2><button type="button" className="text-button" onClick={() => onPage('projects')}>כל הפרויקטים</button></div><div className="card-body project-health-list">{activeProjects.length ? activeProjects.slice(0, 10).map((project) => {
         const tasks = openTasks.filter((task) => task.projectId === project.id)
         const urgent = tasks.filter((task) => task.priority === 'דחופה' || task.status === 'דורש מעקב').length
         return <button className="project-health" key={project.id} onClick={() => onProject(project.id)}><div><strong>{project.name}</strong><span>{project.address || 'ללא כתובת'}</span></div><div className="progress"><i style={{ width: `${project.progress}%` }} /></div><div className="health-meta"><Chip tone={urgent ? 'bad' : 'brand'}>{tasks.length}</Chip><span>{project.progress}%</span></div></button>
       }) : <EmptyState title="אין פרויקטים" text="צרו פרויקט ראשון." />}</div></section>
-      <section className="card"><div className="card-head"><h2>דורש טיפול</h2></div><div className="card-body attention-list">{[
-        ...overdue.slice(0, 6).map((task) => ({ id: task.id, title: task.title, text: dateLabel(task.followUpDate), tone: 'bad' as const, action: () => onTask(task.id) })),
+      <section className="card"><div className="card-head"><h2>דורש טיפול</h2><button type="button" className="text-button" onClick={onUrgent}>כל המשימות לטיפול</button></div><div className="card-body attention-list">{[
+        ...urgentTasks.slice(0, 6).map((task) => ({ id: task.id, title: task.title, text: dateLabel(task.followUpDate), tone: 'bad' as const, action: () => onTask(task.id) })),
         ...openReportItems.slice(0, 6).map((item) => ({ id: `${item.report.id}-${item.id}`, title: item.description, text: item.report.title, tone: 'warn' as const, action: () => onReport(item.report.id, item.id) })),
-      ].slice(0, 10).map((item) => <button type="button" className="attention-item attention-action" key={item.id} onClick={item.action}><span className={`dot ${item.tone}`} /><div><strong>{item.title}</strong><small>{item.text}</small></div><ArrowLeft aria-hidden="true" /></button>)}{!overdue.length && !openReportItems.length && <EmptyState title="הכול מעודכן" text="אין כרגע פריטים דחופים." />}</div></section>
+      ].slice(0, 10).map((item) => <button type="button" className="attention-item attention-action" key={item.id} onClick={item.action}><span className={`dot ${item.tone}`} /><div><strong>{item.title}</strong><small>{item.text}</small></div><ArrowLeft aria-hidden="true" /></button>)}{!urgentTasks.length && !openReportItems.length && <EmptyState title="הכול מעודכן" text="אין כרגע פריטים דחופים." />}</div></section>
     </div>
   </>
 }

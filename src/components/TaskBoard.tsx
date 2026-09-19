@@ -12,6 +12,8 @@ type Props = {
   focusTaskId?: string | null
   attentionOnly?: boolean
   onClearAttention?: () => void
+  startCreating?: boolean
+  onProject?: (id: string) => void
 }
 
 type TaskView = 'active' | 'archive'
@@ -35,14 +37,14 @@ const fieldValue = (task: Task, column: TaskColumn) => {
   return String((task as unknown as Record<string, unknown>)[column.key] ?? '')
 }
 
-export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail, canEdit = true, focusTaskId, attentionOnly = false, onClearAttention }: Props) {
+export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail, onProject, canEdit = true, focusTaskId, attentionOnly = false, onClearAttention, startCreating = false }: Props) {
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('הכל')
   const [projectFilter, setProjectFilter] = useState('הכל')
   const [assigneeFilter, setAssigneeFilter] = useState('הכל')
   const [colorFilter, setColorFilter] = useState('הכל')
   const [view, setView] = useState<TaskView>('active')
-  const [creatingFor, setCreatingFor] = useState<{ parentId?: string } | null>(null)
+  const [creatingFor, setCreatingFor] = useState<{ parentId?: string } | null>(startCreating && canEdit ? {} : null)
   const [showColumns, setShowColumns] = useState(false)
   const [newColumn, setNewColumn] = useState('')
   const [newColumnType, setNewColumnType] = useState<TaskColumnType>('text')
@@ -313,7 +315,7 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
           {rows.map(({ task, depth }) => <tr key={task.id} data-task-id={task.id} className={`${task.parentId ? 'subtask-row' : ''} ${isCompleted(task) ? 'completed-row' : ''} ${focusTaskId === task.id ? 'focused-task-row' : ''}`} style={{ borderInlineStartColor: task.colorTag ? taskColor(task.colorTag).hex : 'transparent' }}>
             <td className="complete-cell"><input type="checkbox" aria-label={isCompleted(task) ? `שחזור ${task.title} לאזור הפעיל` : `סימון ${task.title} כבוצעה`} checked={isCompleted(task)} disabled={!canEdit} onChange={(e) => toggleTaskCompleted(task, e.target.checked)} /></td>
             <td className="color-cell"><label className="task-color-picker"><span className="color-dot" style={{ backgroundColor: taskColor(task.colorTag).hex }} /><select aria-label={`צבע קטלוג עבור ${task.title}`} disabled={!canEdit} value={task.colorTag || ''} onChange={(e) => updateTask(task.id, { colorTag: e.target.value || undefined })}>{TASK_COLOR_OPTIONS.map((item) => <option key={item.id || 'none'} value={item.id}>{item.label}</option>)}</select></label></td>
-            {!projectId && <td><select className="cell-input" disabled={!canEdit} aria-label={`פרויקט עבור ${task.title}`} value={task.projectId || ''} onChange={(e) => changeTaskProject(task.id, e.target.value || undefined)}><option value="">ללא פרויקט</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></td>}
+            {!projectId && <td><div className="task-project-cell"><select className="cell-input" disabled={!canEdit} aria-label={`פרויקט עבור ${task.title}`} value={task.projectId || ''} onChange={(e) => changeTaskProject(task.id, e.target.value || undefined)}><option value="">ללא פרויקט</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select>{task.projectId && onProject && <button type="button" className="text-button" onClick={() => onProject(task.projectId!)}>פתיחה</button>}</div></td>}
             {visibleColumns.map((column) => <td key={column.id}>
               {column.key === 'title' ? <input className="cell-input task-title-input" disabled={!canEdit} aria-label="שם משימה" style={{ paddingInlineStart: 8 + depth * 22 }} value={task.title} onChange={(e) => updateTask(task.id, { title: e.target.value })} />
                 : column.type === 'status' ? <select className="cell-input" disabled={!canEdit} value={fieldValue(task, column)} onChange={(e) => editCell(task, column, e.target.value)}>{workspace.taskStatuses.map((status) => <option key={status}>{status}</option>)}</select>

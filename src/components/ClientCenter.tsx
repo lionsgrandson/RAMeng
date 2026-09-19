@@ -16,6 +16,7 @@ type Props = {
   canEditFinance: boolean
   isAdmin: boolean
   actor: string
+  startCreating?: boolean
 }
 
 type ClientTab = 'overview' | 'projects' | 'tasks' | 'timeline' | 'messages' | 'files' | 'finance' | 'activity'
@@ -37,9 +38,9 @@ export default function ClientsCenter(props: Props) {
   return <ClientWorkspace {...props} clientId={props.selectedClientId} />
 }
 
-function ClientDirectory({ workspace, setWorkspace, onSelectClient, canEditContacts, actor }: Props) {
+function ClientDirectory({ workspace, setWorkspace, onSelectClient, canEditContacts, actor, startCreating = false }: Props) {
   const [query, setQuery] = useState('')
-  const [adding, setAdding] = useState(false)
+  const [adding, setAdding] = useState(startCreating && canEditContacts)
   const rows = useMemo(() => workspace.contacts.filter((contact) => {
     const q = query.trim().toLowerCase()
     return !q || `${contact.name} ${contact.company || ''} ${contact.email || ''} ${contact.phone || ''}`.toLowerCase().includes(q)

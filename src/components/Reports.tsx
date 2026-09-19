@@ -7,9 +7,9 @@ import { Chip, EmptyState, Field, Modal, confirmDelete, dateLabel, nowIso, uid }
 const reportStatuses = ['פתוח', 'לא תקין', 'בוצע חלקית', 'לא בוצע', 'תקין', 'בוצע', 'סגור']
 const isClosed = (status: string) => ['תקין', 'בוצע', 'סגור'].includes(status)
 
-export default function ReportsPage({ workspace, setWorkspace, orgId, projectId, canEdit = true, initialReportId, focusItemId }: { workspace: Workspace; setWorkspace: React.Dispatch<React.SetStateAction<Workspace>>; orgId: string; projectId?: string; canEdit?: boolean; initialReportId?: string | null; focusItemId?: string | null }) {
+export default function ReportsPage({ workspace, setWorkspace, orgId, projectId, onProject, onSelectReport, startCreating = false, canEdit = true, initialReportId, focusItemId }: { workspace: Workspace; setWorkspace: React.Dispatch<React.SetStateAction<Workspace>>; orgId: string; projectId?: string; onProject?: (id: string) => void; onSelectReport?: (id: string | null) => void; startCreating?: boolean; canEdit?: boolean; initialReportId?: string | null; focusItemId?: string | null }) {
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [creating, setCreating] = useState(false)
+  const [creating, setCreating] = useState(startCreating && canEdit)
   const [currentEmail, setCurrentEmail] = useState('')
   const reports = workspace.reports.filter((report) => !projectId || report.projectId === projectId).sort((a, b) => b.inspectionDate.localeCompare(a.inspectionDate))
   const editing = workspace.reports.find((report) => report.id === editingId)
@@ -42,9 +42,10 @@ export default function ReportsPage({ workspace, setWorkspace, orgId, projectId,
     setWorkspace((current) => ({ ...current, reports: [...current.reports, report] }))
     setCreating(false)
     setEditingId(report.id)
+    onSelectReport?.(report.id)
   }
 
-  if (editing) return <ReportEditor workspace={workspace} setWorkspace={setWorkspace} report={editing} orgId={orgId} onBack={() => setEditingId(null)} canEdit={canEdit} focusItemId={focusItemId} />
+  if (editing) return <ReportEditor workspace={workspace} setWorkspace={setWorkspace} report={editing} orgId={orgId} onBack={() => { setEditingId(null); onSelectReport?.(null) }} onProject={onProject} canEdit={canEdit} focusItemId={focusItemId} />
 
   return <>
     <div className="page-action-row">{canEdit && <button type="button" className="primary" onClick={() => setCreating(true)}><Plus /> דוח חדש</button>}</div>
@@ -53,7 +54,8 @@ export default function ReportsPage({ workspace, setWorkspace, orgId, projectId,
       <div className="report-list">{reports.map((report) => {
         const items = report.sections.flatMap((section) => section.items)
         const open = items.filter((item) => !isClosed(item.status)).length
-        return <button className="report-row" key={report.id} onClick={() => setEditingId(report.id)}><span className="report-icon"><FileText /></span><div><strong>{report.title}</strong><small>{dateLabel(report.inspectionDate)} · {report.siteAddress || 'ללא כתובת'} · {items.length} סעיפים</small></div><Chip tone={open ? 'warn' : 'good'}>{open ? `${open} פתוחים` : 'הכול סגור'}</Chip><ChevronLeft /></button>
+        const project = workspace.projects.find((item) => item.id === report.projectId)
+        return <div className="linked-report-row" key={report.id}><button type="button" className="report-row" onClick={() => { setEditingId(report.id); onSelectReport?.(report.id) }}><span className="report-icon"><FileText /></span><div><strong>{report.title}</strong><small>{dateLabel(report.inspectionDate)} · {report.siteAddress || 'ללא כתובת'} · {items.length} סעיפים</small></div><Chip tone={open ? 'warn' : 'good'}>{open ? `${open} פתוחים` : 'הכול סגור'}</Chip><ChevronLeft /></button>{project && onProject && <div className="context-links"><button type="button" onClick={() => onProject(project.id)}>פרויקט: {project.name}</button></div>}</div>
       })}{!reports.length && <EmptyState title="אין דוחות" text="צרו דוח חדש." />}</div>
     </section>
     {canEdit && creating && <Modal title="דוח חדש" onClose={() => setCreating(false)}><form className="form-grid" onSubmit={createReport}>
@@ -67,7 +69,7 @@ export default function ReportsPage({ workspace, setWorkspace, orgId, projectId,
   </>
 }
 
-function ReportEditor({ workspace, setWorkspace, report, orgId, onBack, canEdit, focusItemId }: { workspace: Workspace; setWorkspace: React.Dispatch<React.SetStateAction<Workspace>>; report: InspectionReport; orgId: string; onBack: () => void; canEdit: boolean; focusItemId?: string | null }) {
+function ReportEditor({ workspace, setWorkspace, report, orgId, onBack, onProject, canEdit, focusItemId }: { workspace: Workspace; setWorkspace: React.Dispatch<React.SetStateAction<Workspace>>; report: InspectionReport; orgId: string; onBack: () => void; onProject?: (id: string) => void; canEdit: boolean; focusItemId?: string | null }) {
   const [showPrevious, setShowPrevious] = useState(false)
   useEffect(() => {
     if (!focusItemId) return
@@ -105,6 +107,7 @@ function ReportEditor({ workspace, setWorkspace, report, orgId, onBack, canEdit,
 
   const project = workspace.projects.find((item) => item.id === report.projectId)
   return <div className="report-editor">
+    {project && onProject && <div className="context-links report-project-links"><span>פרויקט:</span><button type="button" onClick={() => onProject(project.id)}>{project.name}</button></div>}
     <div className="editor-top"><button type="button" className="secondary" onClick={onBack}><ArrowRight /> דוחות</button><div className="editor-actions"><select disabled={!canEdit} value={report.layout} onChange={(e) => patchReport({ layout: e.target.value as ReportLayout })}><option value="table">טבלה</option><option value="cards">כרטיסים</option><option value="photo">תמונות</option></select><button type="button" className="secondary" onClick={() => setShowPrevious((value) => !value)}>פתוחים קודמים {unresolved.length ? `(${unresolved.length})` : ''}</button><button type="button" className="secondary" onClick={exportCsv}><Download /> CSV</button><button type="button" className="primary" onClick={print}><Printer /> הדפסה</button></div></div>
     <section className="card report-meta"><div><label>כותרת<input disabled={!canEdit} value={report.title} onChange={(e) => patchReport({ title: e.target.value })} /></label><label>כתובת<input disabled={!canEdit} value={report.siteAddress} onChange={(e) => patchReport({ siteAddress: e.target.value })} /></label><label>תאריך<input disabled={!canEdit} type="date" value={report.inspectionDate} onChange={(e) => patchReport({ inspectionDate: e.target.value })} /></label><label>מפקח<input disabled={!canEdit} value={report.inspector} onChange={(e) => patchReport({ inspector: e.target.value })} /></label></div></section>
     {showPrevious && <section className="card previous-issues"><div className="card-head"><h2>פתוחים מדוחות קודמים</h2></div><div className="previous-grid">{unresolved.map((item) => <article key={`${item.oldReport.id}-${item.id}`}><div><strong>{item.description}</strong><small>{item.oldReport.title} · {item.sectionTitle} · {item.status}</small></div>{canEdit && <button type="button" className="secondary" onClick={() => { const target = report.sections.find((section) => section.title === item.sectionTitle) || report.sections[0]; if (target) addItem(target.id, item) }}>הוספה לדוח</button>}</article>)}{!unresolved.length && <div className="table-empty">אין פריטים פתוחים.</div>}</div></section>}
