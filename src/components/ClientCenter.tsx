@@ -178,6 +178,7 @@ function ClientWorkspace({ workspace, setWorkspace, onSelectClient, onProject, c
 
   const saveClient = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    if (!canUpdateContacts) return
     const data = new FormData(event.currentTarget)
     const next = {
       name: String(data.get('name') || ''),
@@ -194,6 +195,7 @@ function ClientWorkspace({ workspace, setWorkspace, onSelectClient, onProject, c
 
   const createProject = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    if (!canCreateProjects) return
     const data = new FormData(event.currentTarget)
     const project: Project = {
       id: uid('project'),
@@ -214,6 +216,7 @@ function ClientWorkspace({ workspace, setWorkspace, onSelectClient, onProject, c
 
   const createTask = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    if (!canCreateTasks) return
     const data = new FormData(event.currentTarget)
     const task: Task = {
       id: uid('task'),
@@ -235,6 +238,7 @@ function ClientWorkspace({ workspace, setWorkspace, onSelectClient, onProject, c
 
   const saveNote = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    if (editingNote ? !canUpdateCommunication : !canCreateCommunication) return
     const data = new FormData(event.currentTarget)
     const body = String(data.get('body') || '').trim()
     if (!body) return
@@ -255,9 +259,21 @@ function ClientWorkspace({ workspace, setWorkspace, onSelectClient, onProject, c
 
   const saveTaskDetails = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (!editingTask || !canEditTasks) return
+    if (!editingTask || (!canUpdateTasks && !canStatusTasks)) return
     const data = new FormData(event.currentTarget)
     const status = String(data.get('status') || editingTask.status)
+    if (!canUpdateTasks) {
+      setWorkspace((current) => audit({
+        ...current,
+        tasks: current.tasks.map((task) => task.id === editingTask.id ? {
+          ...task,
+          status,
+          completedAt: ['בוצע', 'סגור'].includes(status) ? (task.completedAt || nowIso()) : undefined,
+        } : task),
+      }, 'שינוי סטטוס משימה מכרטיס לקוח', 'משימה', editingTask.id))
+      setEditingTask(null)
+      return
+    }
     const custom = { ...editingTask.custom }
     workspace.taskColumns.filter((column) => column.key.startsWith('custom.')).forEach((column) => {
       custom[column.key.slice(7)] = String(data.get(`custom-${column.id}`) || '')
@@ -282,18 +298,18 @@ function ClientWorkspace({ workspace, setWorkspace, onSelectClient, onProject, c
   }
 
   const removeNote = (note: ClientNote) => {
-    if (!canEditCommunication || !confirmDelete(note.kind === 'message' ? 'ההודעה' : 'העדכון')) return
+    if (!canDeleteCommunication || !confirmDelete(note.kind === 'message' ? 'ההודעה' : 'העדכון')) return
     setWorkspace((current) => audit({ ...current, clientNotes: (current.clientNotes || []).filter((item) => item.id !== note.id) }, note.kind === 'message' ? 'מחיקת הודעה פנימית' : 'מחיקת עדכון ציר זמן', note.kind === 'message' ? 'הודעה פנימית' : 'ציר זמן', note.id))
   }
 
   const tabs: { id: ClientTab; label: string }[] = [
     { id: 'overview', label: 'סקירה' },
-    { id: 'projects', label: 'פרויקטים' },
-    { id: 'tasks', label: 'משימות' },
-    { id: 'timeline', label: 'ציר זמן' },
-    { id: 'messages', label: 'תקשורת' },
-    { id: 'files', label: 'קבצים' },
-    { id: 'finance', label: 'כספים' },
+    ...(projectAccess.view ? [{ id: 'projects' as ClientTab, label: 'פרויקטים' }] : []),
+    ...(taskAccess.view ? [{ id: 'tasks' as ClientTab, label: 'משימות' }] : []),
+    ...((communicationAccess.view || calendarAccess.view || taskAccess.view) ? [{ id: 'timeline' as ClientTab, label: 'ציר זמן' }] : []),
+    ...(communicationAccess.view ? [{ id: 'messages' as ClientTab, label: 'תקשורת' }] : []),
+    ...(fileAccess.view ? [{ id: 'files' as ClientTab, label: 'קבצים' }] : []),
+    ...(financeAccess.view ? [{ id: 'finance' as ClientTab, label: 'כספים' }] : []),
     ...(isAdmin ? [{ id: 'activity' as ClientTab, label: 'פעילות' }] : []),
   ]
 
