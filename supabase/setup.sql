@@ -98,7 +98,7 @@ returns boolean
 language plpgsql
 immutable
 set search_path = ''
-as $
+as $$
 declare
   custom_value text;
 begin
@@ -129,7 +129,7 @@ begin
 
   return false;
 end;
-$;
+$$;
 
 create or replace function public.can_org_action(target_org uuid, target_area text, target_action text)
 returns boolean
@@ -137,7 +137,7 @@ language sql
 stable
 security definer
 set search_path = public
-as $
+as $$
   select coalesce(
     (
       select public.workspace_permission_allowed(m.role, m.permissions, target_area, target_action)
@@ -148,14 +148,14 @@ as $
     ),
     false
   );
-$;
+$$;
 
 create or replace function public.jsonb_status_only_change(before_value jsonb, after_value jsonb)
 returns boolean
 language plpgsql
 immutable
 set search_path = ''
-as $
+as $$
 declare
   key_name text;
   idx integer;
@@ -207,7 +207,7 @@ begin
 
   return false;
 end;
-$;
+$$;
 
 create or replace function public.can_org_edit(target_org uuid)
 returns boolean
@@ -215,7 +215,7 @@ language sql
 stable
 security definer
 set search_path = public
-as $
+as $$
   select exists (
     select 1
     from public.memberships m
@@ -253,7 +253,7 @@ as $
         or public.workspace_permission_allowed(m.role, m.permissions, 'communication', 'delete')
       )
   );
-$;
+$$;
 
 create or replace function public.save_workspace_state(
   target_org uuid,
@@ -264,7 +264,7 @@ returns bigint
 language plpgsql
 security definer
 set search_path = public
-as $
+as $$
 declare
   caller_role text;
   caller_permissions jsonb;
@@ -435,7 +435,7 @@ begin
 
   return next_version;
 end;
-$;
+$$;
 
 -- The first authenticated user initializes the organization. The configured
 -- developer email is promoted to the protected developer role by the Worker.
@@ -575,14 +575,14 @@ begin
 
   return target_user_id;
 end;
-$;
+$$;
 
 create or replace function public.set_org_member_permissions(target_org uuid, target_user uuid, target_permissions jsonb)
 returns uuid
 language plpgsql
 security definer
 set search_path = public, auth
-as $
+as $$
 declare
   caller_role text;
   target_role text;
@@ -643,7 +643,7 @@ begin
 
   return target_user;
 end;
-$;
+$$;
 
 -- Do not expose helper RPCs to anonymous clients. They still perform their own
 -- authorization checks, but explicit grants make the intended boundary clear.
