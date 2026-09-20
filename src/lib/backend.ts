@@ -2,6 +2,7 @@ import { createClient, type RealtimeChannel, type SupabaseClient, type User } fr
 import type { RuntimeConfig } from './runtime'
 import type { Workspace } from '../types'
 import { cloneWorkspace } from '../seed'
+import type { StoredPermissions } from './permissions'
 
 let client: SupabaseClient | null = null
 let runtime: RuntimeConfig | null = null
@@ -12,6 +13,7 @@ export interface OrganizationMember {
   email: string
   displayName: string
   role: string
+  permissions?: StoredPermissions | null
   createdAt?: string
 }
 
@@ -85,6 +87,7 @@ export async function listOrganizationMembers(orgId: string): Promise<Organizati
     email: String(row.email || ''),
     displayName: String(row.display_name || row.email || ''),
     role: String(row.role || 'viewer'),
+    permissions: row.permissions && typeof row.permissions === 'object' ? row.permissions as StoredPermissions : null,
     createdAt: row.created_at ? String(row.created_at) : undefined,
   }))
 }
@@ -95,11 +98,21 @@ export async function setOrganizationMemberRole(orgId: string, email: string, ro
   if (error) throw error
 }
 
-export async function loadOrganizationWorkspace(userId: string): Promise<{ orgId: string; role: string; workspace: Workspace; version: number }> {
-  if (!client) return { orgId: 'local', role: 'admin', workspace: loadLocalWorkspace(), version: 0 }
+export async function setOrganizationMemberPermissions(orgId: string, userId: string, permissions: StoredPermissions | null) {
+  if (!client || orgId === 'local') throw new Error('ניהול משתמשים זמין לאחר חיבור מסד הנתונים')
+  const { error } = await client.rpc('set_org_member_permissions', {
+    target_org: orgId,
+    target_user: userId,
+    target_permissions: permissions,
+  })
+  if (error) throw error
+}
+
+export async function loadOrganizationWorkspace(userId: string): Promise<{ orgId: string; role: string; permissions: StoredPermissions | null; workspace: Workspace; version: number }> {
+  if (!client) return { orgId: 'local', role: 'admin', permissions: null, workspace: loadLocalWorkspace(), version: 0 }
   let { data: membership, error: membershipError } = await client
     .from('memberships')
-    .select('org_id, role')
+    .select('org_id, role, permissions')
     .eq('user_id', userId)
     .maybeSingle()
   if (membershipError) throw membershipError
@@ -107,7 +120,7 @@ export async function loadOrganizationWorkspace(userId: string): Promise<{ orgId
   if (!membership) {
     const { error: bootstrapError } = await client.rpc('bootstrap_first_admin')
     if (bootstrapError && !bootstrapError.message.includes('already')) throw bootstrapError
-    const retry = await client.from('memberships').select('org_id, role').eq('user_id', userId).maybeSingle()
+    const retry = await client.from('memberships').select('org_id, role, permissions').eq('user_id', userId).maybeSingle()
     if (retry.error) throw retry.error
     membership = retry.data
   }
@@ -126,14 +139,14 @@ export async function loadOrganizationWorkspace(userId: string): Promise<{ orgId
     const { error } = await client.from('workspace_state').upsert({ org_id: orgId, data: workspace, updated_by: userId }, { onConflict: 'org_id' })
     if (error) throw error
     saveLocalWorkspace(workspace)
-    return { orgId, role: String(membership.role), workspace, version: 0 }
+    return { orgId, role: String(membership.role), permissions: membership.permissions as StoredPermissions | null, workspace, version: 0 }
   }
 
   const workspace = { ...cloneWorkspace(), ...(state.data as Workspace) }
   workspace.checklistTemplates = (workspace.checklistTemplates || []).filter((template) => template.id !== 'tpl-supervision')
   if (workspace.settings.defaultInspector === 'אודי מאיר') workspace.settings.defaultInspector = ''
   saveLocalWorkspace(workspace)
-  return { orgId, role: String(membership.role), workspace, version: Number(state.version || 0) }
+  return { orgId, role: String(membership.role), permissions: membership.permissions as StoredPermissions | null, workspace, version: Number(state.version || 0) }
 }
 
 export async function saveOrganizationWorkspace(orgId: string, userId: string, workspace: Workspace, expectedVersion: number) {
