@@ -28,7 +28,6 @@ export const permissionActionLabels: Record<PermissionAction, string> = {
   delete: 'מחיקה',
 }
 
-const blankArea = (): AreaPermissions => ({ view: false, create: false, edit: false, status: false, delete: false })
 const fullArea = (): AreaPermissions => ({ view: true, create: true, edit: true, status: true, delete: true })
 const viewArea = (): AreaPermissions => ({ view: true, create: false, edit: false, status: false, delete: false })
 
