@@ -294,6 +294,84 @@ begin
 end;
 $;
 
+create or replace function public.get_workspace_state(target_org uuid)
+returns table (
+  data jsonb,
+  version bigint
+)
+language plpgsql
+stable
+security definer
+set search_path = public
+as $
+declare
+  caller_role text;
+  caller_permissions jsonb;
+  filtered_data jsonb;
+  state_version bigint;
+begin
+  select m.role, m.permissions
+  into caller_role, caller_permissions
+  from public.memberships m
+  where m.org_id = target_org
+    and m.user_id = auth.uid()
+  limit 1;
+
+  if caller_role is null then
+    raise exception 'Access denied';
+  end if;
+
+  select ws.data, ws.version
+  into filtered_data, state_version
+  from public.workspace_state ws
+  where ws.org_id = target_org
+  limit 1;
+
+  if filtered_data is null then
+    return;
+  end if;
+
+  if not public.workspace_permission_allowed(caller_role, caller_permissions, 'contacts', 'view') then
+    filtered_data := jsonb_set(filtered_data, '{contacts}', '[]'::jsonb, true);
+    filtered_data := jsonb_set(filtered_data, '{deals}', '[]'::jsonb, true);
+  end if;
+
+  if not public.workspace_permission_allowed(caller_role, caller_permissions, 'projects', 'view') then
+    filtered_data := jsonb_set(filtered_data, '{projects}', '[]'::jsonb, true);
+  end if;
+
+  if not public.workspace_permission_allowed(caller_role, caller_permissions, 'tasks', 'view') then
+    filtered_data := jsonb_set(filtered_data, '{tasks}', '[]'::jsonb, true);
+    filtered_data := jsonb_set(filtered_data, '{taskColumns}', '[]'::jsonb, true);
+    filtered_data := jsonb_set(filtered_data, '{taskStatuses}', '[]'::jsonb, true);
+    filtered_data := jsonb_set(filtered_data, '{checklistTemplates}', '[]'::jsonb, true);
+  end if;
+
+  if not public.workspace_permission_allowed(caller_role, caller_permissions, 'calendar', 'view') then
+    filtered_data := jsonb_set(filtered_data, '{events}', '[]'::jsonb, true);
+  end if;
+
+  if not public.workspace_permission_allowed(caller_role, caller_permissions, 'files', 'view') then
+    filtered_data := jsonb_set(filtered_data, '{files}', '[]'::jsonb, true);
+  end if;
+
+  if not public.workspace_permission_allowed(caller_role, caller_permissions, 'reports', 'view') then
+    filtered_data := jsonb_set(filtered_data, '{reports}', '[]'::jsonb, true);
+    filtered_data := jsonb_set(filtered_data, '{reportTemplates}', '[]'::jsonb, true);
+  end if;
+
+  if not public.workspace_permission_allowed(caller_role, caller_permissions, 'finance', 'view') then
+    filtered_data := jsonb_set(filtered_data, '{quotes}', '[]'::jsonb, true);
+  end if;
+
+  if not public.workspace_permission_allowed(caller_role, caller_permissions, 'communication', 'view') then
+    filtered_data := jsonb_set(filtered_data, '{clientNotes}', '[]'::jsonb, true);
+  end if;
+
+  return query select filtered_data, state_version;
+end;
+$;
+
 create or replace function public.can_org_edit(target_org uuid)
 returns boolean
 language sql
@@ -364,6 +442,7 @@ declare
   has_deleted boolean;
   has_edited boolean;
   has_status_change boolean;
+  effective_data jsonb;
   next_version bigint;
 begin
   select m.role, m.permissions into caller_role, caller_permissions
@@ -390,14 +469,53 @@ begin
     raise exception 'WORKSPACE_VERSION_CONFLICT';
   end if;
 
+  effective_data := next_data;
+
+  if not public.workspace_permission_allowed(caller_role, caller_permissions, 'contacts', 'view') then
+    effective_data := jsonb_set(effective_data, '{contacts}', coalesce(current_data -> 'contacts', '[]'::jsonb), true);
+    effective_data := jsonb_set(effective_data, '{deals}', coalesce(current_data -> 'deals', '[]'::jsonb), true);
+  end if;
+
+  if not public.workspace_permission_allowed(caller_role, caller_permissions, 'projects', 'view') then
+    effective_data := jsonb_set(effective_data, '{projects}', coalesce(current_data -> 'projects', '[]'::jsonb), true);
+  end if;
+
+  if not public.workspace_permission_allowed(caller_role, caller_permissions, 'tasks', 'view') then
+    effective_data := jsonb_set(effective_data, '{tasks}', coalesce(current_data -> 'tasks', '[]'::jsonb), true);
+    effective_data := jsonb_set(effective_data, '{taskColumns}', coalesce(current_data -> 'taskColumns', '[]'::jsonb), true);
+    effective_data := jsonb_set(effective_data, '{taskStatuses}', coalesce(current_data -> 'taskStatuses', '[]'::jsonb), true);
+    effective_data := jsonb_set(effective_data, '{checklistTemplates}', coalesce(current_data -> 'checklistTemplates', '[]'::jsonb), true);
+  end if;
+
+  if not public.workspace_permission_allowed(caller_role, caller_permissions, 'calendar', 'view') then
+    effective_data := jsonb_set(effective_data, '{events}', coalesce(current_data -> 'events', '[]'::jsonb), true);
+  end if;
+
+  if not public.workspace_permission_allowed(caller_role, caller_permissions, 'files', 'view') then
+    effective_data := jsonb_set(effective_data, '{files}', coalesce(current_data -> 'files', '[]'::jsonb), true);
+  end if;
+
+  if not public.workspace_permission_allowed(caller_role, caller_permissions, 'reports', 'view') then
+    effective_data := jsonb_set(effective_data, '{reports}', coalesce(current_data -> 'reports', '[]'::jsonb), true);
+    effective_data := jsonb_set(effective_data, '{reportTemplates}', coalesce(current_data -> 'reportTemplates', '[]'::jsonb), true);
+  end if;
+
+  if not public.workspace_permission_allowed(caller_role, caller_permissions, 'finance', 'view') then
+    effective_data := jsonb_set(effective_data, '{quotes}', coalesce(current_data -> 'quotes', '[]'::jsonb), true);
+  end if;
+
+  if not public.workspace_permission_allowed(caller_role, caller_permissions, 'communication', 'view') then
+    effective_data := jsonb_set(effective_data, '{clientNotes}', coalesce(current_data -> 'clientNotes', '[]'::jsonb), true);
+  end if;
+
   for changed_key in
     select key
     from (
       select jsonb_object_keys(coalesce(current_data, '{}'::jsonb)) as key
       union
-      select jsonb_object_keys(coalesce(next_data, '{}'::jsonb)) as key
+      select jsonb_object_keys(coalesce(effective_data, '{}'::jsonb)) as key
     ) keys
-    where coalesce(current_data -> key, 'null'::jsonb) is distinct from coalesce(next_data -> key, 'null'::jsonb)
+    where coalesce(current_data -> key, 'null'::jsonb) is distinct from coalesce(effective_data -> key, 'null'::jsonb)
   loop
     if changed_key = 'audit' then
       continue;
@@ -434,7 +552,7 @@ begin
     end if;
 
     current_section := coalesce(current_data -> changed_key, 'null'::jsonb);
-    next_section := coalesce(next_data -> changed_key, 'null'::jsonb);
+    next_section := coalesce(effective_data -> changed_key, 'null'::jsonb);
     has_created := false;
     has_deleted := false;
     has_edited := false;
@@ -522,7 +640,7 @@ begin
   next_version := current_version + 1;
 
   update public.workspace_state
-  set data = next_data,
+  set data = effective_data,
       version = next_version,
       updated_by = auth.uid(),
       updated_at = now()
@@ -592,7 +710,7 @@ security definer
 set search_path = public, auth
 as $$
 begin
-  if not public.is_org_member(target_org) then
+  if not public.is_org_admin(target_org) then
     raise exception 'Access denied';
   end if;
 
@@ -749,6 +867,7 @@ revoke all on function public.workspace_permission_allowed(text, jsonb, text, te
 revoke all on function public.can_org_action(uuid, text, text) from public, anon;
 revoke all on function public.jsonb_status_only_change(jsonb, jsonb) from public, anon;
 revoke all on function public.jsonb_has_nested_entity_deletion(jsonb, jsonb) from public, anon;
+revoke all on function public.get_workspace_state(uuid) from public, anon;
 revoke all on function public.can_org_edit(uuid) from public, anon;
 revoke all on function public.save_workspace_state(uuid, jsonb, bigint) from public, anon;
 revoke all on function public.bootstrap_first_admin() from public, anon;
@@ -760,6 +879,7 @@ grant execute on function public.is_org_member(uuid) to authenticated;
 grant execute on function public.is_org_developer(uuid) to authenticated;
 grant execute on function public.is_org_admin(uuid) to authenticated;
 grant execute on function public.can_org_action(uuid, text, text) to authenticated;
+grant execute on function public.get_workspace_state(uuid) to authenticated;
 grant execute on function public.can_org_edit(uuid) to authenticated;
 grant execute on function public.save_workspace_state(uuid, jsonb, bigint) to authenticated;
 grant execute on function public.bootstrap_first_admin() to authenticated;
@@ -786,7 +906,7 @@ drop policy if exists memberships_select_org on public.memberships;
 create policy memberships_select_org
 on public.memberships for select
 to authenticated
-using (public.is_org_member(org_id));
+using (user_id = auth.uid() or public.is_org_admin(org_id));
 
 drop policy if exists memberships_insert_admin on public.memberships;
 create policy memberships_insert_admin
@@ -823,7 +943,7 @@ drop policy if exists workspace_select_member on public.workspace_state;
 create policy workspace_select_member
 on public.workspace_state for select
 to authenticated
-using (public.is_org_member(org_id));
+using (public.is_org_admin(org_id));
 
 drop policy if exists workspace_insert_member on public.workspace_state;
 drop policy if exists workspace_update_member on public.workspace_state;
