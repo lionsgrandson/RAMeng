@@ -695,6 +695,8 @@ begin
 end;
 $$;
 
+drop function if exists public.list_org_members(uuid);
+
 create or replace function public.list_org_members(target_org uuid)
 returns table (
   user_id uuid,
