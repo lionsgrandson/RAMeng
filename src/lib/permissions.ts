@@ -167,7 +167,7 @@ function arrayOperations(before: unknown[], after: unknown[]) {
   const beforeById = new Map(before.map((item) => [String((item as Record<string, unknown>).id), item]))
   const afterById = new Map(after.map((item) => [String((item as Record<string, unknown>).id), item]))
   const created = [...afterById.keys()].some((id) => !beforeById.has(id))
-  const deleted = [...beforeById.keys()].some((id) => !afterById.has(id))
+  let deleted = [...beforeById.keys()].some((id) => !afterById.has(id))
   let edited = false
   let statusOnly = true
 
@@ -175,6 +175,7 @@ function arrayOperations(before: unknown[], after: unknown[]) {
     const newItem = afterById.get(id)
     if (!newItem || JSON.stringify(oldItem) === JSON.stringify(newItem)) continue
     edited = true
+    if (hasNestedEntityRemoval(oldItem, newItem)) deleted = true
     if (!onlyStatusChanged(oldItem, newItem)) statusOnly = false
   }
 
