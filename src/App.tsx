@@ -305,6 +305,14 @@ export default function App() {
     if (!loaded || !developerResolved) return
     if (!canViewPage(page)) {
       setPage('overview')
+      setSelectedProject(null)
+      setSelectedClient(null)
+      setSelectedTask(null)
+      setSelectedReport(null)
+      setSelectedReportItem(null)
+      setProjectTab('summary')
+      setAttentionMode(false)
+      setCreateIntent(null)
       window.history.replaceState({}, '', `${window.location.pathname}${window.location.search}#app?page=overview`)
     }
   }, [page, isDeveloper, canManageUsers, loaded, developerResolved, permissions])
@@ -406,7 +414,7 @@ export default function App() {
   if (loadError) return <div className="auth-screen"><section className="login-card"><h1>לא ניתן לטעון את סביבת העבודה</h1><div className="error-banner">{loadError}</div><p>ודאו שהגדרת מסד הנתונים הושלמה ושיש למשתמש הרשאה למערכת.</p><button className="secondary" onClick={() => window.location.reload()}>ניסיון מחדש</button></section></div>
   if (!loaded) return <div className="app-loading"><img src="/rameng-mark.svg" alt="ר.א.ם הנדסה" /><span>טוען פרויקטים...</span></div>
 
-  if (selectedProject) return <div className={`app-shell project-mode ${!canEdit ? 'read-only-mode' : ''}`}><Sidebar page={page} setPage={(next) => openPage(next)} workspace={visibleWorkspace} permissions={permissions} open={sidebarOpen} setOpen={setSidebarOpen} user={user} onLogout={() => void signOut()} isDeveloper={isDeveloper} canManageUsers={canManageUsers} /><div className="main"><Topbar search={search} setSearch={setSearch} searchResults={searchResults} urgentCount={urgentCount} onMenu={() => setSidebarOpen(true)} onAttention={openUrgent} saveState={saveState} canEdit={canEdit} /><main className="page-wrap project-page-wrap"><ProjectWorkspace key={selectedProject} projectId={selectedProject} initialTab={projectTab} workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} orgId={orgId} canEditProject={canMutateArea(permissions, 'projects')} canEditTasks={canMutateArea(permissions, 'tasks')} canEditCalendar={canMutateArea(permissions, 'calendar')} canEditFiles={canMutateArea(permissions, 'files')} canEditReports={canMutateArea(permissions, 'reports')} canEditMail={canMutateArea(permissions, 'communication')} onBack={() => openPage('projects')} onClient={openClient} onTabChange={(tab) => { setProjectTab(tab); writeAppRoute({ page: 'projects', projectId: selectedProject, tab }) }} /></main></div></div>
+  if (selectedProject) return <div className={`app-shell project-mode ${!canEdit ? 'read-only-mode' : ''}`}><Sidebar page={page} setPage={(next) => openPage(next)} workspace={visibleWorkspace} permissions={permissions} open={sidebarOpen} setOpen={setSidebarOpen} user={user} onLogout={() => void signOut()} isDeveloper={isDeveloper} canManageUsers={canManageUsers} /><div className="main"><Topbar search={search} setSearch={setSearch} searchResults={searchResults} urgentCount={urgentCount} onMenu={() => setSidebarOpen(true)} onAttention={openUrgent} saveState={saveState} canEdit={canEdit} /><main className="page-wrap project-page-wrap">{permissionNotice && <div className="error-banner permission-notice" role="alert">{permissionNotice}</div>}<ProjectWorkspace key={selectedProject} projectId={selectedProject} initialTab={projectTab} workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} orgId={orgId} canEditProject={canMutateArea(permissions, 'projects')} canEditTasks={canMutateArea(permissions, 'tasks')} canEditCalendar={canMutateArea(permissions, 'calendar')} canEditFiles={canMutateArea(permissions, 'files')} canEditReports={canMutateArea(permissions, 'reports')} canEditMail={canMutateArea(permissions, 'communication')} onBack={() => openPage('projects')} onClient={openClient} onTabChange={(tab) => { setProjectTab(tab); writeAppRoute({ page: 'projects', projectId: selectedProject, tab }) }} /></main></div></div>
 
   return <div className={`app-shell ${!canEdit ? 'read-only-mode' : ''}`}>
     <Sidebar page={page} setPage={(next) => openPage(next)} workspace={visibleWorkspace} permissions={permissions} open={sidebarOpen} setOpen={setSidebarOpen} user={user} onLogout={() => void signOut()} isDeveloper={isDeveloper} canManageUsers={canManageUsers} />
