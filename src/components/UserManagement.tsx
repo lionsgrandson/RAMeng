@@ -155,7 +155,11 @@ export default function UserManagement({ orgId, canManage, isDeveloper, workspac
     setResetToRoleDefault(false)
     if (preset === 'view') setPermissionDraft(allAreasPreset({ view: true }))
     if (preset === 'edit-no-delete') setPermissionDraft(allAreasPreset({ view: true, create: true, edit: true, status: true }))
-    if (preset === 'status') setPermissionDraft(allAreasPreset({ view: true, status: true }))
+    if (preset === 'status') {
+      const next = allAreasPreset({ view: true })
+      ;(['contacts', 'projects', 'tasks', 'reports', 'finance'] as PermissionArea[]).forEach((area) => { next[area].status = true })
+      setPermissionDraft(next)
+    }
     if (preset === 'full') setPermissionDraft(allAreasPreset({ view: true, create: true, edit: true, status: true, delete: true }))
   }
 
