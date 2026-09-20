@@ -1,4 +1,15 @@
 # Copy this file to .dev.vars for local Worker development.
 # Never commit the real .dev.vars file.
-ADMIN_SETUP_TOKEN=change-me
+
+# Public Supabase project settings used by the Worker locally.
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_ANON_KEY=sb_publishable_replace_me
+
+# Server-only Supabase secret. Never expose this in VITE_* variables.
 SUPABASE_SECRET_KEY=sb_secret_replace_me
+
+# Optional but recommended so the developer account is recognized locally.
+DEVELOPER_EMAILS=developer@example.com
+
+# Used only by the first-run setup endpoint.
+ADMIN_SETUP_TOKEN=change-me
