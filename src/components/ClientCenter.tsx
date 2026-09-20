@@ -1,6 +1,7 @@
 import { useMemo, useState, type Dispatch, type FormEvent, type SetStateAction } from 'react'
 import { ArrowRight, BarChart3, CalendarDays, ExternalLink, FileText, FolderKanban, ListChecks, Mail, Plus, Search, Settings2 } from 'lucide-react'
 import type { ClientNote, Contact, Project, ProjectStatus, Task, Workspace } from '../types'
+import type { AreaPermissions } from '../lib/permissions'
 import { Chip, EmptyState, Field, Modal, StoredFileLink, confirmDelete, dateLabel, dateTimeLabel, money, nowIso, uid } from './common'
 
 type Props = {
@@ -14,6 +15,13 @@ type Props = {
   canEditTasks: boolean
   canEditCommunication: boolean
   canEditFinance: boolean
+  contactPermissions?: AreaPermissions
+  projectPermissions?: AreaPermissions
+  taskPermissions?: AreaPermissions
+  communicationPermissions?: AreaPermissions
+  financePermissions?: AreaPermissions
+  calendarPermissions?: AreaPermissions
+  filePermissions?: AreaPermissions
   isAdmin: boolean
   actor: string
   startCreating?: boolean
@@ -38,9 +46,10 @@ export default function ClientsCenter(props: Props) {
   return <ClientWorkspace {...props} clientId={props.selectedClientId} />
 }
 
-function ClientDirectory({ workspace, setWorkspace, onSelectClient, canEditContacts, actor, startCreating = false }: Props) {
+function ClientDirectory({ workspace, setWorkspace, onSelectClient, canEditContacts, contactPermissions, projectPermissions, taskPermissions, actor, startCreating = false }: Props) {
+  const contactAccess: AreaPermissions = contactPermissions || { view: true, create: canEditContacts, edit: canEditContacts, status: canEditContacts, delete: canEditContacts }
   const [query, setQuery] = useState('')
-  const [adding, setAdding] = useState(startCreating && canEditContacts)
+  const [adding, setAdding] = useState(startCreating && contactAccess.create)
   const rows = useMemo(() => workspace.contacts.filter((contact) => {
     const q = query.trim().toLowerCase()
     return !q || `${contact.name} ${contact.company || ''} ${contact.email || ''} ${contact.phone || ''}`.toLowerCase().includes(q)
@@ -72,7 +81,7 @@ function ClientDirectory({ workspace, setWorkspace, onSelectClient, canEditConta
   return <section className="clients-center">
     <div className="client-directory-head">
       <h2>לקוחות</h2>
-      {canEditContacts && <button type="button" className="primary" onClick={() => setAdding(true)}><Plus /> לקוח חדש</button>}
+      {contactAccess.create && <button type="button" className="primary" onClick={() => setAdding(true)}><Plus /> לקוח חדש</button>}
     </div>
     <label className="client-directory-search search-box labeled-search"><span>חיפוש לקוחות</span><div><Search /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="שם, חברה, מייל או טלפון" aria-label="חיפוש לקוחות" /></div></label>
     <div className="client-card-grid">
@@ -85,7 +94,7 @@ function ClientDirectory({ workspace, setWorkspace, onSelectClient, canEditConta
           <h3>{contact.name}</h3>
           <p>{contact.company || 'לקוח פרטי'}</p>
           <div className="client-contact-lines"><span>{contact.phone || 'ללא טלפון'}</span><span>{contact.email || 'ללא מייל'}</span></div>
-          <div className="client-card-stats"><span><b>{projects.length}</b> פרויקטים</span><span><b>{openTasks}</b> משימות פתוחות</span></div>
+          <div className="client-card-stats">{(projectPermissions?.view ?? true) && <span><b>{projects.length}</b> פרויקטים</span>}{(taskPermissions?.view ?? true) && <span><b>{openTasks}</b> משימות פתוחות</span>}</div>
         </button>
       })}
       {!rows.length && <div className="card client-empty"><EmptyState title="אין לקוחות להצגה" text={query ? 'לא נמצאה התאמה לחיפוש.' : 'הוסיפו לקוח כדי להתחיל לרכז את כל הפעילות שלו במקום אחד.'} /></div>}
@@ -103,7 +112,27 @@ function ClientDirectory({ workspace, setWorkspace, onSelectClient, canEditConta
   </section>
 }
 
-function ClientWorkspace({ workspace, setWorkspace, onSelectClient, onProject, canEditContacts, canEditProjects, canEditTasks, canEditCommunication, canEditFinance, isAdmin, actor, clientId }: Props & { clientId: string }) {
+function ClientWorkspace({ workspace, setWorkspace, onSelectClient, onProject, canEditContacts, canEditProjects, canEditTasks, canEditCommunication, canEditFinance, contactPermissions, projectPermissions, taskPermissions, communicationPermissions, financePermissions, calendarPermissions, filePermissions, isAdmin, actor, clientId }: Props & { clientId: string }) {
+  const contactAccess: AreaPermissions = contactPermissions || { view: true, create: canEditContacts, edit: canEditContacts, status: canEditContacts, delete: canEditContacts }
+  const projectAccess: AreaPermissions = projectPermissions || { view: true, create: canEditProjects, edit: canEditProjects, status: canEditProjects, delete: canEditProjects }
+  const taskAccess: AreaPermissions = taskPermissions || { view: true, create: canEditTasks, edit: canEditTasks, status: canEditTasks, delete: canEditTasks }
+  const communicationAccess: AreaPermissions = communicationPermissions || { view: true, create: canEditCommunication, edit: canEditCommunication, status: canEditCommunication, delete: canEditCommunication }
+  const financeAccess: AreaPermissions = financePermissions || { view: true, create: canEditFinance, edit: canEditFinance, status: canEditFinance, delete: canEditFinance }
+  const calendarAccess: AreaPermissions = calendarPermissions || { view: true, create: false, edit: false, status: false, delete: false }
+  const fileAccess: AreaPermissions = filePermissions || { view: true, create: false, edit: false, status: false, delete: false }
+  const canUpdateContacts = contactAccess.edit
+  const canStatusContacts = contactAccess.status || contactAccess.edit
+  const canCreateProjects = projectAccess.create
+  const canUpdateProjects = projectAccess.edit
+  const canStatusProjects = projectAccess.status || projectAccess.edit
+  const canCreateTasks = taskAccess.create
+  const canUpdateTasks = taskAccess.edit
+  const canStatusTasks = taskAccess.status || taskAccess.edit
+  const canCreateCommunication = communicationAccess.create
+  const canUpdateCommunication = communicationAccess.edit
+  const canDeleteCommunication = communicationAccess.delete
+  const canUpdateFinance = financeAccess.edit
+  const canStatusFinance = financeAccess.status || financeAccess.edit
   const [tab, setTab] = useState<ClientTab>('overview')
   const [editingClient, setEditingClient] = useState(false)
   const [addingProject, setAddingProject] = useState(false)
@@ -111,7 +140,7 @@ function ClientWorkspace({ workspace, setWorkspace, onSelectClient, onProject, c
   const [addingNoteKind, setAddingNoteKind] = useState<ClientNote['kind'] | null>(null)
   const [editingNote, setEditingNote] = useState<ClientNote | null>(null)
   const [editingTask, setEditingTask] = useState<Task | null>(null)
-  const canEditAnything = canEditContacts || canEditProjects || canEditTasks || canEditCommunication || canEditFinance
+  const canEditAnything = canUpdateContacts || canStatusContacts || canCreateProjects || canUpdateProjects || canStatusProjects || canCreateTasks || canUpdateTasks || canStatusTasks || canCreateCommunication || canUpdateCommunication || canDeleteCommunication || canUpdateFinance || canStatusFinance
   const contact = workspace.contacts.find((item) => item.id === clientId)
 
   if (!contact) return <section className="card"><EmptyState title="הלקוח לא נמצא" text="ייתכן שהלקוח נמחק או שהמידע השתנה." action={<button type="button" className="secondary" onClick={() => onSelectClient(null)}>חזרה ללקוחות</button>} /></section>
