@@ -192,17 +192,37 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    let active = true
+    let unsubscribeAuth: (() => void) | undefined
+
     void loadRuntimeConfig().then((config) => {
+      if (!active) return
+
       configureBackend(config)
       setRuntime(config)
-      if (!config.configured) { setUser(null); return }
-      void getCurrentUser().then(setUser)
+
+      if (!config.configured) {
+        setUser(null)
+        return
+      }
+
+      void getCurrentUser().then((currentUser) => {
+        if (active) setUser(currentUser)
+      })
+
       const backend = getBackend()
       if (backend) {
-        const { data } = backend.auth.onAuthStateChange((_event, session) => setUser(session?.user || null))
-        return () => data.subscription.unsubscribe()
+        const { data } = backend.auth.onAuthStateChange((_event, session) => {
+          if (active) setUser(session?.user || null)
+        })
+        unsubscribeAuth = () => data.subscription.unsubscribe()
       }
     })
+
+    return () => {
+      active = false
+      unsubscribeAuth?.()
+    }
   }, [])
 
   useEffect(() => {
