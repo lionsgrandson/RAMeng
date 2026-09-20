@@ -27,7 +27,16 @@ export async function loadRuntimeConfig(): Promise<RuntimeConfig> {
     const response = await fetch(`${envConfig.apiBase}/api/public-config`, { headers: { accept: 'application/json' } })
     if (!response.ok) throw new Error(String(response.status))
     const remote = await response.json() as Partial<RuntimeConfig>
-    return { ...envConfig, ...remote, developerEmails: envConfig.developerEmails, configured: Boolean(remote.configured ?? envConfig.configured) }
+    return {
+      ...envConfig,
+      ...remote,
+      // In local Vite development the Worker intentionally reports an empty
+      // apiBase because production serves /api from the same origin. Preserve
+      // VITE_API_BASE locally instead of sending API calls back to Vite :5173.
+      apiBase: remote.apiBase || envConfig.apiBase,
+      developerEmails: envConfig.developerEmails,
+      configured: Boolean(remote.configured ?? envConfig.configured),
+    }
   } catch {
     return envConfig
   }
