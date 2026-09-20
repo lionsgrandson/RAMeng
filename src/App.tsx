@@ -6,7 +6,7 @@ import { cloneWorkspace } from './seed'
 import { configureBackend, getBackend, getCurrentUser, loadOrganizationWorkspace, saveOrganizationWorkspace, signOut, subscribeWorkspace } from './lib/backend'
 import { loadRuntimeConfig, type RuntimeConfig } from './lib/runtime'
 import { integrationsApi } from './lib/api'
-import { canMutateArea, hasAnyWritePermission, normalizePermissions, workspaceMutationError, type PermissionArea, type PermissionMatrix, type StoredPermissions } from './lib/permissions'
+import { canMutateArea, hasAnyWritePermission, normalizePermissions, permissionAreas, workspaceMutationError, type PermissionArea, type PermissionMatrix, type StoredPermissions } from './lib/permissions'
 import { LoginScreen, SetPasswordScreen, SetupScreen } from './components/AuthSetup'
 import { Dashboard, ImportCenter } from './components/CorePages'
 import ClientsCenter from './components/ClientCenter'
@@ -258,8 +258,8 @@ export default function App() {
   }, [user?.id])
 
   const canManageUsers = isDeveloper || role === 'developer' || role === 'admin' || role === 'manager'
-  const canViewAdminData = isDeveloper || ['developer', 'admin', 'manager'].includes(role)
   const permissions = useMemo(() => normalizePermissions(role, customPermissions, isDeveloper), [role, customPermissions, isDeveloper])
+  const canViewAdminData = (isDeveloper || ['developer', 'admin', 'manager'].includes(role)) && permissionAreas.every((area) => permissions[area].view)
   const canEdit = hasAnyWritePermission(permissions) || canManageUsers || isDeveloper
   const canViewPage = (target: Page) => {
     if (target === 'overview') return true
@@ -283,7 +283,8 @@ export default function App() {
     reportTemplates: permissions.reports.view ? workspace.reportTemplates : [],
     quotes: permissions.finance.view ? workspace.quotes : [],
     clientNotes: permissions.communication.view ? workspace.clientNotes : [],
-  }), [workspace, permissions])
+    audit: canViewAdminData ? workspace.audit : [],
+  }), [workspace, permissions, canViewAdminData])
   const editableSetWorkspace: typeof setWorkspace = (action) => {
     if (!canEdit) return
     setWorkspace((current) => {
@@ -381,7 +382,7 @@ export default function App() {
       ...visibleWorkspace.projects.filter((item) => `${item.name} ${item.address}`.toLowerCase().includes(q)).slice(0, 5).map((item) => ({ id: item.id, type: 'פרויקט', label: item.name, detail: item.address, action: () => openProject(item.id) })),
       ...visibleWorkspace.tasks.filter((item) => `${item.title} ${item.description || ''}`.toLowerCase().includes(q)).slice(0, 5).map((item) => ({ id: item.id, type: 'משימה', label: item.title, detail: visibleWorkspace.projects.find((project) => project.id === item.projectId)?.name || '', action: () => openTask(item.id) })),
       ...visibleWorkspace.contacts.filter((item) => `${item.name} ${item.company || ''} ${item.email || ''}`.toLowerCase().includes(q)).slice(0, 5).map((item) => ({ id: item.id, type: 'לקוח', label: item.name, detail: item.company || item.email || '', action: () => openClient(item.id) })),
-      ...visibleWorkspace.reports.filter((item) => `${item.title} ${item.siteAddress}`.toLowerCase().includes(q)).slice(0, 3).map((item) => ({ id: item.id, type: 'דוח', label: item.title, detail: workspace.projects.find((project) => project.id === item.projectId)?.name || '', action: () => openReport(item.id) })),
+      ...visibleWorkspace.reports.filter((item) => `${item.title} ${item.siteAddress}`.toLowerCase().includes(q)).slice(0, 3).map((item) => ({ id: item.id, type: 'דוח', label: item.title, detail: visibleWorkspace.projects.find((project) => project.id === item.projectId)?.name || '', action: () => openReport(item.id) })),
     ].slice(0, 10)
   }, [search, visibleWorkspace])
 
@@ -393,11 +394,11 @@ export default function App() {
     applyRoute({ page: next })
     setCreateIntent(create ? next : null)
   }
-  const openProject = (id: string, tab: ProjectTab = 'summary') => applyRoute({ page: 'projects', projectId: id, tab })
-  const openClient = (id: string) => applyRoute({ page: 'clients', clientId: id })
-  const openTask = (id: string) => applyRoute({ page: 'tasks', taskId: id })
-  const openReport = (id: string, itemId: string | null = null) => applyRoute({ page: 'reports', reportId: id, reportItemId: itemId || undefined })
-  const openUrgent = () => applyRoute({ page: 'tasks', attention: true })
+  const openProject = (id: string, tab: ProjectTab = 'summary') => permissions.projects.view ? applyRoute({ page: 'projects', projectId: id, tab }) : setPermissionNotice('אין הרשאת צפייה בפרויקטים')
+  const openClient = (id: string) => permissions.contacts.view ? applyRoute({ page: 'clients', clientId: id }) : setPermissionNotice('אין הרשאת צפייה בלקוחות')
+  const openTask = (id: string) => permissions.tasks.view ? applyRoute({ page: 'tasks', taskId: id }) : setPermissionNotice('אין הרשאת צפייה במשימות')
+  const openReport = (id: string, itemId: string | null = null) => permissions.reports.view ? applyRoute({ page: 'reports', reportId: id, reportItemId: itemId || undefined }) : setPermissionNotice('אין הרשאת צפייה בדוחות')
+  const openUrgent = () => permissions.tasks.view ? applyRoute({ page: 'tasks', attention: true }) : setPermissionNotice('אין הרשאת צפייה במשימות')
 
   if (!runtime) return <div className="app-loading"><img src="/rameng-mark.svg" alt="ר.א.ם הנדסה" /><span>טוען מערכת...</span></div>
   if (!runtime.configured) return <SetupScreen />
@@ -414,7 +415,7 @@ export default function App() {
   if (loadError) return <div className="auth-screen"><section className="login-card"><h1>לא ניתן לטעון את סביבת העבודה</h1><div className="error-banner">{loadError}</div><p>ודאו שהגדרת מסד הנתונים הושלמה ושיש למשתמש הרשאה למערכת.</p><button className="secondary" onClick={() => window.location.reload()}>ניסיון מחדש</button></section></div>
   if (!loaded) return <div className="app-loading"><img src="/rameng-mark.svg" alt="ר.א.ם הנדסה" /><span>טוען פרויקטים...</span></div>
 
-  if (selectedProject) return <div className={`app-shell project-mode ${!canEdit ? 'read-only-mode' : ''}`}><Sidebar page={page} setPage={(next) => openPage(next)} workspace={visibleWorkspace} permissions={permissions} open={sidebarOpen} setOpen={setSidebarOpen} user={user} onLogout={() => void signOut()} isDeveloper={isDeveloper} canManageUsers={canManageUsers} /><div className="main"><Topbar search={search} setSearch={setSearch} searchResults={searchResults} urgentCount={urgentCount} onMenu={() => setSidebarOpen(true)} onAttention={openUrgent} saveState={saveState} canEdit={canEdit} /><main className="page-wrap project-page-wrap">{permissionNotice && <div className="error-banner permission-notice" role="alert">{permissionNotice}</div>}<ProjectWorkspace key={selectedProject} projectId={selectedProject} initialTab={projectTab} workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} orgId={orgId} canEditProject={canMutateArea(permissions, 'projects')} canEditTasks={canMutateArea(permissions, 'tasks')} canEditCalendar={canMutateArea(permissions, 'calendar')} canEditFiles={canMutateArea(permissions, 'files')} canEditReports={canMutateArea(permissions, 'reports')} canEditMail={canMutateArea(permissions, 'communication')} onBack={() => openPage('projects')} onClient={openClient} onTabChange={(tab) => { setProjectTab(tab); writeAppRoute({ page: 'projects', projectId: selectedProject, tab }) }} /></main></div></div>
+  if (selectedProject) return <div className={`app-shell project-mode ${!canEdit ? 'read-only-mode' : ''}`}><Sidebar page={page} setPage={(next) => openPage(next)} workspace={visibleWorkspace} permissions={permissions} open={sidebarOpen} setOpen={setSidebarOpen} user={user} onLogout={() => void signOut()} isDeveloper={isDeveloper} canManageUsers={canManageUsers} /><div className="main"><Topbar search={search} setSearch={setSearch} searchResults={searchResults} urgentCount={urgentCount} onMenu={() => setSidebarOpen(true)} onAttention={openUrgent} saveState={saveState} canEdit={canEdit} /><main className="page-wrap project-page-wrap">{permissionNotice && <div className="error-banner permission-notice" role="alert">{permissionNotice}</div>}<ProjectWorkspace key={selectedProject} projectId={selectedProject} initialTab={projectTab} workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} orgId={orgId} projectPermissions={permissions.projects} taskPermissions={permissions.tasks} calendarPermissions={permissions.calendar} filePermissions={permissions.files} reportPermissions={permissions.reports} communicationPermissions={permissions.communication} onBack={() => openPage('projects')} onClient={permissions.contacts.view ? openClient : undefined} onTabChange={(tab) => { setProjectTab(tab); writeAppRoute({ page: 'projects', projectId: selectedProject, tab }) }} /></main></div></div>
 
   return <div className={`app-shell ${!canEdit ? 'read-only-mode' : ''}`}>
     <Sidebar page={page} setPage={(next) => openPage(next)} workspace={visibleWorkspace} permissions={permissions} open={sidebarOpen} setOpen={setSidebarOpen} user={user} onLogout={() => void signOut()} isDeveloper={isDeveloper} canManageUsers={canManageUsers} />
@@ -424,12 +425,12 @@ export default function App() {
         <header className="page-heading"><h1>{pageInfo[page]}</h1>{(role || isDeveloper) && <span className="role-badge">{roleLabel(role, isDeveloper)}</span>}</header>
         {permissionNotice && <div className="error-banner permission-notice" role="alert">{permissionNotice}</div>}
         {page === 'overview' && <Dashboard workspace={visibleWorkspace} onProject={openProject} onTask={openTask} onReport={openReport} onPage={(next) => openPage(next)} onCreate={(next) => openPage(next, true)} onUrgent={openUrgent} canCreate={{ clients: permissions.contacts.create, projects: permissions.projects.create, tasks: permissions.tasks.create, reports: permissions.reports.create, calendar: permissions.calendar.create }} />}
-        {page === 'clients' && <ClientsCenter key={createIntent === 'clients' ? 'new-client' : 'clients'} startCreating={createIntent === 'clients' && permissions.contacts.create} workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} selectedClientId={selectedClient} onSelectClient={(id) => id ? openClient(id) : openPage('clients')} onProject={openProject} canEditContacts={canMutateArea(permissions, 'contacts')} canEditProjects={canMutateArea(permissions, 'projects')} canEditTasks={canMutateArea(permissions, 'tasks')} canEditCommunication={canMutateArea(permissions, 'communication')} canEditFinance={canMutateArea(permissions, 'finance')} isAdmin={canViewAdminData} actor={user.email || 'משתמש'} />}
+        {page === 'clients' && <ClientsCenter key={createIntent === 'clients' ? 'new-client' : 'clients'} startCreating={createIntent === 'clients' && permissions.contacts.create} workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} selectedClientId={selectedClient} onSelectClient={(id) => id ? openClient(id) : openPage('clients')} onProject={openProject} canEditContacts={canMutateArea(permissions, 'contacts')} canEditProjects={canMutateArea(permissions, 'projects')} canEditTasks={canMutateArea(permissions, 'tasks')} canEditCommunication={canMutateArea(permissions, 'communication')} canEditFinance={canMutateArea(permissions, 'finance')} contactPermissions={permissions.contacts} projectPermissions={permissions.projects} taskPermissions={permissions.tasks} communicationPermissions={permissions.communication} financePermissions={permissions.finance} calendarPermissions={permissions.calendar} filePermissions={permissions.files} isAdmin={canViewAdminData} actor={user.email || 'משתמש'} />}
         {page === 'projects' && <ProjectsPage key={createIntent === 'projects' ? 'new-project' : 'projects'} startCreating={createIntent === 'projects' && permissions.projects.create} workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} onOpen={openProject} canEdit={permissions.projects.create} />}
-        {page === 'tasks' && <section className="card board-card"><TaskBoard key={createIntent === 'tasks' ? 'new-task' : selectedTask || 'tasks'} startCreating={createIntent === 'tasks' && permissions.tasks.create} workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} canEdit={canMutateArea(permissions, 'tasks')} focusTaskId={selectedTask} attentionOnly={attentionMode} onClearAttention={() => openPage('tasks')} onProject={openProject} onEmail={(task) => { if (task.projectId) openProject(task.projectId) }} /></section>}
-        {page === 'calendar' && <CalendarPage key={createIntent === 'calendar' ? 'new-event' : 'calendar'} startCreating={createIntent === 'calendar' && permissions.calendar.create} workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} canEdit={canMutateArea(permissions, 'calendar')} onProject={openProject} onTask={openTask} />}
-        {page === 'files' && <FilesPage workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} orgId={orgId} canEdit={canMutateArea(permissions, 'files')} onProject={openProject} onTask={openTask} />}
-        {page === 'reports' && <ReportsPage key={createIntent === 'reports' ? 'new-report' : selectedReport || 'reports'} startCreating={createIntent === 'reports' && permissions.reports.create} workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} orgId={orgId} canEdit={canMutateArea(permissions, 'reports')} initialReportId={selectedReport} focusItemId={selectedReportItem} onProject={openProject} onSelectReport={(id) => id ? openReport(id) : openPage('reports')} />}
+        {page === 'tasks' && <section className="card board-card"><TaskBoard key={createIntent === 'tasks' ? 'new-task' : selectedTask || 'tasks'} startCreating={createIntent === 'tasks' && permissions.tasks.create} workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} permissions={permissions.tasks} focusTaskId={selectedTask} attentionOnly={attentionMode} onClearAttention={() => openPage('tasks')} onProject={permissions.projects.view ? openProject : undefined} onEmail={permissions.communication.view && permissions.projects.view ? (task) => { if (task.projectId) openProject(task.projectId, 'mail') } : undefined} /></section>}
+        {page === 'calendar' && <CalendarPage key={createIntent === 'calendar' ? 'new-event' : 'calendar'} startCreating={createIntent === 'calendar' && permissions.calendar.create} workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} permissions={permissions.calendar} onProject={permissions.projects.view ? openProject : undefined} onTask={permissions.tasks.view ? openTask : undefined} />}
+        {page === 'files' && <FilesPage workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} orgId={orgId} permissions={permissions.files} onProject={permissions.projects.view ? openProject : undefined} onTask={permissions.tasks.view ? openTask : undefined} />}
+        {page === 'reports' && <ReportsPage key={createIntent === 'reports' ? 'new-report' : selectedReport || 'reports'} startCreating={createIntent === 'reports' && permissions.reports.create} workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} orgId={orgId} permissions={permissions.reports} canUploadFiles={permissions.files.create} initialReportId={selectedReport} focusItemId={selectedReportItem} onProject={permissions.projects.view ? openProject : undefined} onSelectReport={(id) => id ? openReport(id) : openPage('reports')} />}
         {page === 'team' && canManageUsers && <UserManagement orgId={orgId} canManage={canManageUsers} isDeveloper={isDeveloper} workspace={workspace} setWorkspace={editableSetWorkspace} />}
         {page === 'imports' && canManageUsers && <ImportCenter workspace={workspace} setWorkspace={editableSetWorkspace} />}
         {page === 'settings' && isDeveloper && <SettingsPage workspace={workspace} setWorkspace={editableSetWorkspace} />}
