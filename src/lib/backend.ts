@@ -127,11 +127,20 @@ export async function loadOrganizationWorkspace(userId: string): Promise<{ orgId
   if (!membership) throw new Error('המשתמש אינו משויך לארגון. מנהל המערכת צריך להוסיף אותו.')
 
   const orgId = String(membership.org_id)
-  let { data: state, error: stateError } = await client.from('workspace_state').select('data, version').eq('org_id', orgId).maybeSingle()
-  if (stateError && (stateError.code === '42703' || stateError.code === 'PGRST204' || stateError.message.toLowerCase().includes('version'))) {
-    const legacy = await client.from('workspace_state').select('data').eq('org_id', orgId).maybeSingle()
-    state = legacy.data ? { ...legacy.data, version: 0 } : null
-    stateError = legacy.error
+  const filteredState = await client.rpc('get_workspace_state', { target_org: orgId })
+  let state = Array.isArray(filteredState.data) ? filteredState.data[0] : filteredState.data
+  let stateError = filteredState.error
+
+  const rpcMissing = stateError && (stateError.code === 'PGRST202' || (stateError.message.includes('get_workspace_state') && stateError.message.toLowerCase().includes('schema cache')))
+  if (rpcMissing) {
+    const direct = await client.from('workspace_state').select('data, version').eq('org_id', orgId).maybeSingle()
+    state = direct.data
+    stateError = direct.error
+    if (stateError && (stateError.code === '42703' || stateError.code === 'PGRST204' || stateError.message.toLowerCase().includes('version'))) {
+      const legacy = await client.from('workspace_state').select('data').eq('org_id', orgId).maybeSingle()
+      state = legacy.data ? { ...legacy.data, version: 0 } : null
+      stateError = legacy.error
+    }
   }
   if (stateError) throw stateError
   if (!state?.data) {
