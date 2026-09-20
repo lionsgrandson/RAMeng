@@ -5,6 +5,7 @@ import { cloneWorkspace } from '../seed'
 
 let client: SupabaseClient | null = null
 let runtime: RuntimeConfig | null = null
+let clientConfigKey = ''
 
 export interface OrganizationMember {
   userId: string
@@ -16,11 +17,23 @@ export interface OrganizationMember {
 
 export function configureBackend(config: RuntimeConfig) {
   runtime = config
-  if (config.supabaseUrl && config.supabaseAnonKey) {
-    client = createClient(config.supabaseUrl, config.supabaseAnonKey, {
-      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
-    })
+
+  const nextConfigKey = config.supabaseUrl && config.supabaseAnonKey
+    ? `${config.supabaseUrl}|${config.supabaseAnonKey}`
+    : ''
+
+  if (!nextConfigKey) {
+    client = null
+    clientConfigKey = ''
+    return
   }
+
+  if (client && clientConfigKey === nextConfigKey) return
+
+  client = createClient(config.supabaseUrl, config.supabaseAnonKey, {
+    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+  })
+  clientConfigKey = nextConfigKey
 }
 
 export const getBackend = () => client
