@@ -6,6 +6,7 @@ import { cloneWorkspace } from './seed'
 import { configureBackend, getBackend, getCurrentUser, loadOrganizationWorkspace, saveOrganizationWorkspace, signOut, subscribeWorkspace } from './lib/backend'
 import { loadRuntimeConfig, type RuntimeConfig } from './lib/runtime'
 import { integrationsApi } from './lib/api'
+import { canMutateArea, hasAnyWritePermission, normalizePermissions, workspaceMutationError, type PermissionArea, type PermissionMatrix, type StoredPermissions } from './lib/permissions'
 import { LoginScreen, SetPasswordScreen, SetupScreen } from './components/AuthSetup'
 import { Dashboard, ImportCenter } from './components/CorePages'
 import ClientsCenter from './components/ClientCenter'
@@ -92,21 +93,13 @@ const invitedFromUrl = () => {
   return params.get('invite') === '1' || window.location.hash.includes('type=invite')
 }
 
-const permissionsFor = (role: string, isDeveloper: boolean) => {
-  const effectiveRole = isDeveloper ? 'developer' : role
-  const admin = ['developer', 'admin', 'manager'].includes(effectiveRole)
-  const operational = admin || ['assistant', 'inspector', 'engineer'].includes(effectiveRole)
-  return {
-    any: operational,
-    contacts: admin || effectiveRole === 'assistant',
-    projects: operational,
-    tasks: operational,
-    calendar: operational,
-    files: operational,
-    reports: admin || ['inspector', 'engineer'].includes(effectiveRole),
-    finance: admin || effectiveRole === 'assistant',
-    communication: operational,
-  }
+const pagePermissionArea: Partial<Record<Page, PermissionArea>> = {
+  clients: 'contacts',
+  projects: 'projects',
+  tasks: 'tasks',
+  calendar: 'calendar',
+  files: 'files',
+  reports: 'reports',
 }
 
 const changedEntity = (before: unknown, after: unknown) => {
@@ -145,6 +138,8 @@ export default function App() {
   const [workspace, setWorkspace] = useState<Workspace>(cloneWorkspace())
   const [orgId, setOrgId] = useState('local')
   const [role, setRole] = useState('')
+  const [customPermissions, setCustomPermissions] = useState<StoredPermissions | null>(null)
+  const [permissionNotice, setPermissionNotice] = useState('')
   const [isDeveloper, setIsDeveloper] = useState(false)
   const [developerResolved, setDeveloperResolved] = useState(false)
   const [inviteMode, setInviteMode] = useState(invitedFromUrl)
@@ -243,13 +238,14 @@ export default function App() {
   }, [user?.id, runtime, role])
 
   useEffect(() => {
-    if (!user) { setLoaded(false); setRole(''); return }
+    if (!user) { setLoaded(false); setRole(''); setCustomPermissions(null); return }
     let active = true
     setLoadError('')
     void loadOrganizationWorkspace(user.id).then((result) => {
       if (!active) return
       setOrgId(result.orgId)
       setRole(result.role)
+      setCustomPermissions(result.permissions)
       setWorkspace(result.workspace)
       workspaceVersionRef.current = result.version
       localRevisionRef.current = 0
@@ -263,13 +259,42 @@ export default function App() {
 
   const canManageUsers = isDeveloper || role === 'developer' || role === 'admin' || role === 'manager'
   const canViewAdminData = isDeveloper || ['developer', 'admin', 'manager'].includes(role)
-  const permissions = permissionsFor(role, isDeveloper)
-  const canEdit = permissions.any
+  const permissions = useMemo(() => normalizePermissions(role, customPermissions, isDeveloper), [role, customPermissions, isDeveloper])
+  const canEdit = hasAnyWritePermission(permissions) || canManageUsers || isDeveloper
+  const canViewPage = (target: Page) => {
+    if (target === 'overview') return true
+    if (target === 'settings') return isDeveloper
+    if (target === 'team' || target === 'imports') return canManageUsers
+    const area = pagePermissionArea[target]
+    return area ? permissions[area].view : true
+  }
+  const visibleWorkspace = useMemo<Workspace>(() => ({
+    ...workspace,
+    contacts: permissions.contacts.view ? workspace.contacts : [],
+    deals: permissions.contacts.view ? workspace.deals : [],
+    projects: permissions.projects.view ? workspace.projects : [],
+    tasks: permissions.tasks.view ? workspace.tasks : [],
+    taskColumns: permissions.tasks.view ? workspace.taskColumns : [],
+    taskStatuses: permissions.tasks.view ? workspace.taskStatuses : [],
+    checklistTemplates: permissions.tasks.view ? workspace.checklistTemplates : [],
+    events: permissions.calendar.view ? workspace.events : [],
+    files: permissions.files.view ? workspace.files : [],
+    reports: permissions.reports.view ? workspace.reports : [],
+    reportTemplates: permissions.reports.view ? workspace.reportTemplates : [],
+    quotes: permissions.finance.view ? workspace.quotes : [],
+    clientNotes: permissions.communication.view ? workspace.clientNotes : [],
+  }), [workspace, permissions])
   const editableSetWorkspace: typeof setWorkspace = (action) => {
     if (!canEdit) return
     setWorkspace((current) => {
       const next = typeof action === 'function' ? action(current) : action
       if (next === current || JSON.stringify(next) === JSON.stringify(current)) return current
+      const permissionError = workspaceMutationError(current, next, permissions, { canManageUsers, isDeveloper })
+      if (permissionError) {
+        window.setTimeout(() => setPermissionNotice(permissionError), 0)
+        return current
+      }
+      window.setTimeout(() => setPermissionNotice(''), 0)
       localRevisionRef.current += 1
       dirtyRef.current = true
       return appendAutomaticAudit(current, next, user?.email || 'משתמש')
@@ -278,11 +303,11 @@ export default function App() {
 
   useEffect(() => {
     if (!loaded || !developerResolved) return
-    if ((page === 'settings' && !isDeveloper) || ((page === 'team' || page === 'imports') && !canManageUsers)) {
+    if (!canViewPage(page)) {
       setPage('overview')
       window.history.replaceState({}, '', `${window.location.pathname}${window.location.search}#app?page=overview`)
     }
-  }, [page, isDeveloper, canManageUsers, loaded, developerResolved])
+  }, [page, isDeveloper, canManageUsers, loaded, developerResolved, permissions])
 
   useEffect(() => {
     if (!loaded || !user || !canEdit || !dirtyRef.current) return
@@ -340,19 +365,23 @@ export default function App() {
     return () => { if (channel) void getBackend()?.removeChannel(channel) }
   }, [loaded, orgId])
 
-  const urgentCount = useMemo(() => workspace.tasks.filter((task) => !['בוצע', 'סגור'].includes(task.status) && (task.status === 'דורש מעקב' || task.priority === 'דחופה' || (task.followUpDate && new Date(task.followUpDate).getTime() < Date.now()))).length, [workspace.tasks])
+  const urgentCount = useMemo(() => visibleWorkspace.tasks.filter((task) => !['בוצע', 'סגור'].includes(task.status) && (task.status === 'דורש מעקב' || task.priority === 'דחופה' || (task.followUpDate && new Date(task.followUpDate).getTime() < Date.now()))).length, [visibleWorkspace.tasks])
   const searchResults = useMemo(() => {
     const q = search.trim().toLowerCase()
     if (!q) return []
     return [
-      ...workspace.projects.filter((item) => `${item.name} ${item.address}`.toLowerCase().includes(q)).slice(0, 5).map((item) => ({ id: item.id, type: 'פרויקט', label: item.name, detail: item.address, action: () => openProject(item.id) })),
-      ...workspace.tasks.filter((item) => `${item.title} ${item.description || ''}`.toLowerCase().includes(q)).slice(0, 5).map((item) => ({ id: item.id, type: 'משימה', label: item.title, detail: workspace.projects.find((project) => project.id === item.projectId)?.name || '', action: () => openTask(item.id) })),
-      ...workspace.contacts.filter((item) => `${item.name} ${item.company || ''} ${item.email || ''}`.toLowerCase().includes(q)).slice(0, 5).map((item) => ({ id: item.id, type: 'לקוח', label: item.name, detail: item.company || item.email || '', action: () => openClient(item.id) })),
-      ...workspace.reports.filter((item) => `${item.title} ${item.siteAddress}`.toLowerCase().includes(q)).slice(0, 3).map((item) => ({ id: item.id, type: 'דוח', label: item.title, detail: workspace.projects.find((project) => project.id === item.projectId)?.name || '', action: () => openReport(item.id) })),
+      ...visibleWorkspace.projects.filter((item) => `${item.name} ${item.address}`.toLowerCase().includes(q)).slice(0, 5).map((item) => ({ id: item.id, type: 'פרויקט', label: item.name, detail: item.address, action: () => openProject(item.id) })),
+      ...visibleWorkspace.tasks.filter((item) => `${item.title} ${item.description || ''}`.toLowerCase().includes(q)).slice(0, 5).map((item) => ({ id: item.id, type: 'משימה', label: item.title, detail: workspace.projects.find((project) => project.id === item.projectId)?.name || '', action: () => openTask(item.id) })),
+      ...visibleWorkspace.contacts.filter((item) => `${item.name} ${item.company || ''} ${item.email || ''}`.toLowerCase().includes(q)).slice(0, 5).map((item) => ({ id: item.id, type: 'לקוח', label: item.name, detail: item.company || item.email || '', action: () => openClient(item.id) })),
+      ...visibleWorkspace.reports.filter((item) => `${item.title} ${item.siteAddress}`.toLowerCase().includes(q)).slice(0, 3).map((item) => ({ id: item.id, type: 'דוח', label: item.title, detail: workspace.projects.find((project) => project.id === item.projectId)?.name || '', action: () => openReport(item.id) })),
     ].slice(0, 10)
-  }, [search, workspace])
+  }, [search, visibleWorkspace])
 
   const openPage = (next: Page, create = false) => {
+    if (!canViewPage(next)) {
+      setPermissionNotice('אין הרשאת צפייה באזור הזה')
+      return
+    }
     applyRoute({ page: next })
     setCreateIntent(create ? next : null)
   }
@@ -377,21 +406,22 @@ export default function App() {
   if (loadError) return <div className="auth-screen"><section className="login-card"><h1>לא ניתן לטעון את סביבת העבודה</h1><div className="error-banner">{loadError}</div><p>ודאו שהגדרת מסד הנתונים הושלמה ושיש למשתמש הרשאה למערכת.</p><button className="secondary" onClick={() => window.location.reload()}>ניסיון מחדש</button></section></div>
   if (!loaded) return <div className="app-loading"><img src="/rameng-mark.svg" alt="ר.א.ם הנדסה" /><span>טוען פרויקטים...</span></div>
 
-  if (selectedProject) return <div className={`app-shell project-mode ${!canEdit ? 'read-only-mode' : ''}`}><Sidebar page={page} setPage={(next) => openPage(next)} workspace={workspace} open={sidebarOpen} setOpen={setSidebarOpen} user={user} onLogout={() => void signOut()} isDeveloper={isDeveloper} canManageUsers={canManageUsers} /><div className="main"><Topbar search={search} setSearch={setSearch} searchResults={searchResults} urgentCount={urgentCount} onMenu={() => setSidebarOpen(true)} onAttention={openUrgent} saveState={saveState} canEdit={canEdit} /><main className="page-wrap project-page-wrap"><ProjectWorkspace key={selectedProject} projectId={selectedProject} initialTab={projectTab} workspace={workspace} setWorkspace={editableSetWorkspace} orgId={orgId} canEditProject={permissions.projects} canEditTasks={permissions.tasks} canEditCalendar={permissions.calendar} canEditFiles={permissions.files} canEditReports={permissions.reports} canEditMail={permissions.communication} onBack={() => openPage('projects')} onClient={openClient} onTabChange={(tab) => { setProjectTab(tab); writeAppRoute({ page: 'projects', projectId: selectedProject, tab }) }} /></main></div></div>
+  if (selectedProject) return <div className={`app-shell project-mode ${!canEdit ? 'read-only-mode' : ''}`}><Sidebar page={page} setPage={(next) => openPage(next)} workspace={visibleWorkspace} permissions={permissions} open={sidebarOpen} setOpen={setSidebarOpen} user={user} onLogout={() => void signOut()} isDeveloper={isDeveloper} canManageUsers={canManageUsers} /><div className="main"><Topbar search={search} setSearch={setSearch} searchResults={searchResults} urgentCount={urgentCount} onMenu={() => setSidebarOpen(true)} onAttention={openUrgent} saveState={saveState} canEdit={canEdit} /><main className="page-wrap project-page-wrap"><ProjectWorkspace key={selectedProject} projectId={selectedProject} initialTab={projectTab} workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} orgId={orgId} canEditProject={canMutateArea(permissions, 'projects')} canEditTasks={canMutateArea(permissions, 'tasks')} canEditCalendar={canMutateArea(permissions, 'calendar')} canEditFiles={canMutateArea(permissions, 'files')} canEditReports={canMutateArea(permissions, 'reports')} canEditMail={canMutateArea(permissions, 'communication')} onBack={() => openPage('projects')} onClient={openClient} onTabChange={(tab) => { setProjectTab(tab); writeAppRoute({ page: 'projects', projectId: selectedProject, tab }) }} /></main></div></div>
 
   return <div className={`app-shell ${!canEdit ? 'read-only-mode' : ''}`}>
-    <Sidebar page={page} setPage={(next) => openPage(next)} workspace={workspace} open={sidebarOpen} setOpen={setSidebarOpen} user={user} onLogout={() => void signOut()} isDeveloper={isDeveloper} canManageUsers={canManageUsers} />
+    <Sidebar page={page} setPage={(next) => openPage(next)} workspace={visibleWorkspace} permissions={permissions} open={sidebarOpen} setOpen={setSidebarOpen} user={user} onLogout={() => void signOut()} isDeveloper={isDeveloper} canManageUsers={canManageUsers} />
     <div className="main">
       <Topbar search={search} setSearch={setSearch} searchResults={searchResults} urgentCount={urgentCount} onMenu={() => setSidebarOpen(true)} onAttention={openUrgent} saveState={saveState} canEdit={canEdit} />
       <main className="page-wrap">
         <header className="page-heading"><h1>{pageInfo[page]}</h1>{(role || isDeveloper) && <span className="role-badge">{roleLabel(role, isDeveloper)}</span>}</header>
-        {page === 'overview' && <Dashboard workspace={workspace} onProject={openProject} onTask={openTask} onReport={openReport} onPage={(next) => openPage(next)} onCreate={(next) => openPage(next, true)} onUrgent={openUrgent} canCreate={{ clients: permissions.contacts, projects: permissions.projects, tasks: permissions.tasks, reports: permissions.reports, calendar: permissions.calendar }} />}
-        {page === 'clients' && <ClientsCenter key={createIntent === 'clients' ? 'new-client' : 'clients'} startCreating={createIntent === 'clients'} workspace={workspace} setWorkspace={editableSetWorkspace} selectedClientId={selectedClient} onSelectClient={(id) => id ? openClient(id) : openPage('clients')} onProject={openProject} canEditContacts={permissions.contacts} canEditProjects={permissions.projects} canEditTasks={permissions.tasks} canEditCommunication={permissions.communication} canEditFinance={permissions.finance} isAdmin={canViewAdminData} actor={user.email || 'משתמש'} />}
-        {page === 'projects' && <ProjectsPage key={createIntent === 'projects' ? 'new-project' : 'projects'} startCreating={createIntent === 'projects'} workspace={workspace} setWorkspace={editableSetWorkspace} onOpen={openProject} canEdit={permissions.projects} />}
-        {page === 'tasks' && <section className="card board-card"><TaskBoard key={createIntent === 'tasks' ? 'new-task' : selectedTask || 'tasks'} startCreating={createIntent === 'tasks'} workspace={workspace} setWorkspace={editableSetWorkspace} canEdit={permissions.tasks} focusTaskId={selectedTask} attentionOnly={attentionMode} onClearAttention={() => openPage('tasks')} onProject={openProject} onEmail={(task) => { if (task.projectId) openProject(task.projectId) }} /></section>}
-        {page === 'calendar' && <CalendarPage key={createIntent === 'calendar' ? 'new-event' : 'calendar'} startCreating={createIntent === 'calendar'} workspace={workspace} setWorkspace={editableSetWorkspace} canEdit={permissions.calendar} onProject={openProject} onTask={openTask} />}
-        {page === 'files' && <FilesPage workspace={workspace} setWorkspace={editableSetWorkspace} orgId={orgId} canEdit={permissions.files} onProject={openProject} onTask={openTask} />}
-        {page === 'reports' && <ReportsPage key={createIntent === 'reports' ? 'new-report' : selectedReport || 'reports'} startCreating={createIntent === 'reports'} workspace={workspace} setWorkspace={editableSetWorkspace} orgId={orgId} canEdit={permissions.reports} initialReportId={selectedReport} focusItemId={selectedReportItem} onProject={openProject} onSelectReport={(id) => id ? openReport(id) : openPage('reports')} />}
+        {permissionNotice && <div className="error-banner permission-notice" role="alert">{permissionNotice}</div>}
+        {page === 'overview' && <Dashboard workspace={visibleWorkspace} onProject={openProject} onTask={openTask} onReport={openReport} onPage={(next) => openPage(next)} onCreate={(next) => openPage(next, true)} onUrgent={openUrgent} canCreate={{ clients: permissions.contacts.create, projects: permissions.projects.create, tasks: permissions.tasks.create, reports: permissions.reports.create, calendar: permissions.calendar.create }} />}
+        {page === 'clients' && <ClientsCenter key={createIntent === 'clients' ? 'new-client' : 'clients'} startCreating={createIntent === 'clients' && permissions.contacts.create} workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} selectedClientId={selectedClient} onSelectClient={(id) => id ? openClient(id) : openPage('clients')} onProject={openProject} canEditContacts={canMutateArea(permissions, 'contacts')} canEditProjects={canMutateArea(permissions, 'projects')} canEditTasks={canMutateArea(permissions, 'tasks')} canEditCommunication={canMutateArea(permissions, 'communication')} canEditFinance={canMutateArea(permissions, 'finance')} isAdmin={canViewAdminData} actor={user.email || 'משתמש'} />}
+        {page === 'projects' && <ProjectsPage key={createIntent === 'projects' ? 'new-project' : 'projects'} startCreating={createIntent === 'projects' && permissions.projects.create} workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} onOpen={openProject} canEdit={permissions.projects.create} />}
+        {page === 'tasks' && <section className="card board-card"><TaskBoard key={createIntent === 'tasks' ? 'new-task' : selectedTask || 'tasks'} startCreating={createIntent === 'tasks' && permissions.tasks.create} workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} canEdit={canMutateArea(permissions, 'tasks')} focusTaskId={selectedTask} attentionOnly={attentionMode} onClearAttention={() => openPage('tasks')} onProject={openProject} onEmail={(task) => { if (task.projectId) openProject(task.projectId) }} /></section>}
+        {page === 'calendar' && <CalendarPage key={createIntent === 'calendar' ? 'new-event' : 'calendar'} startCreating={createIntent === 'calendar' && permissions.calendar.create} workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} canEdit={canMutateArea(permissions, 'calendar')} onProject={openProject} onTask={openTask} />}
+        {page === 'files' && <FilesPage workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} orgId={orgId} canEdit={canMutateArea(permissions, 'files')} onProject={openProject} onTask={openTask} />}
+        {page === 'reports' && <ReportsPage key={createIntent === 'reports' ? 'new-report' : selectedReport || 'reports'} startCreating={createIntent === 'reports' && permissions.reports.create} workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} orgId={orgId} canEdit={canMutateArea(permissions, 'reports')} initialReportId={selectedReport} focusItemId={selectedReportItem} onProject={openProject} onSelectReport={(id) => id ? openReport(id) : openPage('reports')} />}
         {page === 'team' && canManageUsers && <UserManagement orgId={orgId} canManage={canManageUsers} isDeveloper={isDeveloper} workspace={workspace} setWorkspace={editableSetWorkspace} />}
         {page === 'imports' && canManageUsers && <ImportCenter workspace={workspace} setWorkspace={editableSetWorkspace} />}
         {page === 'settings' && isDeveloper && <SettingsPage workspace={workspace} setWorkspace={editableSetWorkspace} />}
@@ -400,18 +430,19 @@ export default function App() {
   </div>
 }
 
-function Sidebar({ page, setPage, workspace, open, setOpen, user, onLogout, isDeveloper, canManageUsers }: { page: Page; setPage: (page: Page) => void; workspace: Workspace; open: boolean; setOpen: (value: boolean) => void; user: User; onLogout: () => void; isDeveloper: boolean; canManageUsers: boolean }) {
+function Sidebar({ page, setPage, workspace, permissions, open, setOpen, user, onLogout, isDeveloper, canManageUsers }: { page: Page; setPage: (page: Page) => void; workspace: Workspace; permissions: PermissionMatrix; open: boolean; setOpen: (value: boolean) => void; user: User; onLogout: () => void; isDeveloper: boolean; canManageUsers: boolean }) {
   const visibleItems = navItems.filter((item) => {
     if (item.id === 'settings') return isDeveloper
     if (item.id === 'team' || item.id === 'imports') return canManageUsers
-    return true
+    const area = pagePermissionArea[item.id]
+    return area ? permissions[area].view : true
   })
 
   return <>
     <div className={`sidebar-overlay ${open ? 'show' : ''}`} onClick={() => setOpen(false)} />
     <aside className={`sidebar ${open ? 'open' : ''}`}>
       <div className="brand"><img src={workspace.settings.logoUrl || '/rameng-mark.svg'} alt={workspace.settings.organizationShortName} /><div><strong>{workspace.settings.organizationShortName}</strong></div><button type="button" className="sidebar-close" onClick={() => setOpen(false)} aria-label="סגירת תפריט"><X /></button></div>
-      <nav>{visibleItems.map((item) => { const Icon = item.icon; const count = item.id === 'tasks' ? workspace.tasks.filter((task) => !['בוצע', 'סגור'].includes(task.status)).length : item.id === 'projects' ? workspace.projects.filter((project) => project.status !== 'הושלם').length : 0; return <button type="button" key={item.id} className={page === item.id ? 'active' : ''} aria-current={page === item.id ? 'page' : undefined} onClick={() => setPage(item.id)}><Icon /><span>{item.label}</span>{count > 0 && <em aria-label={`${count} פריטים`}>{count}</em>}</button> })}</nav>
+      <nav>{visibleItems.map((item) => { const Icon = item.icon; const count = item.id === 'tasks' ? visibleWorkspace.tasks.filter((task) => !['בוצע', 'סגור'].includes(task.status)).length : item.id === 'projects' ? visibleWorkspace.projects.filter((project) => project.status !== 'הושלם').length : 0; return <button type="button" key={item.id} className={page === item.id ? 'active' : ''} aria-current={page === item.id ? 'page' : undefined} onClick={() => setPage(item.id)}><Icon /><span>{item.label}</span>{count > 0 && <em aria-label={`${count} פריטים`}>{count}</em>}</button> })}</nav>
       <div className="sidebar-bottom"><div className="profile"><span className="avatar">{(user.email || 'R').slice(0, 2).toUpperCase()}</span><div><strong>{user.email}</strong><small>מחובר</small></div><button type="button" className="icon-btn" onClick={onLogout} title="יציאה" aria-label="יציאה"><LogOut /></button></div><a href={workspace.settings.website} target="_blank" rel="noreferrer">{workspace.settings.website.replace(/^https?:\/\//, '')}</a></div>
     </aside>
   </>
