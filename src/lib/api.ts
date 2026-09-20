@@ -3,14 +3,21 @@ import { getAccessToken, getRuntime } from './backend'
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = await getAccessToken()
   const base = getRuntime()?.apiBase || ''
-  const response = await fetch(`${base}${path}`, {
-    ...init,
-    headers: {
-      'content-type': 'application/json',
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-      ...(init.headers || {}),
-    },
-  })
+  let response: Response
+  try {
+    response = await fetch(`${base}${path}`, {
+      ...init,
+      headers: {
+        'content-type': 'application/json',
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+        ...(init.headers || {}),
+      },
+    })
+  } catch {
+    const target = base || window.location.origin
+    throw new Error(`לא ניתן להתחבר לשרת ה-CRM (${target}). ודא ש-Cloudflare Worker פועל ונסה שוב.`)
+  }
+
   const body = await response.json().catch(() => ({})) as T & { error?: string }
   if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`)
   return body
