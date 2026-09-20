@@ -1,5 +1,5 @@
 -- RAMeng CRM Supabase production bootstrap
--- Current schema: 2026-09-14
+-- Current schema: 2026-09-20
 -- Run this entire file in Supabase SQL Editor for the RAM Engineering project.
 -- The script is intentionally idempotent so the latest version can be run again after updates.
 
@@ -209,6 +209,91 @@ begin
 end;
 $$;
 
+create or replace function public.jsonb_has_nested_entity_deletion(before_value jsonb, after_value jsonb)
+returns boolean
+language plpgsql
+immutable
+set search_path = ''
+as $
+declare
+  key_name text;
+  idx integer;
+  overlap_length integer;
+  identifiable boolean;
+  old_item jsonb;
+  new_item jsonb;
+begin
+  if before_value is null or after_value is null or before_value is not distinct from after_value then
+    return false;
+  end if;
+
+  if jsonb_typeof(before_value) is distinct from jsonb_typeof(after_value) then
+    return false;
+  end if;
+
+  if jsonb_typeof(before_value) = 'object' then
+    for key_name in select jsonb_object_keys(before_value)
+    loop
+      if after_value ? key_name
+        and public.jsonb_has_nested_entity_deletion(before_value -> key_name, after_value -> key_name) then
+        return true;
+      end if;
+    end loop;
+    return false;
+  end if;
+
+  if jsonb_typeof(before_value) = 'array' then
+    identifiable := jsonb_array_length(before_value) > 0
+      and not exists (
+        select 1 from jsonb_array_elements(before_value) item
+        where jsonb_typeof(item) <> 'object' or not (item ? 'id')
+      )
+      and not exists (
+        select 1 from jsonb_array_elements(after_value) item
+        where jsonb_typeof(item) <> 'object' or not (item ? 'id')
+      );
+
+    if identifiable then
+      if exists (
+        select 1
+        from jsonb_array_elements(before_value) old_element
+        where not exists (
+          select 1
+          from jsonb_array_elements(after_value) new_element
+          where new_element ->> 'id' = old_element ->> 'id'
+        )
+      ) then
+        return true;
+      end if;
+
+      for old_item, new_item in
+        select old_element, new_element
+        from jsonb_array_elements(before_value) old_element
+        join jsonb_array_elements(after_value) new_element
+          on new_element ->> 'id' = old_element ->> 'id'
+      loop
+        if public.jsonb_has_nested_entity_deletion(old_item, new_item) then
+          return true;
+        end if;
+      end loop;
+
+      return false;
+    end if;
+
+    overlap_length := least(jsonb_array_length(before_value), jsonb_array_length(after_value));
+    if overlap_length > 0 then
+      for idx in 0..overlap_length - 1 loop
+        if public.jsonb_has_nested_entity_deletion(before_value -> idx, after_value -> idx) then
+          return true;
+        end if;
+      end loop;
+    end if;
+  end if;
+
+  return false;
+end;
+$;
+
 create or replace function public.can_org_edit(target_org uuid)
 returns boolean
 language sql
@@ -382,6 +467,16 @@ begin
             where n ->> 'id' = c ->> 'id'
           )
         ) into has_deleted;
+
+        if not has_deleted then
+          select exists (
+            select 1
+            from jsonb_array_elements(current_section) old_item
+            join jsonb_array_elements(next_section) new_item
+              on new_item ->> 'id' = old_item ->> 'id'
+            where public.jsonb_has_nested_entity_deletion(old_item, new_item)
+          ) into has_deleted;
+        end if;
 
         select exists (
           select 1
@@ -653,6 +748,7 @@ revoke all on function public.is_org_admin(uuid) from public, anon;
 revoke all on function public.workspace_permission_allowed(text, jsonb, text, text) from public, anon;
 revoke all on function public.can_org_action(uuid, text, text) from public, anon;
 revoke all on function public.jsonb_status_only_change(jsonb, jsonb) from public, anon;
+revoke all on function public.jsonb_has_nested_entity_deletion(jsonb, jsonb) from public, anon;
 revoke all on function public.can_org_edit(uuid) from public, anon;
 revoke all on function public.save_workspace_state(uuid, jsonb, bigint) from public, anon;
 revoke all on function public.bootstrap_first_admin() from public, anon;
