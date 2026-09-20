@@ -23,6 +23,8 @@ alter table public.memberships drop constraint if exists memberships_role_check;
 alter table public.memberships add constraint memberships_role_check
   check (role in ('developer','admin','assistant','inspector','engineer','viewer','reviewer','manager','member'));
 
+alter table public.memberships add column if not exists permissions jsonb;
+
 create index if not exists memberships_user_idx on public.memberships(user_id);
 
 create table if not exists public.workspace_state (
@@ -86,21 +88,172 @@ as $$
   );
 $$;
 
+create or replace function public.workspace_permission_allowed(
+  user_role text,
+  user_permissions jsonb,
+  target_area text,
+  target_action text
+)
+returns boolean
+language plpgsql
+immutable
+set search_path = ''
+as $
+declare
+  custom_value text;
+begin
+  if user_role = 'developer' then
+    return true;
+  end if;
+
+  custom_value := user_permissions #>> array[target_area, target_action];
+  if custom_value in ('true', 'false') then
+    return custom_value::boolean;
+  end if;
+
+  if target_action = 'view' then
+    return user_role in ('admin','manager','assistant','inspector','engineer','viewer','reviewer','member');
+  end if;
+
+  if user_role in ('admin','manager') then
+    return true;
+  end if;
+
+  if user_role = 'assistant' then
+    return target_area = any(array['contacts','projects','tasks','calendar','files','finance','communication']);
+  end if;
+
+  if user_role in ('inspector','engineer') then
+    return target_area = any(array['projects','tasks','calendar','files','reports','communication']);
+  end if;
+
+  return false;
+end;
+$;
+
+create or replace function public.can_org_action(target_org uuid, target_area text, target_action text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $
+  select coalesce(
+    (
+      select public.workspace_permission_allowed(m.role, m.permissions, target_area, target_action)
+      from public.memberships m
+      where m.org_id = target_org
+        and m.user_id = auth.uid()
+      limit 1
+    ),
+    false
+  );
+$;
+
+create or replace function public.jsonb_status_only_change(before_value jsonb, after_value jsonb)
+returns boolean
+language plpgsql
+immutable
+set search_path = ''
+as $
+declare
+  key_name text;
+  idx integer;
+  before_type text;
+  after_type text;
+begin
+  if before_value is not distinct from after_value then
+    return true;
+  end if;
+
+  before_type := jsonb_typeof(before_value);
+  after_type := jsonb_typeof(after_value);
+  if before_type is distinct from after_type then
+    return false;
+  end if;
+
+  if before_type = 'object' then
+    for key_name in
+      select key from (
+        select jsonb_object_keys(coalesce(before_value, '{}'::jsonb)) as key
+        union
+        select jsonb_object_keys(coalesce(after_value, '{}'::jsonb)) as key
+      ) keys
+    loop
+      if key_name = 'status' then
+        continue;
+      end if;
+      if not public.jsonb_status_only_change(before_value -> key_name, after_value -> key_name) then
+        return false;
+      end if;
+    end loop;
+    return true;
+  end if;
+
+  if before_type = 'array' then
+    if jsonb_array_length(before_value) <> jsonb_array_length(after_value) then
+      return false;
+    end if;
+    if jsonb_array_length(before_value) = 0 then
+      return true;
+    end if;
+    for idx in 0..jsonb_array_length(before_value) - 1 loop
+      if not public.jsonb_status_only_change(before_value -> idx, after_value -> idx) then
+        return false;
+      end if;
+    end loop;
+    return true;
+  end if;
+
+  return false;
+end;
+$;
+
 create or replace function public.can_org_edit(target_org uuid)
 returns boolean
 language sql
 stable
 security definer
 set search_path = public
-as $$
+as $
   select exists (
     select 1
     from public.memberships m
     where m.org_id = target_org
       and m.user_id = auth.uid()
-      and m.role in ('developer','admin','manager','assistant','inspector','engineer')
+      and (
+        public.workspace_permission_allowed(m.role, m.permissions, 'contacts', 'create')
+        or public.workspace_permission_allowed(m.role, m.permissions, 'contacts', 'edit')
+        or public.workspace_permission_allowed(m.role, m.permissions, 'contacts', 'status')
+        or public.workspace_permission_allowed(m.role, m.permissions, 'contacts', 'delete')
+        or public.workspace_permission_allowed(m.role, m.permissions, 'projects', 'create')
+        or public.workspace_permission_allowed(m.role, m.permissions, 'projects', 'edit')
+        or public.workspace_permission_allowed(m.role, m.permissions, 'projects', 'status')
+        or public.workspace_permission_allowed(m.role, m.permissions, 'projects', 'delete')
+        or public.workspace_permission_allowed(m.role, m.permissions, 'tasks', 'create')
+        or public.workspace_permission_allowed(m.role, m.permissions, 'tasks', 'edit')
+        or public.workspace_permission_allowed(m.role, m.permissions, 'tasks', 'status')
+        or public.workspace_permission_allowed(m.role, m.permissions, 'tasks', 'delete')
+        or public.workspace_permission_allowed(m.role, m.permissions, 'calendar', 'create')
+        or public.workspace_permission_allowed(m.role, m.permissions, 'calendar', 'edit')
+        or public.workspace_permission_allowed(m.role, m.permissions, 'calendar', 'delete')
+        or public.workspace_permission_allowed(m.role, m.permissions, 'files', 'create')
+        or public.workspace_permission_allowed(m.role, m.permissions, 'files', 'edit')
+        or public.workspace_permission_allowed(m.role, m.permissions, 'files', 'delete')
+        or public.workspace_permission_allowed(m.role, m.permissions, 'reports', 'create')
+        or public.workspace_permission_allowed(m.role, m.permissions, 'reports', 'edit')
+        or public.workspace_permission_allowed(m.role, m.permissions, 'reports', 'status')
+        or public.workspace_permission_allowed(m.role, m.permissions, 'reports', 'delete')
+        or public.workspace_permission_allowed(m.role, m.permissions, 'finance', 'create')
+        or public.workspace_permission_allowed(m.role, m.permissions, 'finance', 'edit')
+        or public.workspace_permission_allowed(m.role, m.permissions, 'finance', 'status')
+        or public.workspace_permission_allowed(m.role, m.permissions, 'finance', 'delete')
+        or public.workspace_permission_allowed(m.role, m.permissions, 'communication', 'create')
+        or public.workspace_permission_allowed(m.role, m.permissions, 'communication', 'edit')
+        or public.workspace_permission_allowed(m.role, m.permissions, 'communication', 'delete')
+      )
   );
-$$;
+$;
 
 create or replace function public.save_workspace_state(
   target_org uuid,
@@ -111,16 +264,24 @@ returns bigint
 language plpgsql
 security definer
 set search_path = public
-as $$
+as $
 declare
   caller_role text;
+  caller_permissions jsonb;
   current_data jsonb;
   current_version bigint;
   changed_key text;
-  allowed_keys text[];
+  target_area text;
+  current_section jsonb;
+  next_section jsonb;
+  has_identifiable_items boolean;
+  has_created boolean;
+  has_deleted boolean;
+  has_edited boolean;
+  has_status_change boolean;
   next_version bigint;
 begin
-  select m.role into caller_role
+  select m.role, m.permissions into caller_role, caller_permissions
   from public.memberships m
   where m.org_id = target_org
     and m.user_id = auth.uid()
@@ -128,10 +289,6 @@ begin
 
   if caller_role is null then
     raise exception 'Access denied';
-  end if;
-
-  if caller_role in ('viewer','reviewer','member') then
-    raise exception 'This account is read-only';
   end if;
 
   select ws.data, ws.version
@@ -148,24 +305,6 @@ begin
     raise exception 'WORKSPACE_VERSION_CONFLICT';
   end if;
 
-  if caller_role in ('developer','admin','manager') then
-    allowed_keys := array[
-      'contacts','deals','projects','tasks','events','files','quotes','team',
-      'taskColumns','taskStatuses','checklistTemplates','reports','reportTemplates',
-      'audit','clientNotes','settings'
-    ];
-  elsif caller_role = 'assistant' then
-    allowed_keys := array[
-      'contacts','deals','projects','tasks','events','files','quotes','clientNotes','audit'
-    ];
-  elsif caller_role in ('inspector','engineer') then
-    allowed_keys := array[
-      'projects','tasks','events','files','reports','clientNotes','audit'
-    ];
-  else
-    raise exception 'This role is not allowed to edit the workspace';
-  end if;
-
   for changed_key in
     select key
     from (
@@ -175,8 +314,113 @@ begin
     ) keys
     where coalesce(current_data -> key, 'null'::jsonb) is distinct from coalesce(next_data -> key, 'null'::jsonb)
   loop
-    if not (changed_key = any(allowed_keys)) then
-      raise exception 'Role % cannot modify workspace section %', caller_role, changed_key;
+    if changed_key = 'audit' then
+      continue;
+    end if;
+
+    if changed_key = 'team' then
+      if caller_role not in ('developer','admin','manager') then
+        raise exception 'This account cannot manage team data';
+      end if;
+      continue;
+    end if;
+
+    if changed_key = 'settings' then
+      if caller_role <> 'developer' then
+        raise exception 'Only the developer can change system settings';
+      end if;
+      continue;
+    end if;
+
+    target_area := case
+      when changed_key in ('contacts','deals') then 'contacts'
+      when changed_key = 'projects' then 'projects'
+      when changed_key in ('tasks','taskColumns','taskStatuses','checklistTemplates') then 'tasks'
+      when changed_key = 'events' then 'calendar'
+      when changed_key = 'files' then 'files'
+      when changed_key in ('reports','reportTemplates') then 'reports'
+      when changed_key = 'quotes' then 'finance'
+      when changed_key = 'clientNotes' then 'communication'
+      else null
+    end;
+
+    if target_area is null then
+      raise exception 'Workspace section % is not permission-mapped', changed_key;
+    end if;
+
+    current_section := coalesce(current_data -> changed_key, 'null'::jsonb);
+    next_section := coalesce(next_data -> changed_key, 'null'::jsonb);
+    has_created := false;
+    has_deleted := false;
+    has_edited := false;
+    has_status_change := false;
+
+    if jsonb_typeof(current_section) = 'array' and jsonb_typeof(next_section) = 'array' then
+      select coalesce(bool_and(jsonb_typeof(item) = 'object' and item ? 'id'), true)
+      into has_identifiable_items
+      from (
+        select value as item from jsonb_array_elements(current_section)
+        union all
+        select value as item from jsonb_array_elements(next_section)
+      ) items;
+
+      if has_identifiable_items then
+        select exists (
+          select 1
+          from jsonb_array_elements(next_section) n
+          where not exists (
+            select 1 from jsonb_array_elements(current_section) c
+            where c ->> 'id' = n ->> 'id'
+          )
+        ) into has_created;
+
+        select exists (
+          select 1
+          from jsonb_array_elements(current_section) c
+          where not exists (
+            select 1 from jsonb_array_elements(next_section) n
+            where n ->> 'id' = c ->> 'id'
+          )
+        ) into has_deleted;
+
+        select exists (
+          select 1
+          from jsonb_array_elements(current_section) old_item
+          join jsonb_array_elements(next_section) new_item on new_item ->> 'id' = old_item ->> 'id'
+          where old_item is distinct from new_item
+            and not public.jsonb_status_only_change(old_item, new_item)
+        ) into has_edited;
+
+        select exists (
+          select 1
+          from jsonb_array_elements(current_section) old_item
+          join jsonb_array_elements(next_section) new_item on new_item ->> 'id' = old_item ->> 'id'
+          where old_item is distinct from new_item
+            and public.jsonb_status_only_change(old_item, new_item)
+        ) into has_status_change;
+      else
+        has_edited := current_section is distinct from next_section;
+      end if;
+    else
+      has_edited := current_section is distinct from next_section;
+    end if;
+
+    if has_created and not public.workspace_permission_allowed(caller_role, caller_permissions, target_area, 'create') then
+      raise exception 'Permission denied: create in %', target_area;
+    end if;
+
+    if has_deleted and not public.workspace_permission_allowed(caller_role, caller_permissions, target_area, 'delete') then
+      raise exception 'Permission denied: delete in %', target_area;
+    end if;
+
+    if has_edited and not public.workspace_permission_allowed(caller_role, caller_permissions, target_area, 'edit') then
+      raise exception 'Permission denied: edit in %', target_area;
+    end if;
+
+    if has_status_change
+      and not public.workspace_permission_allowed(caller_role, caller_permissions, target_area, 'status')
+      and not public.workspace_permission_allowed(caller_role, caller_permissions, target_area, 'edit') then
+      raise exception 'Permission denied: status in %', target_area;
     end if;
   end loop;
 
@@ -191,7 +435,7 @@ begin
 
   return next_version;
 end;
-$$;
+$;
 
 -- The first authenticated user initializes the organization. The configured
 -- developer email is promoted to the protected developer role by the Worker.
@@ -244,6 +488,7 @@ returns table (
   email text,
   display_name text,
   role text,
+  permissions jsonb,
   created_at timestamptz
 )
 language plpgsql
@@ -266,6 +511,7 @@ begin
       split_part(u.email, '@', 1)
     )::text as display_name,
     m.role,
+    m.permissions,
     m.created_at
   from public.memberships m
   join auth.users u on u.id = m.user_id
@@ -322,34 +568,108 @@ begin
     raise exception 'Only the developer can change the developer account';
   end if;
 
-  insert into public.memberships(org_id, user_id, role)
-  values (target_org, target_user_id, target_role)
+  insert into public.memberships(org_id, user_id, role, permissions)
+  values (target_org, target_user_id, target_role, null)
   on conflict (org_id, user_id)
-  do update set role = excluded.role;
+  do update set role = excluded.role, permissions = null;
 
   return target_user_id;
 end;
-$$;
+$;
+
+create or replace function public.set_org_member_permissions(target_org uuid, target_user uuid, target_permissions jsonb)
+returns uuid
+language plpgsql
+security definer
+set search_path = public, auth
+as $
+declare
+  caller_role text;
+  target_role text;
+  area_entry record;
+  action_entry record;
+begin
+  select role into caller_role
+  from public.memberships
+  where org_id = target_org
+    and user_id = auth.uid()
+  limit 1;
+
+  if caller_role not in ('developer','admin','manager') then
+    raise exception 'Only an administrator can manage users';
+  end if;
+
+  select role into target_role
+  from public.memberships
+  where org_id = target_org
+    and user_id = target_user
+  limit 1;
+
+  if target_role is null then
+    raise exception 'User is not a member of this organization';
+  end if;
+
+  if target_role = 'developer' then
+    raise exception 'Developer permissions are protected';
+  end if;
+
+  if target_permissions is not null then
+    if jsonb_typeof(target_permissions) <> 'object' then
+      raise exception 'Permissions must be a JSON object';
+    end if;
+
+    for area_entry in select key, value from jsonb_each(target_permissions) loop
+      if area_entry.key not in ('contacts','projects','tasks','calendar','files','reports','finance','communication') then
+        raise exception 'Invalid permission area: %', area_entry.key;
+      end if;
+      if jsonb_typeof(area_entry.value) <> 'object' then
+        raise exception 'Permission area % must be an object', area_entry.key;
+      end if;
+      for action_entry in select key, value from jsonb_each(area_entry.value) loop
+        if action_entry.key not in ('view','create','edit','status','delete') then
+          raise exception 'Invalid permission action: %', action_entry.key;
+        end if;
+        if jsonb_typeof(action_entry.value) <> 'boolean' then
+          raise exception 'Permission % in % must be boolean', action_entry.key, area_entry.key;
+        end if;
+      end loop;
+    end loop;
+  end if;
+
+  update public.memberships
+  set permissions = target_permissions
+  where org_id = target_org
+    and user_id = target_user;
+
+  return target_user;
+end;
+$;
 
 -- Do not expose helper RPCs to anonymous clients. They still perform their own
 -- authorization checks, but explicit grants make the intended boundary clear.
 revoke all on function public.is_org_member(uuid) from public, anon;
 revoke all on function public.is_org_developer(uuid) from public, anon;
 revoke all on function public.is_org_admin(uuid) from public, anon;
+revoke all on function public.workspace_permission_allowed(text, jsonb, text, text) from public, anon;
+revoke all on function public.can_org_action(uuid, text, text) from public, anon;
+revoke all on function public.jsonb_status_only_change(jsonb, jsonb) from public, anon;
 revoke all on function public.can_org_edit(uuid) from public, anon;
 revoke all on function public.save_workspace_state(uuid, jsonb, bigint) from public, anon;
 revoke all on function public.bootstrap_first_admin() from public, anon;
 revoke all on function public.list_org_members(uuid) from public, anon;
 revoke all on function public.set_org_member_role(uuid, text, text) from public, anon;
+revoke all on function public.set_org_member_permissions(uuid, uuid, jsonb) from public, anon;
 
 grant execute on function public.is_org_member(uuid) to authenticated;
 grant execute on function public.is_org_developer(uuid) to authenticated;
 grant execute on function public.is_org_admin(uuid) to authenticated;
+grant execute on function public.can_org_action(uuid, text, text) to authenticated;
 grant execute on function public.can_org_edit(uuid) to authenticated;
 grant execute on function public.save_workspace_state(uuid, jsonb, bigint) to authenticated;
 grant execute on function public.bootstrap_first_admin() to authenticated;
 grant execute on function public.list_org_members(uuid) to authenticated;
 grant execute on function public.set_org_member_role(uuid, text, text) to authenticated;
+grant execute on function public.set_org_member_permissions(uuid, uuid, jsonb) to authenticated;
 
 -- RLS policies
 
@@ -428,7 +748,7 @@ on storage.objects for select
 to authenticated
 using (
   bucket_id = 'crm-files'
-  and public.is_org_member(((storage.foldername(name))[1])::uuid)
+  and public.can_org_action(((storage.foldername(name))[1])::uuid, 'files', 'view')
 );
 
 drop policy if exists rameng_files_insert on storage.objects;
@@ -437,7 +757,7 @@ on storage.objects for insert
 to authenticated
 with check (
   bucket_id = 'crm-files'
-  and public.can_org_edit(((storage.foldername(name))[1])::uuid)
+  and public.can_org_action(((storage.foldername(name))[1])::uuid, 'files', 'create')
 );
 
 drop policy if exists rameng_files_update on storage.objects;
@@ -446,11 +766,11 @@ on storage.objects for update
 to authenticated
 using (
   bucket_id = 'crm-files'
-  and public.can_org_edit(((storage.foldername(name))[1])::uuid)
+  and public.can_org_action(((storage.foldername(name))[1])::uuid, 'files', 'edit')
 )
 with check (
   bucket_id = 'crm-files'
-  and public.can_org_edit(((storage.foldername(name))[1])::uuid)
+  and public.can_org_action(((storage.foldername(name))[1])::uuid, 'files', 'edit')
 );
 
 drop policy if exists rameng_files_delete on storage.objects;
@@ -459,7 +779,7 @@ on storage.objects for delete
 to authenticated
 using (
   bucket_id = 'crm-files'
-  and public.can_org_edit(((storage.foldername(name))[1])::uuid)
+  and public.can_org_action(((storage.foldername(name))[1])::uuid, 'files', 'delete')
 );
 
 -- Realtime updates for the shared workspace.
