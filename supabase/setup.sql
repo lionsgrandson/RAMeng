@@ -214,7 +214,7 @@ returns boolean
 language plpgsql
 immutable
 set search_path = ''
-as $
+as $$
 declare
   key_name text;
   idx integer;
@@ -292,7 +292,7 @@ begin
 
   return false;
 end;
-$;
+$$;
 
 create or replace function public.get_workspace_state(target_org uuid)
 returns table (
@@ -303,7 +303,7 @@ language plpgsql
 stable
 security definer
 set search_path = public
-as $
+as $$
 declare
   caller_role text;
   caller_permissions jsonb;
@@ -370,7 +370,7 @@ begin
 
   return query select filtered_data, state_version;
 end;
-$;
+$$;
 
 create or replace function public.can_org_edit(target_org uuid)
 returns boolean
