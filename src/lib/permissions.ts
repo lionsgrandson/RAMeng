@@ -121,6 +121,38 @@ function onlyStatusChanged(before: unknown, after: unknown, key = ''): boolean {
   return false
 }
 
+function hasNestedEntityRemoval(before: unknown, after: unknown): boolean {
+  if (JSON.stringify(before) === JSON.stringify(after)) return false
+
+  if (Array.isArray(before) && Array.isArray(after)) {
+    const identifiable = before.length > 0 && [...before, ...after].every((item) => isObject(item) && typeof item.id !== 'undefined')
+    if (identifiable) {
+      const afterById = new Map(after.map((item) => [String((item as Record<string, unknown>).id), item]))
+      for (const oldItem of before) {
+        const id = String((oldItem as Record<string, unknown>).id)
+        const matchingItem = afterById.get(id)
+        if (!matchingItem) return true
+        if (hasNestedEntityRemoval(oldItem, matchingItem)) return true
+      }
+      return false
+    }
+
+    const overlap = Math.min(before.length, after.length)
+    for (let index = 0; index < overlap; index += 1) {
+      if (hasNestedEntityRemoval(before[index], after[index])) return true
+    }
+    return false
+  }
+
+  if (isObject(before) && isObject(after)) {
+    for (const key of Object.keys(before)) {
+      if (key in after && hasNestedEntityRemoval(before[key], after[key])) return true
+    }
+  }
+
+  return false
+}
+
 function arrayOperations(before: unknown[], after: unknown[]) {
   const identifiable = [...before, ...after].every((item) => isObject(item) && typeof item.id !== 'undefined')
   if (!identifiable) {
