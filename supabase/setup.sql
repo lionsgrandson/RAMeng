@@ -92,7 +92,7 @@ language sql
 stable
 security definer
 set search_path = public
-as $
+as $$
   select exists (
     select 1
     from public.memberships m
@@ -100,7 +100,7 @@ as $
       and m.user_id = auth.uid()
       and m.role in ('developer','admin','manager','assistant','inspector','engineer')
   );
-$;
+$$;
 
 create or replace function public.save_workspace_state(
   target_org uuid,
@@ -111,7 +111,7 @@ returns bigint
 language plpgsql
 security definer
 set search_path = public
-as $
+as $$
 declare
   caller_role text;
   current_data jsonb;
@@ -191,7 +191,7 @@ begin
 
   return next_version;
 end;
-$;
+$$;
 
 -- The first authenticated user initializes the organization. The configured
 -- developer email is promoted to the protected developer role by the Worker.
