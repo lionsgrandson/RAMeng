@@ -20,7 +20,20 @@ const corsHeaders = (request) => ({
 const apiJson = (request, data, status = 200) => json(data, status, corsHeaders(request))
 
 async function readConfig(env) {
-  return (await env.CONFIG.get(CONFIG_KEY, 'json')) || {}
+  const stored = (await env.CONFIG.get(CONFIG_KEY, 'json')) || {}
+  const localDeveloperEmails = String(env.DEVELOPER_EMAILS || '')
+    .split(',')
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean)
+
+  return {
+    ...stored,
+    supabaseUrl: stored.supabaseUrl || cleanString(env.SUPABASE_URL),
+    supabaseAnonKey: stored.supabaseAnonKey || cleanString(env.SUPABASE_ANON_KEY),
+    adminEmails: cleanEmails(stored.adminEmails).length ? cleanEmails(stored.adminEmails) : localDeveloperEmails,
+    developerEmails: cleanEmails(stored.developerEmails).length ? cleanEmails(stored.developerEmails) : localDeveloperEmails,
+    googleClientId: stored.googleClientId || cleanString(env.GOOGLE_CLIENT_ID),
+  }
 }
 
 async function saveConfig(env, next) {
