@@ -121,16 +121,21 @@ async function requireDeveloper(request, env, config) {
   return user
 }
 
-async function requireEditor(request, env, config) {
-  const user = await getAuthenticatedUser(request, env, config)
-  if (isDeveloper(user, config)) {
-    await ensureDeveloperMembership(env, config, user)
-    return user
-  }
+function rolePermissionAllowed(role, permissions, area, action) {
+  if (role === 'developer') return true
+  const custom = permissions?.[area]?.[action]
+  if (typeof custom === 'boolean') return custom
+  if (action === 'view') return ['admin', 'manager', 'assistant', 'inspector', 'engineer', 'viewer', 'reviewer', 'member'].includes(role)
+  if (['admin', 'manager'].includes(role)) return true
+  if (role === 'assistant') return ['contacts', 'projects', 'tasks', 'calendar', 'files', 'finance', 'communication'].includes(area)
+  if (['inspector', 'engineer'].includes(role)) return ['projects', 'tasks', 'calendar', 'files', 'reports', 'communication'].includes(area)
+  return false
+}
 
+async function currentMembership(request, env, config, user) {
   const auth = request.headers.get('authorization') || ''
   const url = new URL(`${config.supabaseUrl.replace(/\/$/, '')}/rest/v1/memberships`)
-  url.searchParams.set('select', 'role')
+  url.searchParams.set('select', 'role,permissions')
   url.searchParams.set('user_id', `eq.${user.id}`)
   const response = await fetch(url.toString(), {
     headers: {
@@ -140,8 +145,33 @@ async function requireEditor(request, env, config) {
     },
   })
   const memberships = response.ok ? await response.json() : []
-  const canEdit = Array.isArray(memberships) && memberships.some((membership) => ['developer', 'admin', 'manager', 'assistant', 'inspector', 'engineer'].includes(membership?.role))
-  if (!canEdit) throw Object.assign(new Error('החשבון מוגדר לצפייה בלבד'), { status: 403 })
+  return Array.isArray(memberships) ? memberships[0] || null : null
+}
+
+async function requireAreaAction(request, env, config, area, action) {
+  const user = await getAuthenticatedUser(request, env, config)
+  if (isDeveloper(user, config)) {
+    await ensureDeveloperMembership(env, config, user)
+    return user
+  }
+
+  const membership = await currentMembership(request, env, config, user)
+  if (!membership || !rolePermissionAllowed(membership.role, membership.permissions, area, action)) {
+    throw Object.assign(new Error('אין לחשבון הרשאה לפעולה הזו'), { status: 403 })
+  }
+  return user
+}
+
+async function requireAnyAreaAction(request, env, config, checks) {
+  const user = await getAuthenticatedUser(request, env, config)
+  if (isDeveloper(user, config)) {
+    await ensureDeveloperMembership(env, config, user)
+    return user
+  }
+
+  const membership = await currentMembership(request, env, config, user)
+  const allowed = membership && checks.some(({ area, action }) => rolePermissionAllowed(membership.role, membership.permissions, area, action))
+  if (!allowed) throw Object.assign(new Error('אין לחשבון הרשאה לפעולה הזו'), { status: 403 })
   return user
 }
 
@@ -355,7 +385,7 @@ async function handleGoogleCallback(request, env, config) {
 }
 
 async function handleGmailThread(request, env, config) {
-  await requireUser(request, env, config)
+  await requireAreaAction(request, env, config, 'communication', 'view')
   const threadId = new URL(request.url).searchParams.get('threadId') || ''
   if (!threadId) throw Object.assign(new Error('חסר threadId'), { status: 400 })
   const response = await googleFetch(env, config, `https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(threadId)}?format=full`)
@@ -365,7 +395,7 @@ async function handleGmailThread(request, env, config) {
 }
 
 async function handleGmailSearch(request, env, config) {
-  await requireUser(request, env, config)
+  await requireAreaAction(request, env, config, 'communication', 'view')
   const query = new URL(request.url).searchParams.get('q') || ''
   const listUrl = new URL('https://gmail.googleapis.com/gmail/v1/users/me/threads')
   if (query) listUrl.searchParams.set('q', query)
@@ -386,7 +416,7 @@ async function handleGmailSearch(request, env, config) {
 }
 
 async function handleGmailSend(request, env, config) {
-  await requireEditor(request, env, config)
+  await requireAreaAction(request, env, config, 'communication', 'create')
   const body = await parseBody(request)
   const to = cleanString(body.to)
   const subject = cleanString(body.subject)
@@ -416,7 +446,7 @@ async function handleGmailSend(request, env, config) {
 }
 
 async function handleCalendarList(request, env, config) {
-  await requireUser(request, env, config)
+  await requireAreaAction(request, env, config, 'calendar', 'view')
   const url = new URL(request.url)
   const apiUrl = new URL('https://www.googleapis.com/calendar/v3/calendars/primary/events')
   apiUrl.searchParams.set('singleEvents', 'true')
@@ -439,7 +469,7 @@ function isoWithDefaultEnd(start, end) {
 }
 
 async function handleCalendarCreate(request, env, config) {
-  await requireEditor(request, env, config)
+  await requireAreaAction(request, env, config, 'calendar', 'create')
   const body = await parseBody(request)
   const summary = cleanString(body.summary)
   const start = cleanString(body.start)
@@ -466,7 +496,7 @@ function escapeDriveQuery(value) {
 }
 
 async function handleDriveProjectFolder(request, env, config) {
-  await requireEditor(request, env, config)
+  await requireAreaAction(request, env, config, 'files', 'create')
   const body = await parseBody(request)
   const projectId = cleanString(body.projectId)
   const name = cleanString(body.name)
@@ -498,7 +528,7 @@ async function handleDriveProjectFolder(request, env, config) {
 }
 
 async function handleDriveFiles(request, env, config) {
-  await requireUser(request, env, config)
+  await requireAreaAction(request, env, config, 'files', 'view')
   const folderId = new URL(request.url).searchParams.get('folderId') || ''
   if (!folderId) throw Object.assign(new Error('חסר folderId'), { status: 400 })
   const url = new URL('https://www.googleapis.com/drive/v3/files')
@@ -513,7 +543,10 @@ async function handleDriveFiles(request, env, config) {
 }
 
 async function handleAiRewrite(request, env, config) {
-  await requireEditor(request, env, config)
+  await requireAnyAreaAction(request, env, config, [
+    { area: 'reports', action: 'edit' },
+    { area: 'communication', action: 'edit' },
+  ])
   if (!config.openaiApiKey) throw Object.assign(new Error('OpenAI API Key אינו מוגדר'), { status: 409 })
   const body = await parseBody(request)
   const text = cleanString(body.text)
