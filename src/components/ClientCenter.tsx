@@ -49,11 +49,26 @@ export default function ClientsCenter(props: Props) {
 function ClientDirectory({ workspace, setWorkspace, onSelectClient, canEditContacts, contactPermissions, projectPermissions, taskPermissions, actor, startCreating = false }: Props) {
   const contactAccess: AreaPermissions = contactPermissions || { view: true, create: canEditContacts, edit: canEditContacts, status: canEditContacts, delete: canEditContacts }
   const [query, setQuery] = useState('')
+  const [statusFilter, setStatusFilter] = useState('הכל')
+  const [tagFilter, setTagFilter] = useState('הכל')
+  const [projectFilter, setProjectFilter] = useState('הכל')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
   const [adding, setAdding] = useState(startCreating && contactAccess.create)
+  const availableTags = useMemo(() => [...new Set(workspace.contacts.flatMap((contact) => contact.tags))].sort((a, b) => a.localeCompare(b, 'he')), [workspace.contacts])
   const rows = useMemo(() => workspace.contacts.filter((contact) => {
     const q = query.trim().toLowerCase()
-    return !q || `${contact.name} ${contact.company || ''} ${contact.email || ''} ${contact.phone || ''}`.toLowerCase().includes(q)
-  }), [workspace.contacts, query])
+    if (q && !`${contact.name} ${contact.company || ''} ${contact.email || ''} ${contact.phone || ''} ${contact.tags.join(' ')}`.toLowerCase().includes(q)) return false
+    if (statusFilter !== 'הכל' && contact.status !== statusFilter) return false
+    if (tagFilter !== 'הכל' && !contact.tags.includes(tagFilter)) return false
+    const clientProjects = workspace.projects.filter((project) => project.clientIds.includes(contact.id))
+    if (projectFilter === '__none__' && clientProjects.length) return false
+    if (projectFilter !== 'הכל' && projectFilter !== '__none__' && !clientProjects.some((project) => project.id === projectFilter)) return false
+    const created = contact.createdAt.slice(0, 10)
+    if (dateFrom && created < dateFrom) return false
+    if (dateTo && created > dateTo) return false
+    return true
+  }), [workspace.contacts, workspace.projects, query, statusFilter, tagFilter, projectFilter, dateFrom, dateTo])
 
   const createClient = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -83,7 +98,16 @@ function ClientDirectory({ workspace, setWorkspace, onSelectClient, canEditConta
       <h2>לקוחות</h2>
       {contactAccess.create && <button type="button" className="primary" onClick={() => setAdding(true)}><Plus /> לקוח חדש</button>}
     </div>
-    <label className="client-directory-search search-box labeled-search"><span>חיפוש לקוחות</span><div><Search /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="שם, חברה, מייל או טלפון" aria-label="חיפוש לקוחות" /></div></label>
+    <div className="client-filter-panel card">
+      <label className="client-directory-search search-box labeled-search"><span>חיפוש לקוחות</span><div><Search /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="שם, חברה, מייל, טלפון או תגית" aria-label="חיפוש לקוחות" /></div></label>
+      <label className="client-filter-field"><span>סטטוס</span><select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}><option>הכל</option>{[...new Set(workspace.contacts.map((contact) => contact.status))].map((status) => <option key={status}>{status}</option>)}</select></label>
+      <label className="client-filter-field"><span>תגית</span><select value={tagFilter} onChange={(e) => setTagFilter(e.target.value)}><option value="הכל">כל התגיות</option>{availableTags.map((tag) => <option key={tag}>{tag}</option>)}</select></label>
+      <label className="client-filter-field"><span>פרויקט</span><select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)}><option value="הכל">כל הפרויקטים</option><option value="__none__">ללא פרויקט</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.address || 'כתובת חסרה'} · {project.name}</option>)}</select></label>
+      <label className="client-filter-field"><span>נוצר מתאריך</span><input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} /></label>
+      <label className="client-filter-field"><span>נוצר עד תאריך</span><input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} /></label>
+      <button type="button" className="secondary compact-filter-clear" onClick={() => { setQuery(''); setStatusFilter('הכל'); setTagFilter('הכל'); setProjectFilter('הכל'); setDateFrom(''); setDateTo('') }}>ניקוי סינון</button>
+      <span className="filter-count">{rows.length} מתוך {workspace.contacts.length} לקוחות</span>
+    </div>
     <div className="client-card-grid">
       {rows.map((contact) => {
         const projects = workspace.projects.filter((project) => project.clientIds.includes(contact.id))
