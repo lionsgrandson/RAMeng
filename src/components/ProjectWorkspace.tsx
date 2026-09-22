@@ -13,6 +13,11 @@ export function ProjectsPage({ workspace, setWorkspace, onOpen, startCreating = 
   const [search, setSearch] = useState('')
   const [addressFilter, setAddressFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('הכל')
+  const [managerFilter, setManagerFilter] = useState('הכל')
+  const [clientFilter, setClientFilter] = useState('הכל')
+  const [dateField, setDateField] = useState<'start' | 'target' | 'created'>('start')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
 
   const filteredProjects = useMemo(() => {
     const general = search.trim().toLowerCase()
@@ -23,9 +28,20 @@ export function ProjectsPage({ workspace, setWorkspace, onOpen, startCreating = 
       if (general && !haystack.includes(general)) return false
       if (address && !(project.address || '').toLowerCase().includes(address)) return false
       if (statusFilter !== 'הכל' && project.status !== statusFilter) return false
+      if (managerFilter !== 'הכל') {
+        if (managerFilter === '__none__' && project.managerId) return false
+        if (managerFilter !== '__none__' && project.managerId !== managerFilter) return false
+      }
+      if (clientFilter !== 'הכל') {
+        if (clientFilter === '__none__' && project.clientIds.length) return false
+        if (clientFilter !== '__none__' && !project.clientIds.includes(clientFilter)) return false
+      }
+      const selectedDate = dateField === 'start' ? project.startDate : dateField === 'target' ? project.targetDate : project.createdAt.slice(0, 10)
+      if (dateFrom && (!selectedDate || selectedDate < dateFrom)) return false
+      if (dateTo && (!selectedDate || selectedDate > dateTo)) return false
       return true
     })
-  }, [workspace.projects, workspace.contacts, search, addressFilter, statusFilter])
+  }, [workspace.projects, workspace.contacts, search, addressFilter, statusFilter, managerFilter, clientFilter, dateField, dateFrom, dateTo])
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -56,7 +72,12 @@ export function ProjectsPage({ workspace, setWorkspace, onOpen, startCreating = 
         <label className="project-filter-field"><span>חיפוש פרויקט</span><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="שם פרויקט, כתובת או לקוח" /></label>
         <label className="project-filter-field"><span>כתובת</span><input value={addressFilter} onChange={(e) => setAddressFilter(e.target.value)} placeholder="סינון לפי רחוב, עיר או כתובת" /></label>
         <label className="project-filter-field"><span>סטטוס</span><select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}><option>הכל</option><option>בתכנון</option><option>בביצוע</option><option>בהמתנה</option><option>הושלם</option><option>מוקפא</option></select></label>
-        <div className="project-filter-actions"><span>{filteredProjects.length} מתוך {workspace.projects.length} פרויקטים</span>{canEdit && <button className="primary" onClick={() => setAdding(true)}><Plus /> פרויקט חדש</button>}</div>
+        <label className="project-filter-field"><span>מנהל פרויקט</span><select value={managerFilter} onChange={(e) => setManagerFilter(e.target.value)}><option value="הכל">כל המנהלים</option><option value="__none__">ללא מנהל</option>{workspace.team.filter((member) => member.active).map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select></label>
+        <label className="project-filter-field"><span>לקוח</span><select value={clientFilter} onChange={(e) => setClientFilter(e.target.value)}><option value="הכל">כל הלקוחות</option><option value="__none__">ללא לקוח</option>{workspace.contacts.map((contact) => <option key={contact.id} value={contact.id}>{contact.name}</option>)}</select></label>
+        <label className="project-filter-field"><span>תאריך לפי</span><select value={dateField} onChange={(e) => setDateField(e.target.value as 'start' | 'target' | 'created')}><option value="start">תאריך התחלה</option><option value="target">תאריך יעד</option><option value="created">תאריך יצירה</option></select></label>
+        <label className="project-filter-field"><span>מתאריך</span><input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} /></label>
+        <label className="project-filter-field"><span>עד תאריך</span><input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} /></label>
+        <div className="project-filter-actions"><button type="button" className="secondary compact-filter-clear" onClick={() => { setSearch(''); setAddressFilter(''); setStatusFilter('הכל'); setManagerFilter('הכל'); setClientFilter('הכל'); setDateFrom(''); setDateTo('') }}>ניקוי סינון</button><span>{filteredProjects.length} מתוך {workspace.projects.length} פרויקטים</span>{canEdit && <button className="primary" onClick={() => setAdding(true)}><Plus /> פרויקט חדש</button>}</div>
       </div>
     </div>
 
