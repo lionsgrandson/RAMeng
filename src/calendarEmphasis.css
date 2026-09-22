@@ -348,12 +348,12 @@
   color:#1f3d2b!important;
 }
 
-.calendar-page .calendar-toolbar,
-.calendar-page .calendar-toolbar h1,
-.calendar-page .calendar-toolbar h2,
-.calendar-page .calendar-toolbar h3,
-.calendar-page .calendar-toolbar strong,
-.calendar-page .calendar-toolbar span{
+.calendar-page .calendar-toolbar>div:first-child,
+.calendar-page .calendar-toolbar>div:first-child h1,
+.calendar-page .calendar-toolbar>div:first-child h2,
+.calendar-page .calendar-toolbar>div:first-child h3,
+.calendar-page .calendar-toolbar>div:first-child strong,
+.calendar-page .calendar-toolbar>div:first-child span{
   color:#fff!important;
 }
 
@@ -380,4 +380,15 @@
 .primary span,
 .primary strong{
   color:#fff!important;
+}
+
+
+/* Calendar toolbar controls sit on white, so keep their labels/icons dark. */
+.calendar-page .calendar-toolbar .primary,
+.calendar-page .calendar-toolbar .primary span,
+.calendar-page .calendar-toolbar .primary strong,
+.calendar-page .calendar-toolbar .secondary,
+.calendar-page .calendar-toolbar .secondary span,
+.calendar-page .calendar-toolbar .icon-btn{
+  color:var(--calendar-green-strong)!important;
 }
