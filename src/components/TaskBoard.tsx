@@ -51,6 +51,11 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
   const [addressFilter, setAddressFilter] = useState('')
   const [assigneeFilter, setAssigneeFilter] = useState('הכל')
   const [colorFilter, setColorFilter] = useState('הכל')
+  const [priorityFilter, setPriorityFilter] = useState('הכל')
+  const [clientFilter, setClientFilter] = useState('הכל')
+  const [dateField, setDateField] = useState<'start' | 'due' | 'follow' | 'created' | 'completed'>('due')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
   const [view, setView] = useState<TaskView>('active')
   const [creatingFor, setCreatingFor] = useState<{ parentId?: string } | null>(startCreating && canCreate ? {} : null)
   const [showColumns, setShowColumns] = useState(false)
@@ -126,6 +131,16 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
       if (colorFilter === '__none__' && task.colorTag) return false
       if (colorFilter !== '__none__' && task.colorTag !== colorFilter) return false
     }
+    if (priorityFilter !== 'הכל' && task.priority !== priorityFilter) return false
+    if (clientFilter !== 'הכל') {
+      const project = workspace.projects.find((item) => item.id === task.projectId)
+      const clientIds = project?.clientIds || []
+      if (clientFilter === '__none__' && clientIds.length) return false
+      if (clientFilter !== '__none__' && !clientIds.includes(clientFilter)) return false
+    }
+    const selectedDate = dateField === 'start' ? task.startDate : dateField === 'due' ? task.dueDate : dateField === 'follow' ? task.followUpDate : dateField === 'completed' ? task.completedAt?.slice(0, 10) : task.createdAt.slice(0, 10)
+    if (dateFrom && (!selectedDate || selectedDate < dateFrom)) return false
+    if (dateTo && (!selectedDate || selectedDate > dateTo)) return false
     if (view === 'active' && isCompleted(task)) return false
     if (view === 'archive' && !isCompleted(task)) return false
     if (attentionOnly && !(task.status === 'דורש מעקב' || task.priority === 'דחופה' || (task.followUpDate && new Date(task.followUpDate).getTime() < Date.now()))) return false
@@ -170,6 +185,10 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
     setStatusFilter('הכל')
     setAssigneeFilter('הכל')
     setColorFilter('הכל')
+    setPriorityFilter('הכל')
+    setClientFilter('הכל')
+    setDateFrom('')
+    setDateTo('')
     setProjectFilter('הכל')
     setAddressFilter('')
     setView(isCompleted(target) ? 'archive' : 'active')
@@ -345,6 +364,12 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
       <label className="task-filter-field"><span>סטטוס</span><select aria-label="סינון לפי סטטוס" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}><option>הכל</option>{workspace.taskStatuses.map((status) => <option key={status}>{status}</option>)}</select></label>
       <label className="task-filter-field"><span>אחראי</span><select aria-label="סינון לפי אחראי" value={assigneeFilter} onChange={(e) => setAssigneeFilter(e.target.value)}><option value="הכל">כל האחראים</option><option value="__none__">ללא אחראי</option>{workspace.team.filter((member) => member.active).map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select></label>
       <label className="task-filter-field"><span>צבע</span><select aria-label="סינון לפי צבע" value={colorFilter} onChange={(e) => setColorFilter(e.target.value)}><option value="הכל">כל הצבעים</option><option value="__none__">ללא צבע</option>{TASK_COLOR_OPTIONS.filter((item) => item.id).map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
+      <label className="task-filter-field"><span>עדיפות</span><select value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value)}><option>הכל</option><option>נמוכה</option><option>רגילה</option><option>גבוהה</option><option>דחופה</option></select></label>
+      {!projectId && <label className="task-filter-field"><span>לקוח</span><select value={clientFilter} onChange={(e) => setClientFilter(e.target.value)}><option value="הכל">כל הלקוחות</option><option value="__none__">ללא לקוח</option>{workspace.contacts.map((contact) => <option key={contact.id} value={contact.id}>{contact.name}</option>)}</select></label>}
+      <label className="task-filter-field"><span>תאריך לפי</span><select value={dateField} onChange={(e) => setDateField(e.target.value as 'start' | 'due' | 'follow' | 'created' | 'completed')}><option value="start">תאריך התחלה</option><option value="due">תאריך סיום</option><option value="follow">מועד מעקב</option><option value="created">תאריך יצירה</option><option value="completed">תאריך השלמה</option></select></label>
+      <label className="task-filter-field"><span>מתאריך</span><input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} /></label>
+      <label className="task-filter-field"><span>עד תאריך</span><input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} /></label>
+      <button type="button" className="secondary compact-filter-clear" onClick={() => { setSearch(''); setStatusFilter('הכל'); setProjectFilter('הכל'); setAddressFilter(''); setAssigneeFilter('הכל'); setColorFilter('הכל'); setPriorityFilter('הכל'); setClientFilter('הכל'); setDateFrom(''); setDateTo('') }}>ניקוי סינון</button>
       {canCreate && projectId && <label className="task-filter-field"><span>תבנית</span><select aria-label="החלת צ׳ק ליסט" defaultValue="" onChange={(e) => { const template = workspace.checklistTemplates.find((item) => item.id === e.target.value); if (template) applyTemplate(template.items); e.target.value = '' }}><option value="">בחירת צ׳ק ליסט</option>{workspace.checklistTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}</select></label>}
       {canUpdate && <button type="button" className="secondary board-settings-button" aria-expanded={showColumns} onClick={() => setShowColumns((value) => !value)}><Settings2 /> הגדרות תצוגה</button>}
       {canCreate && <button type="button" className="primary board-create-button" onClick={() => setCreatingFor({})}><Plus /> משימה חדשה</button>}
