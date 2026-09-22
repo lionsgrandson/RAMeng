@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { User } from '@supabase/supabase-js'
-import { BarChart3, Bell, CalendarDays, ContactRound, FileInput, FileText, FolderKanban, LayoutDashboard, ListChecks, LogOut, Menu, Search, Settings, UsersRound, X } from 'lucide-react'
+import { AudioLines, BarChart3, Bell, Bot, CalendarDays, ChevronDown, ContactRound, FileInput, FileText, FolderKanban, LayoutDashboard, ListChecks, LogOut, Menu, ReceiptText, Search, Settings, UsersRound, X } from 'lucide-react'
 import type { Workspace } from './types'
 import { cloneWorkspace } from './seed'
 import { configureBackend, getBackend, getCurrentUser, loadOrganizationWorkspace, saveOrganizationWorkspace, signOut, subscribeWorkspace } from './lib/backend'
@@ -17,33 +17,45 @@ import SettingsPage from './components/Settings'
 import TaskBoard from './components/TaskBoard'
 import UserManagement from './components/UserManagement'
 
-type Page = 'overview' | 'clients' | 'projects' | 'tasks' | 'calendar' | 'files' | 'reports' | 'team' | 'imports' | 'settings'
+type Page = 'overview' | 'clients' | 'projects' | 'tasks' | 'calendar' | 'files' | 'reports' | 'reports-projects' | 'reports-finance' | 'ai' | 'transcription' | 'team' | 'imports' | 'settings'
 
 const pageInfo: Record<Page, string> = {
-  overview: 'סקירה',
+  overview: 'Dashboard',
   clients: 'כל הלקוחות',
   projects: 'כל הפרויקטים',
   tasks: 'כל המשימות',
-  calendar: 'יומן כללי',
+  calendar: 'יומן',
   files: 'כל הקבצים',
-  reports: 'כל הדוחות',
+  reports: 'דוחות',
+  'reports-projects': 'דוחות לפרויקטים',
+  'reports-finance': 'דוחות פיננסיים',
+  ai: 'סוכן AI',
+  transcription: 'תמלול',
   team: 'משתמשים',
   imports: 'ייבוא',
   settings: 'הגדרות',
 }
 
 const navItems: { id: Page; label: string; icon: typeof LayoutDashboard }[] = [
-  { id: 'overview', label: 'סקירה', icon: LayoutDashboard },
+  { id: 'overview', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'clients', label: 'לקוחות', icon: ContactRound },
   { id: 'projects', label: 'פרויקטים', icon: FolderKanban },
   { id: 'tasks', label: 'משימות', icon: ListChecks },
   { id: 'calendar', label: 'יומן', icon: CalendarDays },
   { id: 'files', label: 'קבצים', icon: FileText },
   { id: 'reports', label: 'דוחות', icon: BarChart3 },
+  { id: 'ai', label: 'סוכן AI', icon: Bot },
+  { id: 'transcription', label: 'תמלול', icon: AudioLines },
   { id: 'team', label: 'משתמשים', icon: UsersRound },
   { id: 'imports', label: 'ייבוא', icon: FileInput },
   { id: 'settings', label: 'הגדרות', icon: Settings },
 ]
+
+const reportSubItems: { id: Page; label: string; icon: typeof LayoutDashboard }[] = [
+  { id: 'reports-projects', label: 'דוחות לפרויקטים', icon: FolderKanban },
+  { id: 'reports-finance', label: 'דוחות פיננסיים', icon: ReceiptText },
+]
+const routePages = new Set<Page>([...navItems.map((item) => item.id), ...reportSubItems.map((item) => item.id)])
 
 type ProjectTab = 'summary' | 'tasks' | 'mail' | 'calendar' | 'drive' | 'reports' | 'files'
 type AppRoute = { page: Page; projectId?: string; clientId?: string; taskId?: string; reportId?: string; reportItemId?: string; tab?: ProjectTab; attention?: boolean }
@@ -52,7 +64,7 @@ const readAppRoute = (): AppRoute | null => {
   if (!window.location.hash.startsWith('#app?')) return null
   const params = new URLSearchParams(window.location.hash.slice(5))
   const page = params.get('page') as Page
-  if (!navItems.some((item) => item.id === page)) return null
+  if (!routePages.has(page)) return null
   const tab = params.get('tab') as ProjectTab
   return {
     page,
@@ -100,6 +112,10 @@ const pagePermissionArea: Partial<Record<Page, PermissionArea>> = {
   calendar: 'calendar',
   files: 'files',
   reports: 'reports',
+  'reports-projects': 'reports',
+  'reports-finance': 'finance',
+  ai: 'communication',
+  transcription: 'communication',
 }
 
 const changedEntity = (before: unknown, after: unknown) => {
@@ -431,6 +447,10 @@ export default function App() {
         {page === 'calendar' && <CalendarPage key={createIntent === 'calendar' ? 'new-event' : 'calendar'} startCreating={createIntent === 'calendar' && permissions.calendar.create} workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} permissions={permissions.calendar} onProject={permissions.projects.view ? openProject : undefined} onTask={permissions.tasks.view ? openTask : undefined} />}
         {page === 'files' && <FilesPage workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} orgId={orgId} permissions={permissions.files} onProject={permissions.projects.view ? openProject : undefined} onTask={permissions.tasks.view ? openTask : undefined} />}
         {page === 'reports' && <ReportsPage key={createIntent === 'reports' ? 'new-report' : selectedReport || 'reports'} startCreating={createIntent === 'reports' && permissions.reports.create} workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} orgId={orgId} permissions={permissions.reports} canUploadFiles={permissions.files.create} initialReportId={selectedReport} focusItemId={selectedReportItem} onProject={permissions.projects.view ? openProject : undefined} onSelectReport={(id) => id ? openReport(id) : openPage('reports')} />}
+        {page === 'reports-projects' && <ReportsPage workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} orgId={orgId} permissions={permissions.reports} canUploadFiles={permissions.files.create} onProject={permissions.projects.view ? openProject : undefined} />}
+        {page === 'reports-finance' && <FinancialReports workspace={visibleWorkspace} />}
+        {page === 'ai' && <ModulePlaceholder icon={<Bot />} title="סוכן AI" text="המודול נוסף לניווט ומוכן לחיבור לזרימות העבודה של ראם. חיבור פעולות AI בפועל ייעשה רק לפי האפיון המאושר." />}
+        {page === 'transcription' && <ModulePlaceholder icon={<AudioLines />} title="תמלול" text="המודול נוסף לניווט כנקודת כניסה לתמלול פגישות והקלטות. תהליך התמלול והפקת המשימות יחובר לפי האפיון המאושר." />}
         {page === 'team' && canManageUsers && <UserManagement orgId={orgId} canManage={canManageUsers} isDeveloper={isDeveloper} workspace={workspace} setWorkspace={editableSetWorkspace} />}
         {page === 'imports' && canManageUsers && <ImportCenter workspace={workspace} setWorkspace={editableSetWorkspace} />}
         {page === 'settings' && isDeveloper && <SettingsPage workspace={workspace} setWorkspace={editableSetWorkspace} />}
@@ -440,21 +460,75 @@ export default function App() {
 }
 
 function Sidebar({ page, setPage, workspace, permissions, open, setOpen, user, onLogout, isDeveloper, canManageUsers }: { page: Page; setPage: (page: Page) => void; workspace: Workspace; permissions: PermissionMatrix; open: boolean; setOpen: (value: boolean) => void; user: User; onLogout: () => void; isDeveloper: boolean; canManageUsers: boolean }) {
+  const [reportsOpen, setReportsOpen] = useState(page === 'reports' || page === 'reports-projects' || page === 'reports-finance')
+  const [clock, setClock] = useState(() => new Date())
+  useEffect(() => {
+    if (page === 'reports' || page === 'reports-projects' || page === 'reports-finance') setReportsOpen(true)
+  }, [page])
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock(new Date()), 60000)
+    return () => window.clearInterval(timer)
+  }, [])
+
   const visibleItems = navItems.filter((item) => {
     if (item.id === 'settings') return isDeveloper
     if (item.id === 'team' || item.id === 'imports') return canManageUsers
     const area = pagePermissionArea[item.id]
     return area ? permissions[area].view : true
   })
+  const visibleReportItems = reportSubItems.filter((item) => {
+    const area = pagePermissionArea[item.id]
+    return area ? permissions[area].view : true
+  })
+  const weekday = new Intl.DateTimeFormat('he-IL', { weekday: 'long' }).format(clock)
+  const gregorianDate = new Intl.DateTimeFormat('he-IL-u-ca-gregory', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(clock)
 
   return <>
     <div className={`sidebar-overlay ${open ? 'show' : ''}`} onClick={() => setOpen(false)} />
     <aside className={`sidebar ${open ? 'open' : ''}`}>
-      <div className="brand"><img src={workspace.settings.logoUrl || '/rameng-mark.svg'} alt={workspace.settings.organizationShortName} /><div><strong>{workspace.settings.organizationShortName}</strong></div><button type="button" className="sidebar-close" onClick={() => setOpen(false)} aria-label="סגירת תפריט"><X /></button></div>
-      <nav>{visibleItems.map((item) => { const Icon = item.icon; const count = item.id === 'tasks' ? workspace.tasks.filter((task) => !['בוצע', 'סגור'].includes(task.status)).length : item.id === 'projects' ? workspace.projects.filter((project) => project.status !== 'הושלם').length : 0; return <button type="button" key={item.id} className={page === item.id ? 'active' : ''} aria-current={page === item.id ? 'page' : undefined} onClick={() => setPage(item.id)}><Icon /><span>{item.label}</span>{count > 0 && <em aria-label={`${count} פריטים`}>{count}</em>}</button> })}</nav>
+      <div className="brand"><img src={workspace.settings.logoUrl || '/rameng-mark.svg'} alt={workspace.settings.organizationShortName} /><div><strong>{workspace.settings.organizationShortName}</strong><span>RAM Engineering CRM</span></div><button type="button" className="sidebar-close" onClick={() => setOpen(false)} aria-label="סגירת תפריט"><X /></button></div>
+      <div className="sidebar-date" aria-label={`${weekday}, ${gregorianDate}`}><strong>{weekday}</strong><span>{gregorianDate}</span></div>
+      <nav>{visibleItems.map((item) => {
+        const Icon = item.icon
+        const count = item.id === 'tasks' ? workspace.tasks.filter((task) => !['בוצע', 'סגור'].includes(task.status)).length : item.id === 'projects' ? workspace.projects.filter((project) => project.status !== 'הושלם').length : 0
+        if (item.id === 'reports') {
+          const reportActive = page === 'reports' || page === 'reports-projects' || page === 'reports-finance'
+          return <div className={`nav-group ${reportActive ? 'active' : ''}`} key={item.id}>
+            <button type="button" className={reportActive ? 'active' : ''} aria-expanded={reportsOpen} onClick={() => { setReportsOpen((value) => !value); setPage('reports') }}><Icon /><span>{item.label}</span><ChevronDown className={`nav-chevron ${reportsOpen ? 'open' : ''}`} /></button>
+            {reportsOpen && <div className="nav-submenu">{visibleReportItems.map((sub) => { const SubIcon = sub.icon; return <button type="button" key={sub.id} className={page === sub.id ? 'active' : ''} aria-current={page === sub.id ? 'page' : undefined} onClick={() => setPage(sub.id)}><SubIcon /><span>{sub.label}</span></button> })}</div>}
+          </div>
+        }
+        return <button type="button" key={item.id} className={page === item.id ? 'active' : ''} aria-current={page === item.id ? 'page' : undefined} onClick={() => setPage(item.id)}><Icon /><span>{item.label}</span>{count > 0 && <em aria-label={`${count} פריטים`}>{count}</em>}</button>
+      })}</nav>
       <div className="sidebar-bottom"><div className="profile"><span className="avatar">{(user.email || 'R').slice(0, 2).toUpperCase()}</span><div><strong>{user.email}</strong><small>מחובר</small></div><button type="button" className="icon-btn" onClick={onLogout} title="יציאה" aria-label="יציאה"><LogOut /></button></div><a href={workspace.settings.website} target="_blank" rel="noreferrer">{workspace.settings.website.replace(/^https?:\/\//, '')}</a></div>
     </aside>
   </>
+}
+
+function FinancialReports({ workspace }: { workspace: Workspace }) {
+  const issued = workspace.quotes.reduce((sum, quote) => sum + Number(quote.amount || 0), 0)
+  const paid = workspace.quotes.reduce((sum, quote) => sum + Number(quote.paidAmount || 0), 0)
+  const outstanding = Math.max(0, issued - paid)
+  const currency = (value: number) => new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 }).format(value)
+  return <div className="financial-report-page">
+    <div className="metric-grid finance-report-metrics">
+      <article className="metric card"><div><small>סה״כ מסמכים</small><strong>{workspace.quotes.length}</strong></div></article>
+      <article className="metric card"><div><small>סה״כ לחיוב</small><strong>{currency(issued)}</strong></div></article>
+      <article className="metric card"><div><small>שולם</small><strong>{currency(paid)}</strong></div></article>
+      <article className="metric card"><div><small>יתרה פתוחה</small><strong>{currency(outstanding)}</strong></div></article>
+    </div>
+    <section className="card"><div className="card-head"><div><h2>מידע פיננסי</h2><p>ריכוז הצעות מחיר / חיובים קיימים במערכת. אינטגרציית חשבוניות חיצונית אינה מתווספת ללא אישור היקף.</p></div></div>
+      <div className="finance-report-list">{workspace.quotes.map((quote) => {
+        const client = workspace.contacts.find((item) => item.id === quote.contactId)
+        const project = workspace.projects.find((item) => item.id === quote.projectId)
+        return <article key={quote.id}><div><strong>{quote.number || quote.title}</strong><small>{client?.name || 'ללא לקוח'}{project ? ` · ${project.address || project.name}` : ''}</small></div><span>{quote.status}</span><b>{currency(quote.amount)}</b><span>שולם {currency(quote.paidAmount || 0)}</span></article>
+      })}{!workspace.quotes.length && <div className="table-empty">אין כרגע נתונים פיננסיים להצגה.</div>}</div>
+    </section>
+  </div>
+}
+
+function ModulePlaceholder({ icon, title, text }: { icon: React.ReactNode; title: string; text: string }) {
+  return <section className="card module-placeholder"><div className="module-placeholder-icon">{icon}</div><div><h2>{title}</h2><p>{text}</p></div></section>
 }
 
 type SearchResult = { id: string; type: string; label: string; detail: string; action: () => void }
