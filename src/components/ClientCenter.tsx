@@ -3,6 +3,7 @@ import { ArrowRight, BarChart3, CalendarDays, ExternalLink, FileText, FolderKanb
 import type { ClientNote, Contact, Project, ProjectStatus, Task, Workspace } from '../types'
 import type { AreaPermissions } from '../lib/permissions'
 import { Chip, EmptyState, Field, Modal, StoredFileLink, confirmDelete, dateLabel, dateTimeLabel, money, nowIso, uid } from './common'
+import AddressAutocomplete from './AddressAutocomplete'
 
 type Props = {
   workspace: Workspace
@@ -410,7 +411,7 @@ function ClientWorkspace({ workspace, setWorkspace, onSelectClient, onProject, c
     </form></Modal>}
 
     {canCreateProjects && addingProject && <Modal title="פרויקט חדש ללקוח" onClose={() => setAddingProject(false)} wide><form className="form-grid two-col" onSubmit={createProject}>
-      <Field label="שם הפרויקט"><input name="name" required /></Field><Field label="כתובת *" hint="שדה חובה לכל אתר בנייה"><input name="address" required aria-required="true" placeholder="רחוב, מספר, עיר" /></Field>
+      <Field label="שם הפרויקט"><input name="name" required /></Field><Field label="כתובת *" hint="שדה חובה — התחילו להקליד ובחרו מההצעות"><AddressAutocomplete name="address" required existingAddresses={workspace.projects.map((item) => item.address)} placeholder="רחוב, מספר, עיר" /></Field>
       <Field label="סטטוס"><select name="status"><option>בתכנון</option><option>בביצוע</option><option>בהמתנה</option><option>הושלם</option><option>מוקפא</option></select></Field>
       <Field label="מנהל פרויקט"><select name="managerId"><option value="">לא משויך</option>{workspace.team.filter((member) => member.active).map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select></Field>
       <Field label="תאריך התחלה"><input name="startDate" type="date" /></Field><Field label="יעד"><input name="targetDate" type="date" /></Field>
