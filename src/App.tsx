@@ -254,6 +254,11 @@ export default function App() {
   }, [user?.id, runtime, role])
 
   useEffect(() => {
+    const brand = workspace.settings.brandColor || '#75927c'
+    document.documentElement.style.setProperty('--brand', brand)
+  }, [workspace.settings.brandColor])
+
+  useEffect(() => {
     if (!user) { setLoaded(false); setRole(''); setCustomPermissions(null); return }
     let active = true
     setLoadError('')
