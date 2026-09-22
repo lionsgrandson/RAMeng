@@ -19,6 +19,10 @@ export function CalendarPage({ workspace, setWorkspace, onProject, onTask, start
   const [eventTaskId, setEventTaskId] = useState('')
   const [month, setMonth] = useState(() => new Date(today.getFullYear(), today.getMonth(), 1))
   const [selectedDate, setSelectedDate] = useState(() => dateKey(today))
+  const [calendarSearch, setCalendarSearch] = useState('')
+  const [calendarProjectFilter, setCalendarProjectFilter] = useState('הכל')
+  const [calendarItemFilter, setCalendarItemFilter] = useState<'הכל' | 'אירועים' | 'משימות'>('הכל')
+  const [calendarSourceFilter, setCalendarSourceFilter] = useState<'הכל' | 'Google' | 'מקומי'>('הכל')
 
   const sync = async () => {
     setSyncing(true)
@@ -91,9 +95,31 @@ export function CalendarPage({ workspace, setWorkspace, onProject, onTask, start
   const monthLabel = new Intl.DateTimeFormat('he-IL-u-ca-gregory', { month: 'long', year: 'numeric' }).format(month)
   const todayKey = dateKey(today)
   const weekdayLabels = ['א׳', 'ב׳', 'ג׳', 'ד׳', 'ה׳', 'ו׳', 'ש׳']
-  const eventsFor = (key: string) => workspace.events.filter((item) => dateKey(new Date(item.start)) === key).sort((a, b) => a.start.localeCompare(b.start))
+  const filteredCalendarEvents = useMemo(() => workspace.events.filter((item) => {
+    const project = workspace.projects.find((entry) => entry.id === item.projectId)
+    const task = workspace.tasks.find((entry) => entry.id === item.taskId)
+    const q = calendarSearch.trim().toLowerCase()
+    if (q && !`${item.title} ${item.location || ''} ${item.notes || ''} ${project?.name || ''} ${project?.address || ''} ${task?.title || ''}`.toLowerCase().includes(q)) return false
+    if (calendarProjectFilter !== 'הכל') {
+      if (calendarProjectFilter === '__none__' && item.projectId) return false
+      if (calendarProjectFilter !== '__none__' && item.projectId !== calendarProjectFilter) return false
+    }
+    if (calendarSourceFilter === 'Google' && !item.googleEventId) return false
+    if (calendarSourceFilter === 'מקומי' && item.googleEventId) return false
+    return true
+  }), [workspace.events, workspace.projects, workspace.tasks, calendarSearch, calendarProjectFilter, calendarSourceFilter])
+  const eventsFor = (key: string) => calendarItemFilter === 'משימות' ? [] : filteredCalendarEvents.filter((item) => dateKey(new Date(item.start)) === key).sort((a, b) => a.start.localeCompare(b.start))
   const selectedEvents = eventsFor(selectedDate)
-  const selectedTasks = workspace.tasks.filter((task) => [task.startDate, task.dueDate, task.followUpDate].some((value) => value === selectedDate))
+  const selectedTasks = calendarItemFilter === 'אירועים' ? [] : workspace.tasks.filter((task) => {
+    if (![task.startDate, task.dueDate, task.followUpDate].some((value) => value === selectedDate)) return false
+    if (calendarProjectFilter !== 'הכל') {
+      if (calendarProjectFilter === '__none__' && task.projectId) return false
+      if (calendarProjectFilter !== '__none__' && task.projectId !== calendarProjectFilter) return false
+    }
+    const project = workspace.projects.find((entry) => entry.id === task.projectId)
+    const q = calendarSearch.trim().toLowerCase()
+    return !q || `${task.title} ${task.description || ''} ${task.emailTo || ''} ${project?.name || ''} ${project?.address || ''}`.toLowerCase().includes(q)
+  })
 
   return <div className="calendar-page">
     <section className="card calendar-month-card">
@@ -106,6 +132,13 @@ export function CalendarPage({ workspace, setWorkspace, onProject, onTask, start
           {canSync && <button type="button" className="secondary" onClick={() => void sync()} disabled={syncing}><RefreshCw /> {syncing ? 'מסנכרן...' : 'סנכרון Google'}</button>}
           {canCreate && <button type="button" className="primary" onClick={() => { setEventProjectId(''); setEventTaskId(''); setAdding(true) }}><CalendarPlus /> אירוע</button>}
         </div>
+      </div>
+      <div className="list-filter-panel calendar-filter-panel">
+        <label className="list-filter-field filter-grow"><span>חיפוש</span><input value={calendarSearch} onChange={(e) => setCalendarSearch(e.target.value)} placeholder="אירוע, משימה, כתובת, מיקום או פרויקט" /></label>
+        <label className="list-filter-field"><span>פרויקט</span><select value={calendarProjectFilter} onChange={(e) => setCalendarProjectFilter(e.target.value)}><option value="הכל">כל הפרויקטים</option><option value="__none__">ללא פרויקט</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.address || 'כתובת חסרה'} · {project.name}</option>)}</select></label>
+        <label className="list-filter-field"><span>סוג</span><select value={calendarItemFilter} onChange={(e) => setCalendarItemFilter(e.target.value as 'הכל' | 'אירועים' | 'משימות')}><option>הכל</option><option>אירועים</option><option>משימות</option></select></label>
+        <label className="list-filter-field"><span>מקור אירוע</span><select value={calendarSourceFilter} onChange={(e) => setCalendarSourceFilter(e.target.value as 'הכל' | 'Google' | 'מקומי')} disabled={calendarItemFilter === 'משימות'}><option>הכל</option><option>Google</option><option>מקומי</option></select></label>
+        <button type="button" className="secondary compact-filter-clear" onClick={() => { setCalendarSearch(''); setCalendarProjectFilter('הכל'); setCalendarItemFilter('הכל'); setCalendarSourceFilter('הכל') }}>ניקוי סינון</button>
       </div>
       {error && <div className="error-banner">{error}</div>}
       <div className="month-grid" role="grid" aria-label={`יומן ${monthLabel}`}>
