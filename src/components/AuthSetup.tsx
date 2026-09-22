@@ -34,7 +34,7 @@ export function SetupScreen() {
   }
 
   return <div className="auth-screen">
-    <div className="auth-brand"><img src="/ram-engineering-logo.png" alt="ר.א.ם הנדסה" /><div><strong>ר.א.ם הנדסה</strong><span>מערכת ניהול ופיקוח פרויקטים</span></div></div>
+    <div className="auth-brand"><span className="ram-logo-shell auth-logo-shell"><img src="/ram-engineering-logo.png" alt="ר.א.ם הנדסה" width="1024" height="276" decoding="async" fetchPriority="high" /></span><div><strong>ר.א.ם הנדסה</strong><span>מערכת ניהול ופיקוח פרויקטים</span></div></div>
     <section className="setup-card">
       <div className="setup-intro"><span><Building2 /></span><h1>הגדרה ראשונית</h1><p>הזינו את פרטי המערכת הראשוניים. את חיבור Google אפשר להשלים גם בהמשך.</p></div>
       {error && <div className="error-banner">{error}</div>}
@@ -81,7 +81,7 @@ export function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
   }
 
   return <div className="auth-screen">
-    <div className="auth-brand"><img src="/ram-engineering-logo.png" alt="ר.א.ם הנדסה" /><div><strong>ר.א.ם הנדסה</strong><span>ניהול ופיקוח</span></div></div>
+    <div className="auth-brand"><span className="ram-logo-shell auth-logo-shell"><img src="/ram-engineering-logo.png" alt="ר.א.ם הנדסה" width="1024" height="276" decoding="async" fetchPriority="high" /></span><div><strong>ר.א.ם הנדסה</strong><span>ניהול ופיקוח</span></div></div>
     <section className="login-card">
       <span className="login-icon">{resetMode ? <KeyRound /> : <LockKeyhole />}</span>
       <h1>{resetMode ? 'איפוס סיסמה' : 'כניסה למערכת'}</h1>
@@ -122,7 +122,7 @@ export function SetPasswordScreen({ onSuccess }: { onSuccess: () => void }) {
   }
 
   return <div className="auth-screen">
-    <div className="auth-brand"><img src="/ram-engineering-logo.png" alt="ר.א.ם הנדסה" /><div><strong>ר.א.ם הנדסה</strong><span>ניהול ופיקוח</span></div></div>
+    <div className="auth-brand"><span className="ram-logo-shell auth-logo-shell"><img src="/ram-engineering-logo.png" alt="ר.א.ם הנדסה" width="1024" height="276" decoding="async" fetchPriority="high" /></span><div><strong>ר.א.ם הנדסה</strong><span>ניהול ופיקוח</span></div></div>
     <section className="login-card">
       <span className="login-icon"><KeyRound /></span>
       <h1>הגדרת סיסמה</h1>
