@@ -17,7 +17,7 @@
 
   .print-header{display:grid;grid-template-columns:1fr 1.5fr 1fr;gap:12px;align-items:start;padding-bottom:12px;margin-bottom:16px;border-bottom:3px solid #75927c}
   .print-brand{display:flex;align-items:center;gap:8px}
-  .print-logo{width:54px;height:38px;display:grid;place-items:center;background:#75927c;color:#fff;font-weight:900;font-size:20px;letter-spacing:-1px}
+  .print-logo-image{width:112px;height:auto;max-height:52px;object-fit:contain;background:#fff;border-radius:4px;padding:2px}
   .print-brand>div:last-child{display:flex;flex-direction:column}
   .print-brand strong{font-size:13px}
   .print-brand span{font-size:8px;color:#68756b;margin-top:2px}
