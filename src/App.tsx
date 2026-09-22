@@ -478,6 +478,7 @@ function Sidebar({ page, setPage, workspace, permissions, open, setOpen, user, o
   const visibleItems = navItems.filter((item) => {
     if (item.id === 'settings') return isDeveloper
     if (item.id === 'team' || item.id === 'imports') return canManageUsers
+    if (item.id === 'reports') return permissions.reports.view || permissions.finance.view
     const area = pagePermissionArea[item.id]
     return area ? permissions[area].view : true
   })
@@ -499,7 +500,7 @@ function Sidebar({ page, setPage, workspace, permissions, open, setOpen, user, o
         if (item.id === 'reports') {
           const reportActive = page === 'reports' || page === 'reports-projects' || page === 'reports-finance'
           return <div className={`nav-group ${reportActive ? 'active' : ''}`} key={item.id}>
-            <button type="button" className={reportActive ? 'active' : ''} aria-expanded={reportsOpen} onClick={() => { setReportsOpen((value) => !value); setPage('reports') }}><Icon /><span>{item.label}</span><ChevronDown className={`nav-chevron ${reportsOpen ? 'open' : ''}`} /></button>
+            <button type="button" className={reportActive ? 'active' : ''} aria-expanded={reportsOpen} onClick={() => { setReportsOpen((value) => !value); if (permissions.reports.view) setPage('reports') }}><Icon /><span>{item.label}</span><ChevronDown className={`nav-chevron ${reportsOpen ? 'open' : ''}`} /></button>
             {reportsOpen && <div className="nav-submenu">{visibleReportItems.map((sub) => { const SubIcon = sub.icon; return <button type="button" key={sub.id} className={page === sub.id ? 'active' : ''} aria-current={page === sub.id ? 'page' : undefined} onClick={() => setPage(sub.id)}><SubIcon /><span>{sub.label}</span></button> })}</div>}
           </div>
         }
