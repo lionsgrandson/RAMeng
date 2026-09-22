@@ -100,12 +100,13 @@
 }
 
 .calendar-page .month-weekday{
-  padding:10px 6px;
-  background:#3b5444;
-  color:#fff;
-  font-size:11px;
-  font-weight:900;
+  padding:11px 6px!important;
+  background:#2f4b39!important;
+  color:#fff!important;
+  font-size:13px!important;
+  font-weight:950!important;
   letter-spacing:.01em;
+  text-shadow:0 1px 1px rgba(0,0,0,.16);
 }
 
 .calendar-page .month-day{
