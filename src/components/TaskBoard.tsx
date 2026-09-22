@@ -357,6 +357,8 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
       <button type="button" role="tab" aria-selected={view === 'archive'} className={view === 'archive' ? 'active' : ''} onClick={() => setView('archive')}>משימות שהושלמו <span>{archivedCount}</span></button>
     </div>
 
+    {(canUpdate || canCreate) && <div className="task-edit-banner"><div className="task-edit-banner-copy"><span className="task-edit-icon"><Settings2 /></span><div><strong>עריכת משימות</strong><span>{canUpdate ? 'אפשר ללחוץ ולערוך ישירות שם, סטטוס, אחראי, תאריכים ושאר השדות בטבלה.' : 'ניתן ליצור משימות חדשות.'}</span></div></div>{canCreate && <button type="button" className="primary board-create-button prominent" onClick={() => setCreatingFor({})}><Plus /> משימה חדשה</button>}</div>}
+
     <div className="toolbar board-toolbar">
       <label className="task-filter-field toolbar-grow"><span>חיפוש</span><input className="search-input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="משימה, פרויקט, כתובת, אחראי או מייל" aria-label="חיפוש משימות" /></label>
       {!projectId && <label className="task-filter-field address-task-filter"><span>כתובת</span><input value={addressFilter} onChange={(e) => setAddressFilter(e.target.value)} placeholder="רחוב, עיר או כתובת" aria-label="סינון משימות לפי כתובת פרויקט" /></label>}
@@ -372,7 +374,6 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
       <button type="button" className="secondary compact-filter-clear" onClick={() => { setSearch(''); setStatusFilter('הכל'); setProjectFilter('הכל'); setAddressFilter(''); setAssigneeFilter('הכל'); setColorFilter('הכל'); setPriorityFilter('הכל'); setClientFilter('הכל'); setDateFrom(''); setDateTo('') }}>ניקוי סינון</button>
       {canCreate && projectId && <label className="task-filter-field"><span>תבנית</span><select aria-label="החלת צ׳ק ליסט" defaultValue="" onChange={(e) => { const template = workspace.checklistTemplates.find((item) => item.id === e.target.value); if (template) applyTemplate(template.items); e.target.value = '' }}><option value="">בחירת צ׳ק ליסט</option>{workspace.checklistTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}</select></label>}
       {canUpdate && <button type="button" className="secondary board-settings-button" aria-expanded={showColumns} onClick={() => setShowColumns((value) => !value)}><Settings2 /> הגדרות תצוגה</button>}
-      {canCreate && <button type="button" className="primary board-create-button" onClick={() => setCreatingFor({})}><Plus /> משימה חדשה</button>}
     </div>
 
     {canUpdate && showColumns && <div className="board-config card-soft">
