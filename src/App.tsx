@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { User } from '@supabase/supabase-js'
 import { AudioLines, BarChart3, Bell, Bot, CalendarDays, ChevronDown, ContactRound, FileInput, FileText, FolderKanban, LayoutDashboard, ListChecks, LogOut, Menu, ReceiptText, Search, Settings, UsersRound, X } from 'lucide-react'
 import type { Workspace } from './types'
@@ -527,7 +527,7 @@ function FinancialReports({ workspace }: { workspace: Workspace }) {
   </div>
 }
 
-function ModulePlaceholder({ icon, title, text }: { icon: React.ReactNode; title: string; text: string }) {
+function ModulePlaceholder({ icon, title, text }: { icon: ReactNode; title: string; text: string }) {
   return <section className="card module-placeholder"><div className="module-placeholder-icon">{icon}</div><div><h2>{title}</h2><p>{text}</p></div></section>
 }
 
