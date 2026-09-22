@@ -15,11 +15,11 @@ export function Dashboard({ workspace, onProject, onTask, onReport, onPage, onCr
 
   return <>
     {Object.values(canCreate).some(Boolean) && <div className="dashboard-actions" aria-label="פעולות מהירות"><span>מה רוצים לעשות?</span>{canCreate.tasks && <button type="button" className="primary" onClick={() => onCreate('tasks')}><Plus /> משימה חדשה</button>}{canCreate.projects && <button type="button" className="secondary" onClick={() => onCreate('projects')}><Plus /> פרויקט חדש</button>}{canCreate.clients && <button type="button" className="secondary" onClick={() => onCreate('clients')}><Plus /> לקוח חדש</button>}{canCreate.reports && <button type="button" className="secondary" onClick={() => onCreate('reports')}><Plus /> דוח חדש</button>}{canCreate.calendar && <button type="button" className="secondary" onClick={() => onCreate('calendar')}><Plus /> אירוע חדש</button>}</div>}
-    <div className="metric-grid">
+    <div className="metric-grid dashboard-metrics">
       <button type="button" className="metric card metric-link" onClick={() => onPage('projects')}><span className="metric-icon brand"><BriefcaseBusiness /></span><div><small>פרויקטים</small><strong>{activeProjects.length}</strong></div></button>
       <button type="button" className="metric card metric-link" onClick={onUrgent}><span className="metric-icon warn"><AlertTriangle /></span><div><small>משימות לטיפול</small><strong>{urgentTasks.length}</strong></div></button>
       <button type="button" className="metric card metric-link" onClick={() => onPage('tasks')}><span className="metric-icon good"><ListChecks /></span><div><small>משימות</small><strong>{openTasks.length}</strong></div></button>
-      <button type="button" className="metric card metric-link" onClick={() => onPage('calendar')}><span className="metric-icon neutral"><CalendarDays /></span><div><small>ביומן</small><strong>{upcoming}</strong></div></button>
+      <button type="button" className="metric card metric-link" onClick={() => onPage('calendar')}><span className="metric-icon neutral"><CalendarDays /></span><div><small>יומן</small><strong>{upcoming}</strong></div></button>
     </div>
     <div className="dashboard-grid compact-dashboard">
       <section className="card"><div className="card-head"><h2>פרויקטים אחרונים</h2><button type="button" className="text-button" onClick={() => onPage('projects')}>כל הפרויקטים</button></div><div className="card-body project-health-list">{activeProjects.length ? activeProjects.slice(0, 10).map((project) => {
