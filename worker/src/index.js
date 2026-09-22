@@ -33,6 +33,7 @@ async function readConfig(env) {
     adminEmails: cleanEmails(stored.adminEmails).length ? cleanEmails(stored.adminEmails) : localDeveloperEmails,
     developerEmails: cleanEmails(stored.developerEmails).length ? cleanEmails(stored.developerEmails) : localDeveloperEmails,
     googleClientId: stored.googleClientId || cleanString(env.GOOGLE_CLIENT_ID),
+    googleMapsApiKey: stored.googleMapsApiKey || cleanString(env.GOOGLE_MAPS_API_KEY),
   }
 }
 
@@ -556,49 +557,97 @@ async function handleAddressSuggest(request, env, config) {
   const query = cleanString(url.searchParams.get('q')).slice(0, 120)
   if (query.length < 2) return apiJson(request, { suggestions: [] })
 
-  const nominatim = new URL('https://nominatim.openstreetmap.org/search')
-  nominatim.searchParams.set('q', query)
-  nominatim.searchParams.set('format', 'jsonv2')
-  nominatim.searchParams.set('limit', '7')
-  nominatim.searchParams.set('countrycodes', 'il')
-  nominatim.searchParams.set('accept-language', 'he')
-  nominatim.searchParams.set('addressdetails', '1')
-  nominatim.searchParams.set('namedetails', '1')
-  nominatim.searchParams.set('viewbox', '34.2,33.4,35.95,29.4')
-  nominatim.searchParams.set('bounded', '1')
-
-  const nominatimResponse = await fetch(nominatim.toString(), {
-    headers: {
-      accept: 'application/json',
-      'accept-language': 'he,en;q=0.5',
-      'user-agent': 'RAM-Engineering-CRM/1.0',
-    },
-  })
-  const nominatimBody = nominatimResponse.ok ? await nominatimResponse.json().catch(() => []) : []
-  const seen = new Set()
-  let suggestions = (Array.isArray(nominatimBody) ? nominatimBody : [])
-    .map((item) => cleanString(item?.display_name))
-    .filter((label) => label && !seen.has(label) && seen.add(label))
-    .slice(0, 7)
-    .map((label) => ({ label, value: label }))
-
-  if (!suggestions.length) {
-    const photon = new URL('https://photon.komoot.io/api/')
-    photon.searchParams.set('q', query)
-    photon.searchParams.set('limit', '7')
-    photon.searchParams.set('bbox', '34.2,29.4,35.95,33.4')
-    photon.searchParams.set('lat', '31.95')
-    photon.searchParams.set('lon', '34.90')
-    const response = await fetch(photon.toString(), { headers: { accept: 'application/json', 'accept-language': 'he,en;q=0.5' } })
-    const body = response.ok ? await response.json().catch(() => ({ features: [] })) : { features: [] }
-    suggestions = (Array.isArray(body.features) ? body.features : [])
-      .map((feature) => photonAddressLabel(feature))
-      .filter((label) => label && !seen.has(label) && seen.add(label))
-      .slice(0, 7)
+  const uniqueSuggestions = (items) => {
+    const seen = new Set()
+    return items
+      .map((item) => cleanString(item))
+      .filter((label) => label && !seen.has(label.toLowerCase()) && seen.add(label.toLowerCase()))
+      .slice(0, 8)
       .map((label) => ({ label, value: label }))
   }
 
-  return apiJson(request, { suggestions })
+  if (config.googleMapsApiKey) {
+    try {
+      const response = await fetch('https://places.googleapis.com/v1/places:autocomplete', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'X-Goog-Api-Key': config.googleMapsApiKey,
+          'X-Goog-FieldMask': 'suggestions.placePrediction.text,suggestions.placePrediction.structuredFormat',
+        },
+        body: JSON.stringify({
+          input: query,
+          languageCode: 'he',
+          regionCode: 'IL',
+          includedRegionCodes: ['il'],
+          locationBias: {
+            rectangle: {
+              low: { latitude: 29.4, longitude: 34.2 },
+              high: { latitude: 33.4, longitude: 35.95 },
+            },
+          },
+        }),
+      })
+      if (response.ok) {
+        const body = await response.json().catch(() => ({}))
+        const google = uniqueSuggestions((body.suggestions || []).map((item) => item?.placePrediction?.text?.text))
+        if (google.length) return apiJson(request, { suggestions: google, source: 'google' })
+      }
+    } catch (error) {
+      console.warn('Google Places autocomplete failed', error)
+    }
+  }
+
+  try {
+    const response = await fetch('https://www.govmap.gov.il/api/search-service/autocomplete', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json',
+        'accept-language': 'he',
+        'user-agent': 'RAM-Engineering-CRM/1.0',
+      },
+      body: JSON.stringify({
+        searchText: query,
+        language: 'he',
+        isAccurate: true,
+        maxResults: 10,
+      }),
+    })
+    if (response.ok) {
+      const body = await response.json().catch(() => ({}))
+      const rows = Array.isArray(body?.results) ? body.results : Array.isArray(body?.data?.results) ? body.data.results : []
+      const govmap = uniqueSuggestions(rows.map((item) => item?.text || item?.value || item?.label))
+      if (govmap.length) return apiJson(request, { suggestions: govmap, source: 'govmap' })
+    }
+  } catch (error) {
+    console.warn('GovMap autocomplete failed', error)
+  }
+
+  try {
+    const nominatim = new URL('https://nominatim.openstreetmap.org/search')
+    nominatim.searchParams.set('q', query)
+    nominatim.searchParams.set('format', 'jsonv2')
+    nominatim.searchParams.set('limit', '7')
+    nominatim.searchParams.set('countrycodes', 'il')
+    nominatim.searchParams.set('accept-language', 'he')
+    nominatim.searchParams.set('addressdetails', '1')
+    nominatim.searchParams.set('namedetails', '1')
+    nominatim.searchParams.set('viewbox', '34.2,33.4,35.95,29.4')
+    nominatim.searchParams.set('bounded', '1')
+    const response = await fetch(nominatim.toString(), {
+      headers: { accept: 'application/json', 'accept-language': 'he', 'user-agent': 'RAM-Engineering-CRM/1.0' },
+    })
+    if (response.ok) {
+      const body = await response.json().catch(() => [])
+      const osm = uniqueSuggestions((Array.isArray(body) ? body : []).map((item) => item?.display_name))
+      if (osm.length) return apiJson(request, { suggestions: osm, source: 'openstreetmap' })
+    }
+  } catch (error) {
+    console.warn('OpenStreetMap autocomplete failed', error)
+  }
+
+  return apiJson(request, { suggestions: [], source: 'none' })
 }
 
 async function handleAiRewrite(request, env, config) {
@@ -681,6 +730,7 @@ async function handleAdminBootstrap(request, env) {
     adminEmails,
     googleClientId: cleanString(body.googleClientId),
     googleClientSecret: cleanString(body.googleClientSecret),
+    googleMapsApiKey: cleanString(body.googleMapsApiKey),
     openaiApiKey: cleanString(body.openaiApiKey),
     openaiModel: cleanString(body.openaiModel) || 'gpt-5.6-terra',
     driveRootFolderId: cleanString(body.driveRootFolderId),
@@ -700,6 +750,7 @@ async function handleAdminConfig(request, env, config) {
       adminEmails: developerEmails(config),
       googleClientId: config.googleClientId || '',
       googleClientSecret: '',
+      googleMapsApiKey: '',
       openaiApiKey: '',
       openaiModel: config.openaiModel || 'gpt-5.6-terra',
       driveRootFolderId: config.driveRootFolderId || '',
@@ -713,6 +764,7 @@ async function handleAdminConfig(request, env, config) {
   }
   if (body.adminEmails !== undefined) next.adminEmails = cleanEmails(body.adminEmails)
   if (cleanString(body.googleClientSecret)) next.googleClientSecret = cleanString(body.googleClientSecret)
+  if (cleanString(body.googleMapsApiKey)) next.googleMapsApiKey = cleanString(body.googleMapsApiKey)
   if (cleanString(body.openaiApiKey)) next.openaiApiKey = cleanString(body.openaiApiKey)
   next.updatedAt = new Date().toISOString()
   await saveConfig(env, next)
