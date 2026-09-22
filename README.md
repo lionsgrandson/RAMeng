@@ -154,4 +154,4 @@ npx wrangler dev
 npm run build
 ```
 
-כל push ל-`main` מריץ גם GitHub Actions build כדי לתפוס שגיאות TypeScript/Vite ותחביר Worker לפני פריסה.
+בדיקות build ופריסה מבוצעות מקומית לפני העלאה ל-Cloudflare.
