@@ -73,6 +73,31 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
     return normalized
   }, [workspace.taskColumns])
   const visibleColumns = taskColumns.filter((column) => column.visible)
+
+  useEffect(() => {
+    if (!canUpdate) return
+    const needsEmailRename = workspace.taskColumns.some((column) => column.key === 'emailTo' && column.label === 'תיבת מייל')
+    const needsFollowRename = workspace.taskColumns.some((column) => column.key === 'followUpDate' && column.label === 'מועד מעקב / סיום')
+    const needsDueRename = workspace.taskColumns.some((column) => column.key === 'dueDate' && column.label === 'תאריך יעד')
+    const needsDueColumn = !workspace.taskColumns.some((column) => column.key === 'dueDate')
+    if (!needsEmailRename && !needsFollowRename && !needsDueRename && !needsDueColumn) return
+    setWorkspace((current) => {
+      const columns = current.taskColumns.map((column) => {
+        if (column.key === 'emailTo' && column.label === 'תיבת מייל') return { ...column, label: 'מייל לקוח' }
+        if (column.key === 'followUpDate' && column.label === 'מועד מעקב / סיום') return { ...column, label: 'מועד מעקב' }
+        if (column.key === 'dueDate' && column.label === 'תאריך יעד') return { ...column, label: 'תאריך סיום' }
+        return column
+      })
+      if (!columns.some((column) => column.key === 'dueDate')) {
+        const followIndex = columns.findIndex((column) => column.key === 'followUpDate')
+        const dueColumn: TaskColumn = { id: 'col-due', label: 'תאריך סיום', key: 'dueDate', type: 'date', visible: true, removable: false, width: 145 }
+        if (followIndex >= 0) columns.splice(followIndex, 0, dueColumn)
+        else columns.push(dueColumn)
+      }
+      return { ...current, taskColumns: columns }
+    })
+  }, [canUpdate, setWorkspace, workspace.taskColumns])
+
   const activeCount = workspace.tasks.filter((task) => {
     if (projectId && task.projectId !== projectId) return false
     return !isCompleted(task)
