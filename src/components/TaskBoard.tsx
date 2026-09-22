@@ -48,6 +48,7 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('הכל')
   const [projectFilter, setProjectFilter] = useState('הכל')
+  const [addressFilter, setAddressFilter] = useState('')
   const [assigneeFilter, setAssigneeFilter] = useState('הכל')
   const [colorFilter, setColorFilter] = useState('הכל')
   const [view, setView] = useState<TaskView>('active')
@@ -109,6 +110,10 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
 
   const filteredTasks = workspace.tasks.filter((task) => {
     if (projectId && task.projectId !== projectId) return false
+    if (!projectId && addressFilter.trim()) {
+      const projectAddress = workspace.projects.find((project) => project.id === task.projectId)?.address || ''
+      if (!projectAddress.toLowerCase().includes(addressFilter.trim().toLowerCase())) return false
+    }
     if (!projectId && projectFilter !== 'הכל') {
       if (projectFilter === '__none__' && task.projectId) return false
       if (projectFilter !== '__none__' && task.projectId !== projectFilter) return false
@@ -128,9 +133,11 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
   })
 
   const matches = (task: Task) => {
-    const projectName = workspace.projects.find((project) => project.id === task.projectId)?.name || ''
+    const project = workspace.projects.find((item) => item.id === task.projectId)
+    const projectName = project?.name || ''
+    const projectAddress = project?.address || ''
     const assigneeName = workspace.team.find((member) => member.id === task.assigneeId)?.name || ''
-    const haystack = `${task.title} ${task.description || ''} ${projectName} ${assigneeName}`.toLowerCase()
+    const haystack = `${task.title} ${task.description || ''} ${projectName} ${projectAddress} ${assigneeName} ${task.emailTo || ''}`.toLowerCase()
     return (!search || haystack.includes(search.toLowerCase())) && (statusFilter === 'הכל' || task.status === statusFilter)
   }
 
@@ -164,6 +171,7 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
     setAssigneeFilter('הכל')
     setColorFilter('הכל')
     setProjectFilter('הכל')
+    setAddressFilter('')
     setView(isCompleted(target) ? 'archive' : 'active')
     const timer = window.setTimeout(() => {
       document.querySelector<HTMLElement>(`[data-task-id="${CSS.escape(focusTaskId)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' })
@@ -331,8 +339,9 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
     </div>
 
     <div className="toolbar board-toolbar">
-      <label className="task-filter-field toolbar-grow"><span>חיפוש</span><input className="search-input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="שם משימה, פרויקט או אחראי" aria-label="חיפוש משימות" /></label>
-      {!projectId && <label className="task-filter-field"><span>פרויקט</span><select aria-label="סינון לפי פרויקט" value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)}><option value="הכל">כל הפרויקטים</option><option value="__none__">ללא פרויקט</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>}
+      <label className="task-filter-field toolbar-grow"><span>חיפוש</span><input className="search-input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="משימה, פרויקט, כתובת, אחראי או מייל" aria-label="חיפוש משימות" /></label>
+      {!projectId && <label className="task-filter-field address-task-filter"><span>כתובת</span><input value={addressFilter} onChange={(e) => setAddressFilter(e.target.value)} placeholder="רחוב, עיר או כתובת" aria-label="סינון משימות לפי כתובת פרויקט" /></label>}
+      {!projectId && <label className="task-filter-field"><span>פרויקט</span><select aria-label="סינון לפי פרויקט" value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)}><option value="הכל">כל הפרויקטים</option><option value="__none__">ללא פרויקט</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.address || 'כתובת חסרה'} · {project.name}</option>)}</select></label>}
       <label className="task-filter-field"><span>סטטוס</span><select aria-label="סינון לפי סטטוס" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}><option>הכל</option>{workspace.taskStatuses.map((status) => <option key={status}>{status}</option>)}</select></label>
       <label className="task-filter-field"><span>אחראי</span><select aria-label="סינון לפי אחראי" value={assigneeFilter} onChange={(e) => setAssigneeFilter(e.target.value)}><option value="הכל">כל האחראים</option><option value="__none__">ללא אחראי</option>{workspace.team.filter((member) => member.active).map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select></label>
       <label className="task-filter-field"><span>צבע</span><select aria-label="סינון לפי צבע" value={colorFilter} onChange={(e) => setColorFilter(e.target.value)}><option value="הכל">כל הצבעים</option><option value="__none__">ללא צבע</option>{TASK_COLOR_OPTIONS.filter((item) => item.id).map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
@@ -362,7 +371,7 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
           {rows.map(({ task, depth }) => <tr key={task.id} data-task-id={task.id} className={`${task.parentId ? 'subtask-row' : ''} ${isCompleted(task) ? 'completed-row' : ''} ${focusTaskId === task.id ? 'focused-task-row' : ''}`} style={{ borderInlineStartColor: task.colorTag ? taskColor(task.colorTag).hex : 'transparent' }}>
             <td className="complete-cell"><input type="checkbox" aria-label={isCompleted(task) ? `שחזור ${task.title} לאזור הפעיל` : `סימון ${task.title} כבוצעה`} checked={isCompleted(task)} disabled={!canStatus} onChange={(e) => toggleTaskCompleted(task, e.target.checked)} /></td>
             <td className="color-cell"><label className="task-color-picker"><span className="color-dot" style={{ backgroundColor: taskColor(task.colorTag).hex }} /><select aria-label={`צבע קטלוג עבור ${task.title}`} disabled={!canUpdate} value={task.colorTag || ''} onChange={(e) => updateTask(task.id, { colorTag: e.target.value || undefined })}>{TASK_COLOR_OPTIONS.map((item) => <option key={item.id || 'none'} value={item.id}>{item.label}</option>)}</select></label></td>
-            {!projectId && <td><div className="task-project-cell"><select className="cell-input" disabled={!canUpdate} aria-label={`פרויקט עבור ${task.title}`} value={task.projectId || ''} onChange={(e) => changeTaskProject(task.id, e.target.value || undefined)}><option value="">ללא פרויקט</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select>{task.projectId && onProject && <button type="button" className="text-button" onClick={() => onProject(task.projectId!)}>פתיחה</button>}</div></td>}
+            {!projectId && <td><div className="task-project-cell"><select className="cell-input" disabled={!canUpdate} aria-label={`פרויקט עבור ${task.title}`} value={task.projectId || ''} onChange={(e) => changeTaskProject(task.id, e.target.value || undefined)}><option value="">ללא פרויקט</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.address || 'כתובת חסרה'} · {project.name}</option>)}</select>{task.projectId && onProject && <button type="button" className="text-button" onClick={() => onProject(task.projectId!)}>פתיחה</button>}</div></td>}
             {visibleColumns.map((column) => <td key={column.id}>
               {column.key === 'title' ? <input className="cell-input task-title-input" disabled={!canUpdate} aria-label="שם משימה" style={{ paddingInlineStart: 8 + depth * 22 }} value={task.title} onChange={(e) => updateTask(task.id, { title: e.target.value })} />
                 : column.type === 'status' ? <select className="cell-input" disabled={!canStatus} value={fieldValue(task, column)} onChange={(e) => editCell(task, column, e.target.value)}>{workspace.taskStatuses.map((status) => <option key={status}>{status}</option>)}</select>
