@@ -23,6 +23,7 @@ export function SetupScreen() {
         adminEmails: String(data.get('adminEmails') || '').split(',').map((value) => value.trim()).filter(Boolean),
         googleClientId: String(data.get('googleClientId') || ''),
         googleClientSecret: String(data.get('googleClientSecret') || ''),
+        googleMapsApiKey: String(data.get('googleMapsApiKey') || ''),
       })
       setDone(true)
       setTimeout(() => window.location.reload(), 1300)
@@ -47,6 +48,7 @@ export function SetupScreen() {
         <div className="setup-divider">Google — אפשר לחבר גם אחר כך</div>
         <Field label="Google OAuth Client ID"><input name="googleClientId" /></Field>
         <Field label="Google OAuth Client Secret"><input name="googleClientSecret" type="password" autoComplete="off" /></Field>
+        <Field label="Google Maps / Places API Key" hint="אופציונלי — משפר דיוק כתובות בישראל"><input name="googleMapsApiKey" type="password" autoComplete="off" /></Field>
         <button className="primary setup-submit" disabled={loading}><KeyRound /> {loading ? 'שומר...' : 'שמירת הגדרה'}</button>
       </form>
     </section>
