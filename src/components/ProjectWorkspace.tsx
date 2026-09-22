@@ -115,7 +115,10 @@ export function ProjectWorkspace({ projectId, workspace, setWorkspace, orgId, on
   if (!project) return <EmptyState title="הפרויקט לא נמצא" text="ייתכן שהפרויקט נמחק או שהמידע השתנה." action={<button className="secondary" onClick={onBack}>חזרה</button>} />
   const tasks = workspace.tasks.filter((task) => task.projectId === project.id); const events = workspace.events.filter((event) => event.projectId === project.id); const files = workspace.files.filter((file) => file.projectId === project.id); const reports = workspace.reports.filter((report) => report.projectId === project.id)
   const open = tasks.filter((task) => !['בוצע', 'סגור'].includes(task.status)); const attention = open.filter((task) => task.status === 'דורש מעקב' || task.priority === 'דחופה' || (task.followUpDate && new Date(task.followUpDate).getTime() < Date.now())); const openReportItems = reports.flatMap((report) => report.sections.flatMap((section) => section.items)).filter((item) => !['תקין', 'בוצע', 'סגור'].includes(item.status))
-  const patchProject = (patch: Partial<Project>) => setWorkspace((current) => ({ ...current, projects: current.projects.map((item) => item.id === project.id ? { ...item, ...patch } : item) }))
+  const patchProject = (patch: Partial<Project>) => {
+    if ('address' in patch && !String(patch.address || '').trim()) return
+    setWorkspace((current) => ({ ...current, projects: current.projects.map((item) => item.id === project.id ? { ...item, ...patch } : item) }))
+  }
   const tabs: [ProjectTab, string, typeof FolderKanban][] = ([
     ['summary', 'סקירה', FolderKanban],
     ['tasks', 'משימות', ListChecks],
