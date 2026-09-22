@@ -828,3 +828,11 @@ button:focus:not(:focus-visible),a:focus:not(:focus-visible){outline:none}
   .dashboard-metrics{grid-template-columns:1fr!important}
   .dashboard-metrics .metric{min-height:82px}
 }
+
+
+/* RAM brand token binding */
+:root{
+  --brand-dark:color-mix(in srgb,var(--brand) 76%,#24342a);
+  --brand-soft:color-mix(in srgb,var(--brand) 14%,#fff);
+}
+.sidebar .nav-group{margin-top:0}
