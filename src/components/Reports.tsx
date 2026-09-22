@@ -74,7 +74,7 @@ export default function ReportsPage({ workspace, setWorkspace, orgId, projectId,
   return <>
     <div className="list-filter-panel card report-filter-panel">
       <label className="list-filter-field filter-grow"><span>חיפוש</span><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="כותרת, כתובת, פרויקט או מפקח" /></label>
-      {!projectId && <label className="list-filter-field"><span>פרויקט</span><select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)}><option value="הכל">כל הפרויקטים</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.address || 'כתובת חסרה'} · {project.name}</option>)}</select></label>}
+      {!projectId && <label className="list-filter-field"><span>פרויקט</span><select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)}><option value="הכל">כל הפרויקטים</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.name} — {project.address || 'כתובת חסרה'}</option>)}</select></label>}
       <label className="list-filter-field"><span>מפקח</span><select value={inspectorFilter} onChange={(e) => setInspectorFilter(e.target.value)}><option value="הכל">כל המפקחים</option>{inspectors.map((inspector) => <option key={inspector}>{inspector}</option>)}</select></label>
       <label className="list-filter-field"><span>מצב</span><select value={stateFilter} onChange={(e) => setStateFilter(e.target.value)}><option>הכל</option><option>פתוחים</option><option>סגורים</option></select></label>
       <label className="list-filter-field"><span>מתאריך</span><input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} /></label>
@@ -93,7 +93,7 @@ export default function ReportsPage({ workspace, setWorkspace, orgId, projectId,
       })}{!reports.length && <EmptyState title="אין דוחות תואמים" text={baseReports.length ? 'שנו את הסינון כדי לראות דוחות נוספים.' : 'צרו דוח חדש.'} />}</div>
     </section>
     {canCreate && creating && <Modal title="דוח חדש" onClose={() => setCreating(false)}><form className="form-grid" onSubmit={createReport}>
-      {!projectId && <Field label="פרויקט"><select name="projectId" required><option value="">בחירת פרויקט</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.address || 'כתובת חסרה'} · {project.name}</option>)}</select></Field>}
+      {!projectId && <Field label="פרויקט"><select name="projectId" required><option value="">בחירת פרויקט</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.name} — {project.address || 'כתובת חסרה'}</option>)}</select></Field>}
       <Field label="כותרת"><input name="title" placeholder="דוח פיקוח" /></Field>
       <Field label="תאריך"><input name="inspectionDate" type="date" defaultValue={new Date().toISOString().slice(0, 10)} /></Field>
       <Field label="מפקח"><input name="inspector" defaultValue={currentInspector} /></Field>
