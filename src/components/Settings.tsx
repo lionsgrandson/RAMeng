@@ -105,6 +105,7 @@ function IntegrationSettings({ workspace, setWorkspace }: { workspace: Workspace
       <Field label="מייל מפתח"><input value={(config.adminEmails || []).join(', ')} onChange={(e) => setConfig({ ...config, adminEmails: e.target.value.split(',').map((value) => value.trim()).filter(Boolean) })} /></Field>
       <Field label="Google OAuth Client ID"><input value={config.googleClientId || ''} onChange={(e) => setConfig({ ...config, googleClientId: e.target.value })} /></Field>
       <Field label="Google OAuth Client Secret"><input type="password" autoComplete="off" value={config.googleClientSecret || ''} onChange={(e) => setConfig({ ...config, googleClientSecret: e.target.value })} placeholder="השאירו ריק אם אין שינוי" /></Field>
+      <Field label="Google Maps / Places API Key" hint="אופציונלי. משפר משמעותית חיפוש כתובות מדויקות בישראל; המפתח נשמר רק בצד השרת."><input type="password" autoComplete="off" value={config.googleMapsApiKey || ''} onChange={(e) => setConfig({ ...config, googleMapsApiKey: e.target.value })} placeholder="השאירו ריק אם אין שינוי" /></Field>
       <Field label="תיקיית Google Drive ראשית"><input value={workspace.settings.driveRootFolderId} onChange={(e) => setWorkspace((current) => ({ ...current, settings: { ...current.settings, driveRootFolderId: e.target.value } }))} /></Field>
       <div className="form-actions"><button type="button" className="primary" disabled={saving} onClick={() => void save()}><Save /> {saving ? 'שומר...' : 'שמירה'}</button></div>
     </div>
