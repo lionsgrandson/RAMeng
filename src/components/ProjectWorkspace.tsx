@@ -10,6 +10,13 @@ import { FilesPage } from './CalendarFiles'
 import AddressAutocomplete from './AddressAutocomplete'
 import ClientMultiPicker from './ClientMultiPicker'
 
+const hasHebrew = (value: string) => /[\u0590-\u05FF]/.test(value)
+const projectAddressDisplay = (address?: string) => {
+  const value = String(address || '').trim()
+  if (!value) return 'חסרה כתובת'
+  return hasHebrew(value) ? value : 'כתובת דורשת עדכון לעברית'
+}
+
 export function ProjectsPage({ workspace, setWorkspace, onOpen, startCreating = false, canEdit = true }: { workspace: Workspace; setWorkspace: React.Dispatch<React.SetStateAction<Workspace>>; onOpen: (id: string) => void; startCreating?: boolean; canEdit?: boolean }) {
   const [adding, setAdding] = useState(startCreating && canEdit)
   const [search, setSearch] = useState('')
@@ -88,10 +95,10 @@ export function ProjectsPage({ workspace, setWorkspace, onOpen, startCreating = 
       const reports = workspace.reports.filter((report) => report.projectId === project.id).length
       const missingAddress = !project.address?.trim()
       return <button className={`project-card card ${missingAddress ? 'missing-address' : ''}`} key={project.id} onClick={() => onOpen(project.id)}>
-        <div className="project-card-top"><span><FolderKanban /></span><Chip tone={project.status === 'בביצוע' ? 'good' : project.status === 'מוקפא' ? 'bad' : 'brand'}>{project.status}</Chip></div>
+        <div className="project-card-top"><span className="project-card-icon"><FolderKanban /></span><span className={`project-status-badge ${project.status === 'בביצוע' ? 'good' : project.status === 'מוקפא' ? 'bad' : 'brand'}`}>{project.status}</span></div>
         <span className="project-site-label">פרויקט</span>
         <h2>{project.name || 'פרויקט בנייה'}</h2>
-        <p className="project-card-address">{project.address || 'חסרה כתובת'}</p>
+        <p className={`project-card-address ${project.address && !hasHebrew(project.address) ? 'needs-hebrew' : ''}`}>{projectAddressDisplay(project.address)}</p>
         {missingAddress && <span className="address-required-warning">יש לעדכן כתובת לפני המשך ניהול הפרויקט</span>}
         <div className="progress"><i style={{ width: `${project.progress}%` }} /></div>
         <div className="project-card-stats"><span><b>{project.progress}%</b> התקדמות</span><span><b>{open}</b> משימות פתוחות</span><span><b>{reports}</b> דוחות</span></div>
