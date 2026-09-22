@@ -14,7 +14,28 @@ export default function ReportsPage({ workspace, setWorkspace, orgId, projectId,
   const [editingId, setEditingId] = useState<string | null>(null)
   const [creating, setCreating] = useState(startCreating && canCreate)
   const [currentEmail, setCurrentEmail] = useState('')
-  const reports = workspace.reports.filter((report) => !projectId || report.projectId === projectId).sort((a, b) => b.inspectionDate.localeCompare(a.inspectionDate))
+  const [search, setSearch] = useState('')
+  const [projectFilter, setProjectFilter] = useState('הכל')
+  const [inspectorFilter, setInspectorFilter] = useState('הכל')
+  const [stateFilter, setStateFilter] = useState('הכל')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+  const baseReports = workspace.reports.filter((report) => !projectId || report.projectId === projectId)
+  const inspectors = useMemo(() => [...new Set(baseReports.map((report) => report.inspector).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'he')), [baseReports])
+  const reports = useMemo(() => baseReports.filter((report) => {
+    const project = workspace.projects.find((item) => item.id === report.projectId)
+    const items = report.sections.flatMap((section) => section.items)
+    const open = items.some((item) => !isClosed(item.status))
+    const q = search.trim().toLowerCase()
+    if (q && !`${report.title} ${report.siteAddress} ${report.inspector} ${project?.name || ''}`.toLowerCase().includes(q)) return false
+    if (!projectId && projectFilter !== 'הכל' && report.projectId !== projectFilter) return false
+    if (inspectorFilter !== 'הכל' && report.inspector !== inspectorFilter) return false
+    if (stateFilter === 'פתוחים' && !open) return false
+    if (stateFilter === 'סגורים' && open) return false
+    if (dateFrom && report.inspectionDate < dateFrom) return false
+    if (dateTo && report.inspectionDate > dateTo) return false
+    return true
+  }).sort((a, b) => b.inspectionDate.localeCompare(a.inspectionDate)), [baseReports, workspace.projects, search, projectId, projectFilter, inspectorFilter, stateFilter, dateFrom, dateTo])
   const editing = workspace.reports.find((report) => report.id === editingId)
 
   useEffect(() => { void getCurrentUser().then((current) => setCurrentEmail(current?.email || '')) }, [])
@@ -51,7 +72,17 @@ export default function ReportsPage({ workspace, setWorkspace, orgId, projectId,
   if (editing) return <ReportEditor workspace={workspace} setWorkspace={setWorkspace} report={editing} orgId={orgId} onBack={() => { setEditingId(null); onSelectReport?.(null) }} onProject={onProject} permissions={reportPermissions} canUploadFiles={canUploadFiles} focusItemId={focusItemId} />
 
   return <>
-    <div className="page-action-row">{canCreate && <button type="button" className="primary" onClick={() => setCreating(true)}><Plus /> דוח חדש</button>}</div>
+    <div className="list-filter-panel card report-filter-panel">
+      <label className="list-filter-field filter-grow"><span>חיפוש</span><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="כותרת, כתובת, פרויקט או מפקח" /></label>
+      {!projectId && <label className="list-filter-field"><span>פרויקט</span><select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)}><option value="הכל">כל הפרויקטים</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.address || 'כתובת חסרה'} · {project.name}</option>)}</select></label>}
+      <label className="list-filter-field"><span>מפקח</span><select value={inspectorFilter} onChange={(e) => setInspectorFilter(e.target.value)}><option value="הכל">כל המפקחים</option>{inspectors.map((inspector) => <option key={inspector}>{inspector}</option>)}</select></label>
+      <label className="list-filter-field"><span>מצב</span><select value={stateFilter} onChange={(e) => setStateFilter(e.target.value)}><option>הכל</option><option>פתוחים</option><option>סגורים</option></select></label>
+      <label className="list-filter-field"><span>מתאריך</span><input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} /></label>
+      <label className="list-filter-field"><span>עד תאריך</span><input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} /></label>
+      <button type="button" className="secondary compact-filter-clear" onClick={() => { setSearch(''); setProjectFilter('הכל'); setInspectorFilter('הכל'); setStateFilter('הכל'); setDateFrom(''); setDateTo('') }}>ניקוי סינון</button>
+      <span className="filter-count">{reports.length} מתוך {baseReports.length} דוחות</span>
+      {canCreate && <button type="button" className="primary" onClick={() => setCreating(true)}><Plus /> דוח חדש</button>}
+    </div>
     <section className="card">
       <div className="card-head"><h2>דוחות</h2></div>
       <div className="report-list">{reports.map((report) => {
@@ -59,10 +90,10 @@ export default function ReportsPage({ workspace, setWorkspace, orgId, projectId,
         const open = items.filter((item) => !isClosed(item.status)).length
         const project = workspace.projects.find((item) => item.id === report.projectId)
         return <div className="linked-report-row" key={report.id}><button type="button" className="report-row" onClick={() => { setEditingId(report.id); onSelectReport?.(report.id) }}><span className="report-icon"><FileText /></span><div><strong>{report.title}</strong><small>{dateLabel(report.inspectionDate)} · {report.siteAddress || 'ללא כתובת'} · {items.length} סעיפים</small></div><Chip tone={open ? 'warn' : 'good'}>{open ? `${open} פתוחים` : 'הכול סגור'}</Chip><ChevronLeft /></button>{project && onProject && <div className="context-links"><button type="button" onClick={() => onProject(project.id)}>פרויקט: {project.name}</button></div>}</div>
-      })}{!reports.length && <EmptyState title="אין דוחות" text="צרו דוח חדש." />}</div>
+      })}{!reports.length && <EmptyState title="אין דוחות תואמים" text={baseReports.length ? 'שנו את הסינון כדי לראות דוחות נוספים.' : 'צרו דוח חדש.'} />}</div>
     </section>
     {canCreate && creating && <Modal title="דוח חדש" onClose={() => setCreating(false)}><form className="form-grid" onSubmit={createReport}>
-      {!projectId && <Field label="פרויקט"><select name="projectId" required><option value="">בחירת פרויקט</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></Field>}
+      {!projectId && <Field label="פרויקט"><select name="projectId" required><option value="">בחירת פרויקט</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.address || 'כתובת חסרה'} · {project.name}</option>)}</select></Field>}
       <Field label="כותרת"><input name="title" placeholder="דוח פיקוח" /></Field>
       <Field label="תאריך"><input name="inspectionDate" type="date" defaultValue={new Date().toISOString().slice(0, 10)} /></Field>
       <Field label="מפקח"><input name="inspector" defaultValue={currentInspector} /></Field>
