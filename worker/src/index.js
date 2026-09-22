@@ -556,29 +556,48 @@ async function handleAddressSuggest(request, env, config) {
   const query = cleanString(url.searchParams.get('q')).slice(0, 120)
   if (query.length < 2) return apiJson(request, { suggestions: [] })
 
-  const fetchPhoton = async (term) => {
-    const photon = new URL('https://photon.komoot.io/api/')
-    photon.searchParams.set('q', term)
-    photon.searchParams.set('limit', '8')
-    photon.searchParams.set('bbox', '34.2,29.4,35.95,33.4')
-    photon.searchParams.set('lat', '31.95')
-    photon.searchParams.set('lon', '34.90')
-    const response = await fetch(photon.toString(), {
-      headers: { accept: 'application/json', 'accept-language': 'he,en;q=0.8' },
-    })
-    if (!response.ok) return []
-    const body = await response.json().catch(() => ({ features: [] }))
-    return Array.isArray(body.features) ? body.features : []
-  }
+  const nominatim = new URL('https://nominatim.openstreetmap.org/search')
+  nominatim.searchParams.set('q', query)
+  nominatim.searchParams.set('format', 'jsonv2')
+  nominatim.searchParams.set('limit', '7')
+  nominatim.searchParams.set('countrycodes', 'il')
+  nominatim.searchParams.set('accept-language', 'he')
+  nominatim.searchParams.set('addressdetails', '1')
+  nominatim.searchParams.set('namedetails', '1')
+  nominatim.searchParams.set('viewbox', '34.2,33.4,35.95,29.4')
+  nominatim.searchParams.set('bounded', '1')
 
-  let features = await fetchPhoton(query)
-  if (!features.length) features = await fetchPhoton(`${query} Israel`)
+  const nominatimResponse = await fetch(nominatim.toString(), {
+    headers: {
+      accept: 'application/json',
+      'accept-language': 'he,en;q=0.5',
+      'user-agent': 'RAM-Engineering-CRM/1.0',
+    },
+  })
+  const nominatimBody = nominatimResponse.ok ? await nominatimResponse.json().catch(() => []) : []
   const seen = new Set()
-  const suggestions = features
-    .map((feature) => photonAddressLabel(feature))
+  let suggestions = (Array.isArray(nominatimBody) ? nominatimBody : [])
+    .map((item) => cleanString(item?.display_name))
     .filter((label) => label && !seen.has(label) && seen.add(label))
     .slice(0, 7)
     .map((label) => ({ label, value: label }))
+
+  if (!suggestions.length) {
+    const photon = new URL('https://photon.komoot.io/api/')
+    photon.searchParams.set('q', query)
+    photon.searchParams.set('limit', '7')
+    photon.searchParams.set('bbox', '34.2,29.4,35.95,33.4')
+    photon.searchParams.set('lat', '31.95')
+    photon.searchParams.set('lon', '34.90')
+    const response = await fetch(photon.toString(), { headers: { accept: 'application/json', 'accept-language': 'he,en;q=0.5' } })
+    const body = response.ok ? await response.json().catch(() => ({ features: [] })) : { features: [] }
+    suggestions = (Array.isArray(body.features) ? body.features : [])
+      .map((feature) => photonAddressLabel(feature))
+      .filter((label) => label && !seen.has(label) && seen.add(label))
+      .slice(0, 7)
+      .map((label) => ({ label, value: label }))
+  }
+
   return apiJson(request, { suggestions })
 }
 
