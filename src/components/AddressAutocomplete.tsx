@@ -136,6 +136,8 @@ export default function AddressAutocomplete({
         placeholder={placeholder}
         autoComplete="street-address"
         aria-label={ariaLabel}
+        dir="rtl"
+        inputMode="text"
         aria-autocomplete="list"
         aria-expanded={open && (loading || suggestions.length > 0)}
         onFocus={() => { focused.current = true; setOpen(true) }}
