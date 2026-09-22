@@ -60,11 +60,13 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
   const taskColumns = useMemo(() => {
     const normalized = workspace.taskColumns.map((column) => {
       if (column.key === 'emailTo' && column.label === 'תיבת מייל') return { ...column, label: 'מייל לקוח' }
+      if (column.key === 'followUpDate' && column.label === 'מועד מעקב / סיום') return { ...column, label: 'מועד מעקב' }
+      if (column.key === 'dueDate' && column.label === 'תאריך יעד') return { ...column, label: 'תאריך סיום' }
       return column
     })
     if (!normalized.some((column) => column.key === 'dueDate')) {
       const followIndex = normalized.findIndex((column) => column.key === 'followUpDate')
-      const dueColumn: TaskColumn = { id: 'col-due', label: 'תאריך יעד', key: 'dueDate', type: 'date', visible: true, removable: false, width: 145 }
+      const dueColumn: TaskColumn = { id: 'col-due', label: 'תאריך סיום', key: 'dueDate', type: 'date', visible: true, removable: false, width: 145 }
       if (followIndex >= 0) normalized.splice(followIndex, 0, dueColumn)
       else normalized.push(dueColumn)
     }
@@ -362,8 +364,8 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
         <Field label="עדיפות"><select name="priority" defaultValue="רגילה"><option>נמוכה</option><option>רגילה</option><option>גבוהה</option><option>דחופה</option></select></Field>
         <Field label="צבע / קטלוג"><select name="colorTag" defaultValue=""><option value="">ללא צבע</option>{TASK_COLOR_OPTIONS.filter((item) => item.id).map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></Field>
         <Field label="תאריך תחילת משימה"><input name="startDate" type="date" /></Field>
-        <Field label="תאריך יעד"><input name="dueDate" type="date" /></Field>
-        <Field label="מועד מעקב / סיום"><input name="followUpDate" type="date" /></Field>
+        <Field label="תאריך סיום"><input name="dueDate" type="date" /></Field>
+        <Field label="מועד מעקב"><input name="followUpDate" type="date" /></Field>
         <Field label="מייל לקוח"><input name="emailTo" type="email" placeholder="name@example.com" /></Field>
         <Field label="תיאור"><textarea name="description" rows={4} /></Field>
         <div className="form-actions full"><button type="button" className="secondary" onClick={() => setCreatingFor(null)}>ביטול</button><button className="primary"><Plus /> יצירת {creatingFor.parentId ? 'תת-משימה' : 'משימה'}</button></div>
