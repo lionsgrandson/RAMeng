@@ -556,23 +556,28 @@ async function handleAddressSuggest(request, env, config) {
   const query = cleanString(url.searchParams.get('q')).slice(0, 120)
   if (query.length < 2) return apiJson(request, { suggestions: [] })
 
-  const photon = new URL('https://photon.komoot.io/api/')
-  photon.searchParams.set('q', query)
-  photon.searchParams.set('limit', '6')
-  photon.searchParams.set('lang', 'he')
-  photon.searchParams.set('bbox', '34.2,29.4,35.95,33.4')
+  const fetchPhoton = async (term) => {
+    const photon = new URL('https://photon.komoot.io/api/')
+    photon.searchParams.set('q', term)
+    photon.searchParams.set('limit', '8')
+    photon.searchParams.set('bbox', '34.2,29.4,35.95,33.4')
+    photon.searchParams.set('lat', '31.95')
+    photon.searchParams.set('lon', '34.90')
+    const response = await fetch(photon.toString(), {
+      headers: { accept: 'application/json', 'accept-language': 'he,en;q=0.8' },
+    })
+    if (!response.ok) return []
+    const body = await response.json().catch(() => ({ features: [] }))
+    return Array.isArray(body.features) ? body.features : []
+  }
 
-  const response = await fetch(photon.toString(), {
-    headers: { accept: 'application/json', 'accept-language': 'he,en;q=0.8' },
-  })
-  if (!response.ok) return apiJson(request, { suggestions: [] })
-
-  const body = await response.json().catch(() => ({ features: [] }))
+  let features = await fetchPhoton(query)
+  if (!features.length) features = await fetchPhoton(`${query} Israel`)
   const seen = new Set()
-  const suggestions = (Array.isArray(body.features) ? body.features : [])
+  const suggestions = features
     .map((feature) => photonAddressLabel(feature))
     .filter((label) => label && !seen.has(label) && seen.add(label))
-    .slice(0, 6)
+    .slice(0, 7)
     .map((label) => ({ label, value: label }))
   return apiJson(request, { suggestions })
 }
