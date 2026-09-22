@@ -50,6 +50,7 @@ export interface AdminConfig {
   adminEmails?: string[]
   googleClientId?: string
   googleClientSecret?: string
+  googleMapsApiKey?: string
   openaiApiKey?: string
   openaiModel?: string
   driveRootFolderId?: string
