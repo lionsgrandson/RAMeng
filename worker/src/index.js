@@ -542,6 +542,41 @@ async function handleDriveFiles(request, env, config) {
   return apiJson(request, { files: body.files || [] })
 }
 
+function photonAddressLabel(feature) {
+  const props = feature?.properties || {}
+  const street = [props.street || props.name, props.housenumber].filter(Boolean).join(' ').trim()
+  const locality = props.city || props.town || props.village || props.locality || props.district || props.county
+  const parts = [street, locality, props.state, props.postcode, props.country].map((value) => cleanString(value)).filter(Boolean)
+  return [...new Set(parts)].join(', ')
+}
+
+async function handleAddressSuggest(request, env, config) {
+  await requireAreaAction(request, env, config, 'projects', 'view')
+  const url = new URL(request.url)
+  const query = cleanString(url.searchParams.get('q')).slice(0, 120)
+  if (query.length < 2) return apiJson(request, { suggestions: [] })
+
+  const photon = new URL('https://photon.komoot.io/api/')
+  photon.searchParams.set('q', query)
+  photon.searchParams.set('limit', '6')
+  photon.searchParams.set('lang', 'he')
+  photon.searchParams.set('bbox', '34.2,29.4,35.95,33.4')
+
+  const response = await fetch(photon.toString(), {
+    headers: { accept: 'application/json', 'accept-language': 'he,en;q=0.8' },
+  })
+  if (!response.ok) return apiJson(request, { suggestions: [] })
+
+  const body = await response.json().catch(() => ({ features: [] }))
+  const seen = new Set()
+  const suggestions = (Array.isArray(body.features) ? body.features : [])
+    .map((feature) => photonAddressLabel(feature))
+    .filter((label) => label && !seen.has(label) && seen.add(label))
+    .slice(0, 6)
+    .map((label) => ({ label, value: label }))
+  return apiJson(request, { suggestions })
+}
+
 async function handleAiRewrite(request, env, config) {
   await requireAnyAreaAction(request, env, config, [
     { area: 'reports', action: 'edit' },
@@ -691,6 +726,7 @@ async function routeApi(request, env) {
   if (path === '/api/google/calendar/events' && request.method === 'POST') return handleCalendarCreate(request, env, config)
   if (path === '/api/google/drive/project-folder' && request.method === 'POST') return handleDriveProjectFolder(request, env, config)
   if (path === '/api/google/drive/files' && request.method === 'GET') return handleDriveFiles(request, env, config)
+  if (path === '/api/address/suggest' && request.method === 'GET') return handleAddressSuggest(request, env, config)
   if (path === '/api/ai/rewrite' && request.method === 'POST') return handleAiRewrite(request, env, config)
   return apiJson(request, { error: 'API route not found' }, 404)
 }
