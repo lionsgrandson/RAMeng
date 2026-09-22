@@ -32,7 +32,7 @@
 .calendar-page .calendar-toolbar h2{
   margin:0;
   color:#fff;
-  font-size:24px;
+  font-size:32px;
   font-weight:950;
   letter-spacing:-.02em;
 }
@@ -291,7 +291,7 @@
   }
 
   .calendar-page .calendar-toolbar h2{
-    font-size:21px;
+    font-size:27px;
   }
 
   .calendar-page .month-day{
