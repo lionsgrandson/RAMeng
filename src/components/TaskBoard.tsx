@@ -57,7 +57,20 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
   const [newColumnType, setNewColumnType] = useState<TaskColumnType>('text')
   const [newStatus, setNewStatus] = useState('')
 
-  const visibleColumns = workspace.taskColumns.filter((column) => column.visible)
+  const taskColumns = useMemo(() => {
+    const normalized = workspace.taskColumns.map((column) => {
+      if (column.key === 'emailTo' && column.label === 'תיבת מייל') return { ...column, label: 'מייל לקוח' }
+      return column
+    })
+    if (!normalized.some((column) => column.key === 'dueDate')) {
+      const followIndex = normalized.findIndex((column) => column.key === 'followUpDate')
+      const dueColumn: TaskColumn = { id: 'col-due', label: 'תאריך יעד', key: 'dueDate', type: 'date', visible: true, removable: false, width: 145 }
+      if (followIndex >= 0) normalized.splice(followIndex, 0, dueColumn)
+      else normalized.push(dueColumn)
+    }
+    return normalized
+  }, [workspace.taskColumns])
+  const visibleColumns = taskColumns.filter((column) => column.visible)
   const activeCount = workspace.tasks.filter((task) => {
     if (projectId && task.projectId !== projectId) return false
     return !isCompleted(task)
@@ -286,8 +299,8 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
   return <div className="task-board-wrap">
     {attentionOnly && <div className="attention-filter-banner" role="status"><strong>מציג רק נושאים שדורשים טיפול</strong>{onClearAttention && <button type="button" className="secondary" onClick={onClearAttention}>הצגת כל המשימות</button>}</div>}
     <div className="task-view-tabs" role="tablist" aria-label="תצוגת משימות">
-      <button type="button" role="tab" aria-selected={view === 'active'} className={view === 'active' ? 'active' : ''} onClick={() => setView('active')}>פעילות <span>{activeCount}</span></button>
-      <button type="button" role="tab" aria-selected={view === 'archive'} className={view === 'archive' ? 'active' : ''} onClick={() => setView('archive')}>ארכיון <span>{archivedCount}</span></button>
+      <button type="button" role="tab" aria-selected={view === 'active'} className={view === 'active' ? 'active' : ''} onClick={() => setView('active')}>משימות פעילות <span>{activeCount}</span></button>
+      <button type="button" role="tab" aria-selected={view === 'archive'} className={view === 'archive' ? 'active' : ''} onClick={() => setView('archive')}>משימות שהושלמו <span>{archivedCount}</span></button>
     </div>
 
     <div className="toolbar board-toolbar">
@@ -303,12 +316,12 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
 
     {canUpdate && showColumns && <div className="board-config card-soft">
       <div className="config-title"><Columns3 /><strong>עמודות וסטטוסים</strong></div>
-      <div className="column-list">{workspace.taskColumns.map((column, index) => <div key={column.id} className="column-config-row">
+      <div className="column-list">{taskColumns.map((column, index) => <div key={column.id} className="column-config-row">
         <input type="checkbox" aria-label={`הצגת עמודה ${column.label}`} checked={column.visible} onChange={(e) => setWorkspace((current) => ({ ...current, taskColumns: current.taskColumns.map((item) => item.id === column.id ? { ...item, visible: e.target.checked } : item) }))} />
         <input aria-label="שם עמודה" value={column.label} onChange={(e) => setWorkspace((current) => ({ ...current, taskColumns: current.taskColumns.map((item) => item.id === column.id ? { ...item, label: e.target.value } : item) }))} />
         <span>{column.type}</span>
         <button type="button" className="icon-btn" aria-label="הזזת עמודה למעלה" disabled={index === 0} onClick={() => moveColumn(column.id, -1)}><ChevronUp /></button>
-        <button type="button" className="icon-btn" aria-label="הזזת עמודה למטה" disabled={index === workspace.taskColumns.length - 1} onClick={() => moveColumn(column.id, 1)}><ChevronDown /></button>
+        <button type="button" className="icon-btn" aria-label="הזזת עמודה למטה" disabled={index === taskColumns.length - 1} onClick={() => moveColumn(column.id, 1)}><ChevronDown /></button>
         {column.removable && <button type="button" className="icon-btn danger" aria-label={`מחיקת עמודה ${column.label}`} onClick={() => { if (confirmDelete(`העמודה "${column.label}"`)) setWorkspace((current) => ({ ...current, taskColumns: current.taskColumns.filter((item) => item.id !== column.id) })) }}><Trash2 /></button>}
       </div>)}</div>
       <div className="config-add"><label className="inline-control-label"><span>שם עמודה</span><input value={newColumn} onChange={(e) => setNewColumn(e.target.value)} placeholder="שם עמודה חדשה" /></label><label className="inline-control-label"><span>סוג עמודה</span><select value={newColumnType} onChange={(e) => setNewColumnType(e.target.value as TaskColumnType)}><option value="text">טקסט</option><option value="date">תאריך</option><option value="status">סטטוס</option><option value="member">אחראי</option><option value="email">מייל</option><option value="priority">עדיפות</option></select></label><button type="button" className="secondary" onClick={addColumn}>הוספת עמודה</button></div>
@@ -334,7 +347,7 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
             </td>)}
             <td className="row-actions">{(canCreate || canDelete) && <div className="task-row-actions">{canCreate && <button type="button" className="secondary task-action-btn" onClick={() => setCreatingFor({ parentId: task.id })}><Plus /> תת-משימה</button>}{canDelete && <button type="button" className="secondary danger task-action-btn" onClick={() => removeTask(task.id)}><Trash2 /> מחיקה</button>}</div>}</td>
           </tr>)}
-          {!rows.length && <tr><td colSpan={visibleColumns.length + (projectId ? 3 : 4)}><div className="table-empty">{view === 'archive' ? 'אין משימות בארכיון.' : 'אין משימות פעילות שמתאימות לסינון.'}</div></td></tr>}
+          {!rows.length && <tr><td colSpan={visibleColumns.length + (projectId ? 3 : 4)}><div className="table-empty">{view === 'archive' ? 'אין משימות שהושלמו.' : 'אין משימות פעילות שמתאימות לסינון.'}</div></td></tr>}
         </tbody>
       </table>
     </div>
@@ -348,10 +361,10 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
         <Field label="סטטוס"><select name="status" defaultValue={workspace.taskStatuses[0] || 'טרם התחיל'}>{workspace.taskStatuses.map((status) => <option key={status}>{status}</option>)}</select></Field>
         <Field label="עדיפות"><select name="priority" defaultValue="רגילה"><option>נמוכה</option><option>רגילה</option><option>גבוהה</option><option>דחופה</option></select></Field>
         <Field label="צבע / קטלוג"><select name="colorTag" defaultValue=""><option value="">ללא צבע</option>{TASK_COLOR_OPTIONS.filter((item) => item.id).map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></Field>
-        <Field label="תאריך התחלה"><input name="startDate" type="date" /></Field>
-        <Field label="יעד"><input name="dueDate" type="date" /></Field>
-        <Field label="מועד מעקב"><input name="followUpDate" type="date" /></Field>
-        <Field label="מייל"><input name="emailTo" type="email" placeholder="name@example.com" /></Field>
+        <Field label="תאריך תחילת משימה"><input name="startDate" type="date" /></Field>
+        <Field label="תאריך יעד"><input name="dueDate" type="date" /></Field>
+        <Field label="מועד מעקב / סיום"><input name="followUpDate" type="date" /></Field>
+        <Field label="מייל לקוח"><input name="emailTo" type="email" placeholder="name@example.com" /></Field>
         <Field label="תיאור"><textarea name="description" rows={4} /></Field>
         <div className="form-actions full"><button type="button" className="secondary" onClick={() => setCreatingFor(null)}>ביטול</button><button className="primary"><Plus /> יצירת {creatingFor.parentId ? 'תת-משימה' : 'משימה'}</button></div>
       </form>
