@@ -2189,3 +2189,173 @@ button svg,.primary svg,.secondary svg,.back-button svg,.upload-button svg{
     max-width:160px!important;
   }
 }
+
+
+/* Contrast pass — keep secondary text clearly readable across the CRM */
+:root{
+  --muted:#596a60;
+}
+
+/* Shared secondary/meta text */
+.card small,
+.card .metric-note,
+.card .filter-count,
+.client-workspace-header p,
+.client-card>p,
+.client-card-stats,
+.client-metrics small,
+.client-metrics span,
+.client-detail-list span,
+.client-file-list small,
+.compact-project-list small,
+.compact-task-list small,
+.client-project-address,
+.client-task-title small,
+.project-card-address,
+.project-title-address,
+.project-title-manager,
+.summary-open-list small,
+.timeline-content span,
+.thread-list>article>header span,
+.selected-day-item>div:nth-child(2)>small,
+.finance-report-list small,
+.report-row small,
+.file-item small,
+.drive-item small {
+  color:#526359!important;
+}
+
+/* Important values/links should never look disabled */
+.client-detail-list strong,
+.client-detail-list strong a,
+.client-contact-lines,
+.client-contact-lines a,
+.client-project-main strong,
+.compact-project-list strong,
+.compact-task-list strong,
+.client-task-title strong,
+.project-workspace .summary-open-list strong,
+.report-row strong,
+.selected-day-item>div:nth-child(2)>strong {
+  color:#263c2d!important;
+}
+
+.client-detail-list strong a,
+.client-contact-lines a {
+  font-weight:800!important;
+  text-decoration-color:rgba(38,60,45,.28);
+}
+
+/* Metric labels and totals need stronger hierarchy */
+.client-metrics small,
+.dashboard-metrics .metric small,
+.project-summary-metric small {
+  color:#3f5547!important;
+  font-weight:900!important;
+}
+.client-metrics strong,
+.dashboard-metrics .metric strong,
+.project-summary-metric strong {
+  color:#21372a!important;
+}
+.client-metrics span,
+.dashboard-metrics .metric-note,
+.project-summary-metric .metric-note {
+  color:#52665a!important;
+  font-weight:750!important;
+}
+
+/* Badge text contrast */
+.chip.brand,
+.project-status-badge.brand {
+  color:#31533b!important;
+  background:#e3ede5!important;
+}
+.chip.good,
+.project-status-badge.good {
+  color:#285f40!important;
+  background:#e2f1e7!important;
+}
+.chip.warn {
+  color:#7b5218!important;
+  background:#fff0d1!important;
+}
+.chip.bad,
+.project-status-badge.bad {
+  color:#923b3b!important;
+  background:#f8e1e1!important;
+}
+.chip.neutral {
+  color:#4d5e54!important;
+  background:#e9eeea!important;
+}
+
+/* Buttons and tab labels: avoid washed-out inactive states */
+.secondary,
+.back-button,
+.upload-button,
+.text-button {
+  color:#405849!important;
+}
+.project-tabs button,
+.client-tabs button {
+  color:#3f5948!important;
+}
+.project-tabs button:not(.active),
+.client-tabs button:not(.active) {
+  background:#fff!important;
+  border-color:#c4d1c7!important;
+}
+
+/* Client overview specifically */
+.client-workspace .card-head h2,
+.client-workspace h1,
+.client-workspace .client-project-main strong,
+.client-workspace .client-task-title strong {
+  color:#1f3327!important;
+}
+.client-workspace .card-head p,
+.client-workspace .client-notes-block p {
+  color:#405247!important;
+}
+.client-workspace .client-notes-block {
+  background:#f2f6f3!important;
+}
+.client-workspace .client-notes-block strong {
+  color:#243b2c!important;
+}
+
+/* Inputs/selects: selected values must be visibly active, not greyed out */
+input,
+select,
+textarea {
+  color:#26392d!important;
+}
+select option {
+  color:#26392d;
+}
+input::placeholder,
+textarea::placeholder {
+  color:#78867d!important;
+  opacity:1!important;
+}
+
+/* Sidebar and dark surfaces */
+.sidebar-date span,
+.sidebar .nav-submenu button {
+  color:rgba(255,255,255,.82)!important;
+}
+.sidebar .nav-submenu button.active,
+.sidebar nav>button.active {
+  color:#fff!important;
+}
+
+/* Tiny text gets a minimum readable weight */
+.card small,
+.client-detail-list span,
+.client-metrics span,
+.compact-project-list small,
+.compact-task-list small,
+.project-title-manager {
+  font-weight:700!important;
+}
