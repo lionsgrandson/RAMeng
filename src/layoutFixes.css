@@ -1527,3 +1527,212 @@ button svg,.primary svg,.secondary svg,.back-button svg,.upload-button svg{
   .project-task-count{grid-column:2;grid-row:1}
   .project-summary-metric{min-height:82px!important}
 }
+
+
+/* Compact project header + explicit edit affordances */
+.project-header{
+  overflow:hidden;
+  margin-bottom:12px!important;
+  padding:0!important;
+}
+.project-header-top{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  min-height:46px;
+  padding:8px 14px;
+  border-bottom:1px solid #e0e7e1;
+  background:#fafcfb;
+}
+.project-header-top .back-button{min-height:32px!important}
+.project-edit-button{
+  min-height:34px!important;
+  padding-inline:14px!important;
+  box-shadow:0 4px 12px color-mix(in srgb,var(--brand) 18%,transparent);
+}
+.project-edit-button.active{border-color:var(--brand)!important;color:var(--brand-dark)!important}
+.project-title{
+  display:grid!important;
+  grid-template-columns:minmax(0,1fr) auto;
+  align-items:center!important;
+  gap:18px!important;
+  min-height:86px!important;
+  padding:13px 16px!important;
+  background:#fff;
+}
+.project-title-main{min-width:0}
+.project-title-main .project-site-label{
+  margin-bottom:4px;
+  font-size:10px!important;
+  font-weight:900!important;
+  color:#6c7d72!important;
+}
+.project-title h1{
+  margin:0!important;
+  overflow:hidden;
+  color:#24382a!important;
+  font-size:25px!important;
+  font-weight:900!important;
+  line-height:1.2!important;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.project-title p{
+  margin:5px 0 0!important;
+  color:#6e7d73!important;
+  font-size:10.5px!important;
+  font-weight:700;
+}
+.project-quick-controls{
+  display:flex;
+  align-items:flex-end;
+  gap:9px;
+  padding:8px 10px;
+  border:1px solid #dbe4dd;
+  border-radius:10px;
+  background:#f6f9f6;
+}
+.project-quick-field{
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+  min-width:116px;
+  color:#54675a;
+  font-size:9px;
+  font-weight:850;
+}
+.project-quick-field>span{font-size:9px;font-weight:850}
+.project-quick-field select,
+.project-quick-field input{
+  min-height:32px!important;
+  padding:5px 8px!important;
+  border:1px solid #cbd7ce!important;
+  background:#fff!important;
+  font-size:10.5px!important;
+}
+.project-progress-field{min-width:86px}
+.project-progress-field .progress-input{display:flex;align-items:center;gap:4px}
+.project-progress-field input{width:58px!important;text-align:center}
+.project-progress-field b{font-size:10px;color:#607166}
+
+.project-header .project-tabs{
+  margin:0!important;
+  padding:9px 12px!important;
+  border-top:1px solid #dce5de!important;
+  background:#eef4ef!important;
+}
+.project-header .project-tabs button{
+  min-height:36px!important;
+  padding:7px 12px!important;
+  border-color:#ccd8cf!important;
+  background:#fff!important;
+}
+.project-header .project-tabs button.active{
+  background:var(--brand)!important;
+  border-color:var(--brand)!important;
+  color:#fff!important;
+}
+
+/* Clear task editing mode */
+.task-edit-banner{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  margin:9px 10px 0;
+  padding:10px 12px;
+  border:1px solid #cfe0d2;
+  border-radius:10px;
+  background:linear-gradient(135deg,#eef7ef,#fafdfb);
+}
+.task-edit-banner-copy{display:flex;align-items:center;gap:10px;min-width:0}
+.task-edit-icon{
+  display:grid;
+  place-items:center;
+  width:34px;
+  height:34px;
+  flex:0 0 34px;
+  border-radius:9px;
+  background:var(--brand);
+  color:#fff;
+}
+.task-edit-icon svg{width:16px!important;height:16px!important}
+.task-edit-banner-copy>div{display:flex;min-width:0;flex-direction:column;gap:2px}
+.task-edit-banner-copy strong{font-size:12px;font-weight:900;color:#29422f}
+.task-edit-banner-copy span{font-size:9.5px;color:#63756a;line-height:1.45}
+.board-create-button.prominent{
+  flex:0 0 auto;
+  min-height:36px!important;
+  padding-inline:15px!important;
+}
+.task-table .cell-input:not(:disabled){
+  border-color:#d4dfd6!important;
+  background:#fff!important;
+}
+.task-table .cell-input:not(:disabled):hover{
+  border-color:#aebfb2!important;
+  background:#fbfdfb!important;
+}
+.task-table .cell-input:not(:disabled):focus{
+  border-color:var(--brand)!important;
+  box-shadow:0 0 0 2px color-mix(in srgb,var(--brand) 14%,transparent)!important;
+}
+.task-table tr:hover td{background:#f6faf7!important}
+.task-table .actions-col{background:#e8f0e9!important;color:#2f4936!important}
+
+/* Carry explicit edit language to client workspace */
+.client-edit-button{min-height:34px!important;padding-inline:14px!important}
+.client-project-fields{
+  padding:10px;
+  border:1px solid #e0e7e1;
+  border-radius:9px;
+  background:#f7faf7;
+}
+.client-project-fields label>span{font-weight:850;color:#506557}
+.client-task-table input:not(:disabled),
+.client-task-table select:not(:disabled){
+  border-color:#d2ddd4!important;
+  background:#fff!important;
+}
+
+/* Refine RAM logo: one clean brand panel, no nested gray/white block */
+.ram-logo-shell{
+  background:#234b35!important;
+  border:0!important;
+  box-shadow:none!important;
+}
+.sidebar-logo-shell{
+  width:188px!important;
+  padding:4px!important;
+  border-radius:10px!important;
+  background:#234b35!important;
+}
+.ram-logo-shell img{
+  padding:4px 6px!important;
+  background:transparent!important;
+  border-radius:0!important;
+  filter:none!important;
+}
+.brand{
+  background:#2c4034!important;
+}
+.loading-logo-shell,.auth-logo-shell{
+  padding:7px!important;
+  background:#234b35!important;
+  box-shadow:0 8px 22px rgba(21,43,29,.16)!important;
+}
+
+@media(max-width:900px){
+  .project-title{grid-template-columns:1fr!important;min-height:0!important;gap:10px!important}
+  .project-quick-controls{width:100%;justify-content:flex-start}
+}
+@media(max-width:650px){
+  .project-header-top{align-items:stretch;flex-direction:column}
+  .project-header-top .back-button,.project-edit-button{width:100%}
+  .project-title h1{font-size:21px!important;white-space:normal}
+  .project-quick-controls{align-items:stretch;flex-direction:column}
+  .project-quick-field{width:100%}
+  .task-edit-banner{align-items:stretch;flex-direction:column}
+  .board-create-button.prominent{width:100%}
+}
