@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useMemo, useState, type FormEvent } from 'react'
 import { CalendarPlus, ExternalLink, FileText, RefreshCw, Upload } from 'lucide-react'
 import { integrationsApi } from '../lib/api'
 import { uploadFile } from '../lib/backend'
@@ -152,9 +152,58 @@ export function FilesPage({ workspace, setWorkspace, orgId, projectId, onProject
   const filePermissions: AreaPermissions = permissions || { view: true, create: canEdit, edit: canEdit, status: canEdit, delete: canEdit }
   const canUpload = filePermissions.create
   const [uploading, setUploading] = useState(false); const [error, setError] = useState(''); const [uploadProjectId, setUploadProjectId] = useState(projectId || ''); const [uploadTaskId, setUploadTaskId] = useState('')
-  const records = workspace.files.filter((file) => !projectId || file.projectId === projectId)
+  const [search, setSearch] = useState('')
+  const [projectFilter, setProjectFilter] = useState(projectId || 'הכל')
+  const [taskFilter, setTaskFilter] = useState('הכל')
+  const [typeFilter, setTypeFilter] = useState('הכל')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+  const baseRecords = workspace.files.filter((file) => !projectId || file.projectId === projectId)
+  const fileCategory = (file: FileRecord) => {
+    const type = (file.type || '').toLowerCase()
+    const name = file.name.toLowerCase()
+    if (type.startsWith('image/') || /\.(png|jpe?g|gif|webp|heic)$/i.test(name)) return 'תמונות'
+    if (type.includes('pdf') || name.endsWith('.pdf')) return 'PDF'
+    if (type.includes('sheet') || type.includes('excel') || /\.(xlsx?|csv)$/i.test(name)) return 'גיליונות'
+    if (type.includes('word') || type.includes('document') || /\.(docx?|txt|rtf)$/i.test(name)) return 'מסמכים'
+    return 'אחר'
+  }
+  const records = useMemo(() => baseRecords.filter((file) => {
+    const project = workspace.projects.find((item) => item.id === file.projectId)
+    const task = workspace.tasks.find((item) => item.id === file.taskId)
+    const q = search.trim().toLowerCase()
+    if (q && !`${file.name} ${project?.name || ''} ${project?.address || ''} ${task?.title || ''}`.toLowerCase().includes(q)) return false
+    if (!projectId && projectFilter !== 'הכל') {
+      if (projectFilter === '__none__' && file.projectId) return false
+      if (projectFilter !== '__none__' && file.projectId !== projectFilter) return false
+    }
+    if (taskFilter !== 'הכל') {
+      if (taskFilter === '__none__' && file.taskId) return false
+      if (taskFilter !== '__none__' && file.taskId !== taskFilter) return false
+    }
+    if (typeFilter !== 'הכל' && fileCategory(file) !== typeFilter) return false
+    const uploaded = file.uploadedAt.slice(0, 10)
+    if (dateFrom && uploaded < dateFrom) return false
+    if (dateTo && uploaded > dateTo) return false
+    return true
+  }), [baseRecords, workspace.projects, workspace.tasks, search, projectId, projectFilter, taskFilter, typeFilter, dateFrom, dateTo])
   const availableTasks = workspace.tasks.filter((task) => (projectId || uploadProjectId) ? task.projectId === (projectId || uploadProjectId) : !task.projectId)
+  const filterTasks = workspace.tasks.filter((task) => {
+    const pid = projectId || (projectFilter !== 'הכל' && projectFilter !== '__none__' ? projectFilter : '')
+    return pid ? task.projectId === pid : true
+  })
   const add = async (file: File, chosenProjectId?: string, taskId?: string) => { setUploading(true); setError(''); try { const pid = chosenProjectId || projectId || 'general'; const result = await uploadFile(orgId, pid, file); const record: FileRecord = { id: uid('file'), projectId: pid === 'general' ? undefined : pid, taskId: taskId || undefined, name: file.name, url: result.url, storagePath: result.path, type: file.type, size: file.size, version: 1, uploadedAt: nowIso() }; setWorkspace((current) => ({ ...current, files: [record, ...current.files] })) } catch (e) { setError(e instanceof Error ? e.message : 'העלאה נכשלה') } finally { setUploading(false) } }
   const changeProject = (value: string) => { setUploadProjectId(value); setUploadTaskId('') }
-  return <section className="card"><div className="card-head"><div><h2>קבצים ומסמכים</h2><p>מסמכי פרויקט, תכניות, חוזים ותמונות המשויכים לפרויקט או למשימה.</p></div>{canUpload && <div className="inline-create">{!projectId && <select aria-label="שיוך קובץ לפרויקט" value={uploadProjectId} onChange={(e) => changeProject(e.target.value)}><option value="">כללי, ללא פרויקט</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select>}<select aria-label="שיוך קובץ למשימה" value={uploadTaskId} onChange={(e) => setUploadTaskId(e.target.value)}><option value="">ללא שיוך למשימה</option>{availableTasks.map((task) => <option key={task.id} value={task.id}>{task.title}</option>)}</select><label className="primary file-label" tabIndex={0}><Upload /> {uploading ? 'מעלה...' : 'העלאת קובץ'}<input type="file" aria-label="בחירת קובץ להעלאה" disabled={uploading} onChange={(e) => { const file = e.target.files?.[0]; if (!file) return; void add(file, projectId || uploadProjectId || undefined, uploadTaskId || undefined); e.currentTarget.value = '' }} /></label></div>}</div>{error && <div className="error-banner">{error}</div>}<div className="file-list">{records.map((file) => <div className="linked-file-row" key={file.id}><StoredFileLink file={file}><span className="file-icon"><FileText /></span><div><strong>{file.name}</strong><small>{workspace.projects.find((project) => project.id === file.projectId)?.name || 'כללי'}{file.taskId ? ` · ${workspace.tasks.find((task) => task.id === file.taskId)?.title || 'משימה'}` : ''} · גרסה {file.version} · {new Intl.NumberFormat('he-IL', { maximumFractionDigits: 1 }).format((file.size || 0) / 1024)} KB</small></div><ExternalLink /></StoredFileLink><div className="context-links">{file.projectId && onProject ? <button type="button" onClick={() => onProject(file.projectId!)}>פרויקט: {workspace.projects.find((project) => project.id === file.projectId)?.name || 'פתיחה'}</button> : <span>כללי</span>}{file.taskId && onTask && <button type="button" onClick={() => onTask(file.taskId!)}>משימה: {workspace.tasks.find((task) => task.id === file.taskId)?.title || 'פתיחה'}</button>}</div></div>)}{!records.length && <EmptyState title="אין קבצים" text="העלו מסמכים ותכניות. כאשר Supabase מחובר, הקבצים נשמרים ב-Storage המאובטח." />}</div></section>
+  return <section className="card"><div className="card-head"><div><h2>קבצים ומסמכים</h2><p>מסמכי פרויקט, תכניות, חוזים ותמונות המשויכים לפרויקט או למשימה.</p></div>{canUpload && <div className="inline-create">{!projectId && <select aria-label="שיוך קובץ לפרויקט" value={uploadProjectId} onChange={(e) => changeProject(e.target.value)}><option value="">כללי, ללא פרויקט</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.address || 'כתובת חסרה'} · {project.name}</option>)}</select>}<select aria-label="שיוך קובץ למשימה" value={uploadTaskId} onChange={(e) => setUploadTaskId(e.target.value)}><option value="">ללא שיוך למשימה</option>{availableTasks.map((task) => <option key={task.id} value={task.id}>{task.title}</option>)}</select><label className="primary file-label" tabIndex={0}><Upload /> {uploading ? 'מעלה...' : 'העלאת קובץ'}<input type="file" aria-label="בחירת קובץ להעלאה" disabled={uploading} onChange={(e) => { const file = e.target.files?.[0]; if (!file) return; void add(file, projectId || uploadProjectId || undefined, uploadTaskId || undefined); e.currentTarget.value = '' }} /></label></div>}</div>
+  <div className="list-filter-panel file-filter-panel">
+    <label className="list-filter-field filter-grow"><span>חיפוש</span><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="שם קובץ, פרויקט, כתובת או משימה" /></label>
+    {!projectId && <label className="list-filter-field"><span>פרויקט</span><select value={projectFilter} onChange={(e) => { setProjectFilter(e.target.value); setTaskFilter('הכל') }}><option value="הכל">כל הפרויקטים</option><option value="__none__">כללי, ללא פרויקט</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.address || 'כתובת חסרה'} · {project.name}</option>)}</select></label>}
+    <label className="list-filter-field"><span>משימה</span><select value={taskFilter} onChange={(e) => setTaskFilter(e.target.value)}><option value="הכל">כל המשימות</option><option value="__none__">ללא משימה</option>{filterTasks.map((task) => <option key={task.id} value={task.id}>{task.title}</option>)}</select></label>
+    <label className="list-filter-field"><span>סוג קובץ</span><select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}><option>הכל</option><option>PDF</option><option>תמונות</option><option>מסמכים</option><option>גיליונות</option><option>אחר</option></select></label>
+    <label className="list-filter-field"><span>הועלה מתאריך</span><input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} /></label>
+    <label className="list-filter-field"><span>הועלה עד תאריך</span><input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} /></label>
+    <button type="button" className="secondary compact-filter-clear" onClick={() => { setSearch(''); if (!projectId) setProjectFilter('הכל'); setTaskFilter('הכל'); setTypeFilter('הכל'); setDateFrom(''); setDateTo('') }}>ניקוי סינון</button>
+    <span className="filter-count">{records.length} מתוך {baseRecords.length} קבצים</span>
+  </div>
+  {error && <div className="error-banner">{error}</div>}<div className="file-list">{records.map((file) => <div className="linked-file-row" key={file.id}><StoredFileLink file={file}><span className="file-icon"><FileText /></span><div><strong>{file.name}</strong><small>{workspace.projects.find((project) => project.id === file.projectId)?.name || 'כללי'}{file.taskId ? ` · ${workspace.tasks.find((task) => task.id === file.taskId)?.title || 'משימה'}` : ''} · גרסה {file.version} · {new Intl.NumberFormat('he-IL', { maximumFractionDigits: 1 }).format((file.size || 0) / 1024)} KB</small></div><ExternalLink /></StoredFileLink><div className="context-links">{file.projectId && onProject ? <button type="button" onClick={() => onProject(file.projectId!)}>פרויקט: {workspace.projects.find((project) => project.id === file.projectId)?.name || 'פתיחה'}</button> : <span>כללי</span>}{file.taskId && onTask && <button type="button" onClick={() => onTask(file.taskId!)}>משימה: {workspace.tasks.find((task) => task.id === file.taskId)?.title || 'פתיחה'}</button>}</div></div>)}{!records.length && <EmptyState title="אין קבצים" text="העלו מסמכים ותכניות. כאשר Supabase מחובר, הקבצים נשמרים ב-Storage המאובטח." />}</div></section>
 }
