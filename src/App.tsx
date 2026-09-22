@@ -492,7 +492,7 @@ function Sidebar({ page, setPage, workspace, permissions, open, setOpen, user, o
   return <>
     <div className={`sidebar-overlay ${open ? 'show' : ''}`} onClick={() => setOpen(false)} />
     <aside className={`sidebar ${open ? 'open' : ''}`}>
-      <div className="brand"><img src={workspace.settings.logoUrl || '/ram-engineering-logo.png'} alt={workspace.settings.organizationShortName} /><div><strong>{workspace.settings.organizationShortName}</strong><span>RAM Engineering CRM</span></div><button type="button" className="sidebar-close" onClick={() => setOpen(false)} aria-label="סגירת תפריט"><X /></button></div>
+      <div className="brand"><img src="/ram-engineering-logo.png" alt={workspace.settings.organizationShortName} /><div><strong>{workspace.settings.organizationShortName}</strong><span>RAM Engineering CRM</span></div><button type="button" className="sidebar-close" onClick={() => setOpen(false)} aria-label="סגירת תפריט"><X /></button></div>
       <div className="sidebar-date" aria-label={`${weekday}, ${gregorianDate}`}><strong>{weekday}</strong><span>{gregorianDate}</span></div>
       <nav>{visibleItems.map((item) => {
         const Icon = item.icon
