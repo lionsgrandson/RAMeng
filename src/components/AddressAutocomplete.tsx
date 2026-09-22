@@ -2,6 +2,26 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, MapPin } from 'lucide-react'
 import { integrationsApi } from '../lib/api'
 
+const directPhotonSuggestions = async (query: string) => {
+  const url = new URL('https://photon.komoot.io/api/')
+  url.searchParams.set('q', query)
+  url.searchParams.set('limit', '7')
+  url.searchParams.set('bbox', '34.2,29.4,35.95,33.4')
+  url.searchParams.set('lat', '31.95')
+  url.searchParams.set('lon', '34.90')
+  const response = await fetch(url.toString(), { headers: { accept: 'application/json' } })
+  if (!response.ok) return []
+  const body = await response.json().catch(() => ({ features: [] })) as { features?: Array<{ properties?: Record<string, string> }> }
+  const seen = new Set<string>()
+  return (body.features || []).map((feature) => {
+    const props = feature.properties || {}
+    const street = [props.street || props.name, props.housenumber].filter(Boolean).join(' ').trim()
+    const locality = props.city || props.town || props.village || props.locality || props.district || props.county
+    const label = [street, locality, props.state, props.postcode, props.country].filter(Boolean).filter((value, index, array) => array.indexOf(value) === index).join(', ')
+    return { label, value: label }
+  }).filter((item) => item.value && !seen.has(item.value.toLowerCase()) && seen.add(item.value.toLowerCase())).slice(0, 7)
+}
+
 type AddressAutocompleteProps = {
   name?: string
   value?: string
@@ -56,12 +76,19 @@ export default function AddressAutocomplete({
     const timer = window.setTimeout(() => {
       setLoading(true)
       void integrationsApi.addressSuggestions(query)
-        .then((result) => {
+        .then(async (result) => {
           if (requestId.current !== id) return
-          setRemote(result.suggestions || [])
+          const suggestions = result.suggestions || []
+          if (suggestions.length) {
+            setRemote(suggestions)
+            return
+          }
+          const fallback = await directPhotonSuggestions(query).catch(() => [])
+          if (requestId.current === id) setRemote(fallback)
         })
-        .catch(() => {
-          if (requestId.current === id) setRemote([])
+        .catch(async () => {
+          const fallback = await directPhotonSuggestions(query).catch(() => [])
+          if (requestId.current === id) setRemote(fallback)
         })
         .finally(() => {
           if (requestId.current === id) setLoading(false)
