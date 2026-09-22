@@ -103,7 +103,7 @@ function ClientDirectory({ workspace, setWorkspace, onSelectClient, canEditConta
       <label className="client-directory-search search-box labeled-search"><span>חיפוש לקוחות</span><div><Search /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="שם, חברה, מייל, טלפון או תגית" aria-label="חיפוש לקוחות" /></div></label>
       <label className="client-filter-field"><span>סטטוס</span><select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}><option>הכל</option>{[...new Set(workspace.contacts.map((contact) => contact.status))].map((status) => <option key={status}>{status}</option>)}</select></label>
       <label className="client-filter-field"><span>תגית</span><select value={tagFilter} onChange={(e) => setTagFilter(e.target.value)}><option value="הכל">כל התגיות</option>{availableTags.map((tag) => <option key={tag}>{tag}</option>)}</select></label>
-      <label className="client-filter-field"><span>פרויקט</span><select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)}><option value="הכל">כל הפרויקטים</option><option value="__none__">ללא פרויקט</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.address || 'כתובת חסרה'} · {project.name}</option>)}</select></label>
+      <label className="client-filter-field"><span>פרויקט</span><select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)}><option value="הכל">כל הפרויקטים</option><option value="__none__">ללא פרויקט</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.name} — {project.address || 'כתובת חסרה'}</option>)}</select></label>
       <label className="client-filter-field"><span>נוצר מתאריך</span><input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} /></label>
       <label className="client-filter-field"><span>נוצר עד תאריך</span><input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} /></label>
       <button type="button" className="secondary compact-filter-clear" onClick={() => { setQuery(''); setStatusFilter('הכל'); setTagFilter('הכל'); setProjectFilter('הכל'); setDateFrom(''); setDateTo('') }}>ניקוי סינון</button>
@@ -370,7 +370,7 @@ function ClientWorkspace({ workspace, setWorkspace, onSelectClient, onProject, c
     </div>}
 
     {tab === 'projects' && projectAccess.view && <section className="card"><div className="card-head"><h2>פרויקטים</h2>{canCreateProjects && <button type="button" className="primary" onClick={() => setAddingProject(true)}><Plus /> פרויקט חדש</button>}</div><div className="client-project-list">{projects.map((project) => <article key={project.id}>
-      <div className="client-project-main"><div><span className="project-site-label">אתר / כתובת</span><strong>{project.address || 'חסרה כתובת'}</strong><small>{project.name}</small></div><button type="button" className="secondary" onClick={() => onProject(project.id)}><FolderKanban /> פתיחה</button></div>
+      <div className="client-project-main"><div><span className="project-site-label">פרויקט</span><strong>{project.name || 'פרויקט בנייה'}</strong><small className="client-project-address">{project.address || 'חסרה כתובת'}</small></div><button type="button" className="secondary" onClick={() => onProject(project.id)}><FolderKanban /> פתיחה</button></div>
       <div className="client-project-fields">
         {canStatusProjects ? <label>סטטוס<select value={project.status} onChange={(e) => patchProject(project.id, { status: e.target.value as ProjectStatus })}><option>בתכנון</option><option>בביצוע</option><option>בהמתנה</option><option>הושלם</option><option>מוקפא</option></select></label> : <div><span>סטטוס</span><strong>{project.status}</strong></div>}
         {canUpdateProjects ? <label>התקדמות<input type="number" min="0" max="100" value={project.progress} onChange={(e) => patchProject(project.id, { progress: Math.max(0, Math.min(100, Number(e.target.value))) })} /></label> : <div><span>התקדמות</span><strong>{project.progress}%</strong></div>}
@@ -420,7 +420,7 @@ function ClientWorkspace({ workspace, setWorkspace, onSelectClient, onProject, c
     </form></Modal>}
 
     {canCreateTasks && addingTask && <Modal title="משימה חדשה" onClose={() => setAddingTask(false)}><form className="form-grid" onSubmit={createTask}>
-      <Field label="פרויקט"><select name="projectId" required><option value="">בחירת פרויקט</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.address || 'כתובת חסרה'} · {project.name}</option>)}</select></Field>
+      <Field label="פרויקט"><select name="projectId" required><option value="">בחירת פרויקט</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name} — {project.address || 'כתובת חסרה'}</option>)}</select></Field>
       <Field label="משימה"><input name="title" required /></Field>
       <Field label="סטטוס"><select name="status">{workspace.taskStatuses.map((status) => <option key={status}>{status}</option>)}</select></Field>
       <Field label="עדיפות"><select name="priority"><option>נמוכה</option><option>רגילה</option><option>גבוהה</option><option>דחופה</option></select></Field>
@@ -432,7 +432,7 @@ function ClientWorkspace({ workspace, setWorkspace, onSelectClient, onProject, c
     </form></Modal>}
 
     {editingTask && <Modal title={(canUpdateTasks || canStatusTasks) ? 'פרטי משימה ועריכה' : 'פרטי משימה'} onClose={() => setEditingTask(null)} wide><form className="form-grid two-col" onSubmit={saveTaskDetails}>
-      <Field label="פרויקט"><select name="projectId" defaultValue={editingTask.projectId || ''} disabled={!canUpdateTasks}><option value="">ללא פרויקט</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.address || 'כתובת חסרה'} · {project.name}</option>)}</select></Field>
+      <Field label="פרויקט"><select name="projectId" defaultValue={editingTask.projectId || ''} disabled={!canUpdateTasks}><option value="">ללא פרויקט</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name} — {project.address || 'כתובת חסרה'}</option>)}</select></Field>
       <Field label="שם המשימה"><input name="title" required defaultValue={editingTask.title} disabled={!canUpdateTasks} /></Field>
       <Field label="סטטוס"><select name="status" defaultValue={editingTask.status} disabled={!canStatusTasks}>{workspace.taskStatuses.map((status) => <option key={status}>{status}</option>)}</select></Field>
       <Field label="עדיפות"><select name="priority" defaultValue={editingTask.priority} disabled={!canUpdateTasks}><option>נמוכה</option><option>רגילה</option><option>גבוהה</option><option>דחופה</option></select></Field>
@@ -448,7 +448,7 @@ function ClientWorkspace({ workspace, setWorkspace, onSelectClient, onProject, c
     </form></Modal>}
 
     {((addingNoteKind && canCreateCommunication) || (editingNote && canUpdateCommunication)) && <Modal title={editingNote ? (editingNote.kind === 'message' ? 'עריכת הודעה פנימית' : 'עריכת עדכון') : (addingNoteKind === 'message' ? 'הודעה פנימית חדשה' : 'עדכון חדש לציר הזמן')} onClose={() => { setAddingNoteKind(null); setEditingNote(null) }}><form className="form-grid" onSubmit={saveNote}>
-      <Field label="פרויקט (אופציונלי)"><select name="projectId" defaultValue={editingNote?.projectId || ''}><option value="">כללי ללקוח</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.address || 'כתובת חסרה'} · {project.name}</option>)}</select></Field>
+      <Field label="פרויקט (אופציונלי)"><select name="projectId" defaultValue={editingNote?.projectId || ''}><option value="">כללי ללקוח</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name} — {project.address || 'כתובת חסרה'}</option>)}</select></Field>
       <Field label="תוכן"><textarea name="body" rows={6} required defaultValue={editingNote?.body || ''} autoFocus /></Field>
       <div className="form-actions"><button className="secondary" type="button" onClick={() => { setAddingNoteKind(null); setEditingNote(null) }}>ביטול</button><button className="primary">שמירה</button></div>
     </form></Modal>}
