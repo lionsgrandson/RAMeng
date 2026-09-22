@@ -2007,3 +2007,185 @@ button svg,.primary svg,.secondary svg,.back-button svg,.upload-button svg{
 @media(max-width:650px){
   .project-card{min-height:210px}
 }
+
+
+/* Global badge/chip normalization — prevent stretched bubbles anywhere in the CRM */
+.chip,
+.project-status-badge,
+.role-badge,
+.color-readonly {
+  box-sizing:border-box!important;
+}
+
+.chip,
+.project-status-badge {
+  display:inline-flex!important;
+  width:auto!important;
+  min-width:0!important;
+  max-width:100%!important;
+  height:24px!important;
+  min-height:24px!important;
+  max-height:24px!important;
+  flex:0 0 auto!important;
+  align-items:center!important;
+  justify-content:center!important;
+  align-self:center!important;
+  justify-self:start!important;
+  padding:0 9px!important;
+  border-radius:999px!important;
+  font-size:10px!important;
+  font-weight:800!important;
+  line-height:1!important;
+  white-space:nowrap!important;
+  writing-mode:horizontal-tb!important;
+  text-orientation:mixed!important;
+  transform:none!important;
+  overflow:hidden!important;
+  text-overflow:ellipsis!important;
+}
+
+/* Never let generic row/card layout rules turn badges into blocks */
+.card .chip,
+.project-workspace .chip,
+.client-workspace .chip,
+.calendar-page .chip,
+.report-list .chip,
+.file-list .chip,
+.team-card .chip,
+.data-table .chip {
+  width:auto!important;
+  height:24px!important;
+  min-height:24px!important;
+  max-height:24px!important;
+  flex-grow:0!important;
+  flex-shrink:0!important;
+  align-self:center!important;
+  justify-self:start!important;
+}
+
+/* Open tasks on project overview */
+.project-workspace .summary-open-list button {
+  display:grid!important;
+  grid-template-columns:minmax(0,1fr) max-content 94px!important;
+  align-items:center!important;
+  min-height:58px!important;
+  padding:10px 13px!important;
+  gap:10px!important;
+}
+.project-workspace .summary-open-list button>.chip {
+  grid-column:auto!important;
+  width:auto!important;
+  min-width:0!important;
+  max-width:180px!important;
+}
+.project-workspace .summary-open-list button>span:last-child {
+  display:block!important;
+  width:auto!important;
+  min-width:0!important;
+  height:auto!important;
+  min-height:0!important;
+  max-height:none!important;
+  padding:0!important;
+  border-radius:0!important;
+  background:transparent!important;
+  color:#68786e!important;
+  font-size:10px!important;
+  font-weight:700!important;
+  line-height:1.3!important;
+  white-space:nowrap!important;
+  writing-mode:horizontal-tb!important;
+  text-align:left!important;
+  direction:ltr!important;
+  align-self:center!important;
+  justify-self:end!important;
+}
+
+/* Compact lists in client/project views */
+.compact-project-list>button,
+.compact-task-list>button,
+.compact-task-list>div,
+.client-project-list>article,
+.client-task-table>article,
+.report-row,
+.selected-day-item,
+.calendar-list>article,
+.linked-report-row,
+.linked-file-row {
+  align-items:center!important;
+}
+.compact-project-list .chip,
+.compact-task-list .chip,
+.client-project-list .chip,
+.client-task-table .chip,
+.report-row .chip,
+.selected-day-item .chip,
+.calendar-list .chip,
+.linked-report-row .chip,
+.linked-file-row .chip {
+  width:auto!important;
+  min-width:0!important;
+  max-width:190px!important;
+  height:24px!important;
+  min-height:24px!important;
+  max-height:24px!important;
+  align-self:center!important;
+  justify-self:start!important;
+}
+
+/* Status/count pills should be compact, not vertical capsules */
+.task-view-tabs button span,
+.project-task-count,
+.client-picker-selected button {
+  writing-mode:horizontal-tb!important;
+  text-orientation:mixed!important;
+  transform:none!important;
+}
+.task-view-tabs button span {
+  width:auto!important;
+  min-width:20px!important;
+  height:20px!important;
+  min-height:20px!important;
+  max-height:20px!important;
+  padding:0 6px!important;
+}
+.project-task-count {
+  width:auto!important;
+  min-width:58px!important;
+  max-width:88px!important;
+  height:auto!important;
+  min-height:44px!important;
+  max-height:none!important;
+  border-radius:9px!important;
+}
+
+/* Keep plain metadata plain — never inherit pill styling */
+.project-card-stats span,
+.client-card-stats span,
+.metric-note,
+.filter-count,
+.timeline-content span,
+.client-detail-list span {
+  width:auto!important;
+  height:auto!important;
+  min-height:0!important;
+  max-height:none!important;
+  padding:0!important;
+  border-radius:0!important;
+  writing-mode:horizontal-tb!important;
+}
+
+/* Long statuses remain horizontal and readable */
+@media(max-width:720px){
+  .project-workspace .summary-open-list button{
+    grid-template-columns:minmax(0,1fr) max-content!important;
+  }
+  .project-workspace .summary-open-list button>span:last-child{
+    grid-column:1/-1!important;
+    justify-self:start!important;
+    text-align:right!important;
+    direction:rtl!important;
+  }
+  .chip,.project-status-badge{
+    max-width:160px!important;
+  }
+}
