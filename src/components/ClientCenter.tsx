@@ -1,5 +1,5 @@
 import { useMemo, useState, type Dispatch, type FormEvent, type SetStateAction } from 'react'
-import { ArrowRight, BarChart3, CalendarDays, ExternalLink, FileText, FolderKanban, ListChecks, Mail, Plus, Search, Settings2 } from 'lucide-react'
+import { ArrowRight, BarChart3, CalendarDays, ExternalLink, FileText, FolderKanban, LayoutDashboard, ListChecks, Mail, Plus, Search, Settings2 } from 'lucide-react'
 import type { ClientNote, Contact, Project, ProjectStatus, Task, Workspace } from '../types'
 import type { AreaPermissions } from '../lib/permissions'
 import { Chip, EmptyState, Field, Modal, StoredFileLink, confirmDelete, dateLabel, dateTimeLabel, money, nowIso, uid } from './common'
@@ -302,15 +302,15 @@ function ClientWorkspace({ workspace, setWorkspace, onSelectClient, onProject, c
     setWorkspace((current) => audit({ ...current, clientNotes: (current.clientNotes || []).filter((item) => item.id !== note.id) }, note.kind === 'message' ? 'מחיקת הודעה פנימית' : 'מחיקת עדכון ציר זמן', note.kind === 'message' ? 'הודעה פנימית' : 'ציר זמן', note.id))
   }
 
-  const tabs: { id: ClientTab; label: string }[] = [
-    { id: 'overview', label: 'סקירה' },
-    ...(projectAccess.view ? [{ id: 'projects' as ClientTab, label: 'פרויקטים' }] : []),
-    ...(taskAccess.view ? [{ id: 'tasks' as ClientTab, label: 'משימות' }] : []),
-    ...((communicationAccess.view || calendarAccess.view || taskAccess.view) ? [{ id: 'timeline' as ClientTab, label: 'ציר זמן' }] : []),
-    ...(communicationAccess.view ? [{ id: 'messages' as ClientTab, label: 'תקשורת' }] : []),
-    ...(fileAccess.view ? [{ id: 'files' as ClientTab, label: 'קבצים' }] : []),
-    ...(financeAccess.view ? [{ id: 'finance' as ClientTab, label: 'כספים' }] : []),
-    ...(isAdmin ? [{ id: 'activity' as ClientTab, label: 'פעילות' }] : []),
+  const tabs: { id: ClientTab; label: string; icon: typeof LayoutDashboard }[] = [
+    { id: 'overview', label: 'סקירה', icon: LayoutDashboard },
+    ...(projectAccess.view ? [{ id: 'projects' as ClientTab, label: 'פרויקטים', icon: FolderKanban }] : []),
+    ...(taskAccess.view ? [{ id: 'tasks' as ClientTab, label: 'משימות', icon: ListChecks }] : []),
+    ...((communicationAccess.view || calendarAccess.view || taskAccess.view) ? [{ id: 'timeline' as ClientTab, label: 'ציר זמן', icon: CalendarDays }] : []),
+    ...(communicationAccess.view ? [{ id: 'messages' as ClientTab, label: 'תקשורת', icon: Mail }] : []),
+    ...(fileAccess.view ? [{ id: 'files' as ClientTab, label: 'קבצים', icon: FileText }] : []),
+    ...(financeAccess.view ? [{ id: 'finance' as ClientTab, label: 'כספים', icon: BarChart3 }] : []),
+    ...(isAdmin ? [{ id: 'activity' as ClientTab, label: 'פעילות', icon: ListChecks }] : []),
   ]
 
   const timeline = [
@@ -327,7 +327,7 @@ function ClientWorkspace({ workspace, setWorkspace, onSelectClient, onProject, c
         <div className="client-header-actions">{canStatusContacts ? <select className="compact-select" aria-label="סטטוס לקוח" value={contact.status} onChange={(e) => patchContact({ status: e.target.value })}><option>ליד</option><option>פעיל</option><option>בהמתנה</option><option>לא פעיל</option></select> : <Chip tone={contact.status === 'פעיל' ? 'good' : contact.status === 'ליד' ? 'brand' : 'neutral'}>{contact.status}</Chip>}{canUpdateContacts && <button type="button" className="secondary" onClick={() => setEditingClient(true)}><Settings2 /> עריכה</button>}</div>
       </div>
       {!canEditAnything && <div className="read-only-banner">צפייה בלבד</div>}
-      <nav className="client-tabs" role="tablist" aria-label="חלקי כרטיס הלקוח">{tabs.map((item) => <button type="button" role="tab" aria-selected={tab === item.id} key={item.id} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)}>{item.label}</button>)}</nav>
+      <nav className="client-tabs" role="tablist" aria-label="חלקי כרטיס הלקוח">{tabs.map((item) => { const Icon = item.icon; return <button type="button" role="tab" aria-selected={tab === item.id} key={item.id} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)}><Icon /><span>{item.label}</span></button> })}</nav>
     </header>
 
     {tab === 'overview' && <div className="client-overview-grid">
