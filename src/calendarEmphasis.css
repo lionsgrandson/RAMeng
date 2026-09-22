@@ -30,17 +30,20 @@
 }
 
 .calendar-page .calendar-toolbar h2{
-  margin:0;
-  color:#fff;
-  font-size:32px;
-  font-weight:950;
-  letter-spacing:-.02em;
+  margin:0!important;
+  color:#fff!important;
+  font-size:40px!important;
+  line-height:1!important;
+  font-weight:950!important;
+  letter-spacing:-.025em;
 }
 
-.calendar-page .calendar-toolbar strong{
-  color:#fff;
-  font-size:15px;
-  font-weight:850;
+.calendar-page .calendar-toolbar>div:first-child>strong{
+  color:#fff!important;
+  font-size:22px!important;
+  line-height:1.15!important;
+  font-weight:900!important;
+  opacity:1!important;
 }
 
 .calendar-page .calendar-toolbar .secondary,
@@ -291,7 +294,11 @@
   }
 
   .calendar-page .calendar-toolbar h2{
-    font-size:27px;
+    font-size:32px!important;
+  }
+
+  .calendar-page .calendar-toolbar>div:first-child>strong{
+    font-size:18px!important;
   }
 
   .calendar-page .month-day{
@@ -305,4 +312,72 @@
   .calendar-page .selected-day-item .calendar-date{
     width:58px;
   }
+}
+
+
+/* Site-wide contrast guardrails for text placed on dark green surfaces.
+   Several legacy rules use muted gray globally; these selectors stop that
+   muted color from leaking onto dark UI. */
+.sidebar{
+  color:#f7faf8!important;
+}
+.sidebar .brand strong,
+.sidebar .sidebar-date strong,
+.sidebar nav button,
+.sidebar nav button span,
+.sidebar .profile strong{
+  color:#f7faf8;
+}
+.sidebar .brand>div>span,
+.sidebar .sidebar-date span,
+.sidebar .profile small{
+  color:#d7e1da!important;
+}
+.sidebar nav button:not(.active){
+  color:#e2eae4!important;
+}
+.sidebar nav button:not(.active):hover{
+  color:#fff!important;
+}
+.sidebar nav button.active,
+.sidebar .nav-group.active>button{
+  color:#1f3d2b!important;
+}
+.sidebar nav button.active span,
+.sidebar .nav-group.active>button span{
+  color:#1f3d2b!important;
+}
+
+.calendar-page .calendar-toolbar,
+.calendar-page .calendar-toolbar h1,
+.calendar-page .calendar-toolbar h2,
+.calendar-page .calendar-toolbar h3,
+.calendar-page .calendar-toolbar strong,
+.calendar-page .calendar-toolbar span{
+  color:#fff!important;
+}
+
+.calendar-page .selected-day-card>.card-head,
+.calendar-page .selected-day-card>.card-head h1,
+.calendar-page .selected-day-card>.card-head h2,
+.calendar-page .selected-day-card>.card-head h3,
+.calendar-page .selected-day-card>.card-head strong,
+.calendar-page .selected-day-card>.card-head span,
+.calendar-page .selected-day-card>.card-head p{
+  color:#fff!important;
+}
+
+/* Any active dark-green tab/button must keep white text rather than muted gray. */
+.project-tabs button.active,
+.project-tabs button.active span,
+.client-tabs button.active,
+.client-tabs button.active span{
+  color:#fff!important;
+  font-weight:900!important;
+}
+
+.primary,
+.primary span,
+.primary strong{
+  color:#fff!important;
 }
