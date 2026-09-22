@@ -512,23 +512,71 @@ function Sidebar({ page, setPage, workspace, permissions, open, setOpen, user, o
 }
 
 function FinancialReports({ workspace }: { workspace: Workspace }) {
-  const issued = workspace.quotes.reduce((sum, quote) => sum + Number(quote.amount || 0), 0)
-  const paid = workspace.quotes.reduce((sum, quote) => sum + Number(quote.paidAmount || 0), 0)
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState('הכל')
+  const [clientFilter, setClientFilter] = useState('הכל')
+  const [projectFilter, setProjectFilter] = useState('הכל')
+  const [paymentFilter, setPaymentFilter] = useState('הכל')
+  const [dateField, setDateField] = useState<'issued' | 'due'>('issued')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+
+  const filteredQuotes = useMemo(() => workspace.quotes.filter((quote) => {
+    const client = workspace.contacts.find((item) => item.id === quote.contactId)
+    const project = workspace.projects.find((item) => item.id === quote.projectId)
+    const q = search.trim().toLowerCase()
+    if (q && !`${quote.number} ${quote.title} ${client?.name || ''} ${project?.name || ''} ${project?.address || ''}`.toLowerCase().includes(q)) return false
+    if (statusFilter !== 'הכל' && quote.status !== statusFilter) return false
+    if (clientFilter !== 'הכל') {
+      if (clientFilter === '__none__' && quote.contactId) return false
+      if (clientFilter !== '__none__' && quote.contactId !== clientFilter) return false
+    }
+    if (projectFilter !== 'הכל') {
+      if (projectFilter === '__none__' && quote.projectId) return false
+      if (projectFilter !== '__none__' && quote.projectId !== projectFilter) return false
+    }
+    const paid = Number(quote.paidAmount || 0)
+    const amount = Number(quote.amount || 0)
+    if (paymentFilter === 'שולם' && paid < amount) return false
+    if (paymentFilter === 'חלקי' && !(paid > 0 && paid < amount)) return false
+    if (paymentFilter === 'לא שולם' && paid > 0) return false
+    const selectedDate = dateField === 'issued' ? quote.issuedAt : quote.dueDate
+    if (dateFrom && (!selectedDate || selectedDate < dateFrom)) return false
+    if (dateTo && (!selectedDate || selectedDate > dateTo)) return false
+    return true
+  }), [workspace.quotes, workspace.contacts, workspace.projects, search, statusFilter, clientFilter, projectFilter, paymentFilter, dateField, dateFrom, dateTo])
+
+  const issued = filteredQuotes.reduce((sum, quote) => sum + Number(quote.amount || 0), 0)
+  const paid = filteredQuotes.reduce((sum, quote) => sum + Number(quote.paidAmount || 0), 0)
   const outstanding = Math.max(0, issued - paid)
   const currency = (value: number) => new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 }).format(value)
+
   return <div className="financial-report-page">
+    <div className="list-filter-panel finance-filter-panel card">
+      <label className="list-filter-field filter-grow"><span>חיפוש</span><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="מספר, כותרת, לקוח, פרויקט או כתובת" /></label>
+      <label className="list-filter-field"><span>סטטוס</span><select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}><option value="הכל">כל הסטטוסים</option>{[...new Set(workspace.quotes.map((quote) => quote.status))].map((status) => <option key={status}>{status}</option>)}</select></label>
+      <label className="list-filter-field"><span>לקוח</span><select value={clientFilter} onChange={(e) => setClientFilter(e.target.value)}><option value="הכל">כל הלקוחות</option><option value="__none__">ללא לקוח</option>{workspace.contacts.map((contact) => <option key={contact.id} value={contact.id}>{contact.name}</option>)}</select></label>
+      <label className="list-filter-field"><span>פרויקט</span><select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)}><option value="הכל">כל הפרויקטים</option><option value="__none__">ללא פרויקט</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.address || 'כתובת חסרה'} · {project.name}</option>)}</select></label>
+      <label className="list-filter-field"><span>תשלום</span><select value={paymentFilter} onChange={(e) => setPaymentFilter(e.target.value)}><option>הכל</option><option>שולם</option><option>חלקי</option><option>לא שולם</option></select></label>
+      <label className="list-filter-field"><span>תאריך לפי</span><select value={dateField} onChange={(e) => setDateField(e.target.value as 'issued' | 'due')}><option value="issued">תאריך הפקה</option><option value="due">תאריך יעד</option></select></label>
+      <label className="list-filter-field"><span>מתאריך</span><input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} /></label>
+      <label className="list-filter-field"><span>עד תאריך</span><input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} /></label>
+      <button type="button" className="secondary compact-filter-clear" onClick={() => { setSearch(''); setStatusFilter('הכל'); setClientFilter('הכל'); setProjectFilter('הכל'); setPaymentFilter('הכל'); setDateFrom(''); setDateTo('') }}>ניקוי סינון</button>
+      <span className="filter-count">{filteredQuotes.length} מתוך {workspace.quotes.length} רשומות</span>
+    </div>
+
     <div className="metric-grid finance-report-metrics">
-      <article className="metric card"><div><small>סה״כ מסמכים</small><strong>{workspace.quotes.length}</strong></div></article>
+      <article className="metric card"><div><small>מסמכים בסינון</small><strong>{filteredQuotes.length}</strong></div></article>
       <article className="metric card"><div><small>סה״כ לחיוב</small><strong>{currency(issued)}</strong></div></article>
       <article className="metric card"><div><small>שולם</small><strong>{currency(paid)}</strong></div></article>
       <article className="metric card"><div><small>יתרה פתוחה</small><strong>{currency(outstanding)}</strong></div></article>
     </div>
     <section className="card"><div className="card-head"><div><h2>מידע פיננסי</h2><p>ריכוז הצעות מחיר / חיובים קיימים במערכת. אינטגרציית חשבוניות חיצונית אינה מתווספת ללא אישור היקף.</p></div></div>
-      <div className="finance-report-list">{workspace.quotes.map((quote) => {
+      <div className="finance-report-list">{filteredQuotes.map((quote) => {
         const client = workspace.contacts.find((item) => item.id === quote.contactId)
         const project = workspace.projects.find((item) => item.id === quote.projectId)
         return <article key={quote.id}><div><strong>{quote.number || quote.title}</strong><small>{client?.name || 'ללא לקוח'}{project ? ` · ${project.address || project.name}` : ''}</small></div><span>{quote.status}</span><b>{currency(quote.amount)}</b><span>שולם {currency(quote.paidAmount || 0)}</span></article>
-      })}{!workspace.quotes.length && <div className="table-empty">אין כרגע נתונים פיננסיים להצגה.</div>}</div>
+      })}{!filteredQuotes.length && <div className="table-empty">{workspace.quotes.length ? 'אין רשומות שתואמות לסינון.' : 'אין כרגע נתונים פיננסיים להצגה.'}</div>}</div>
     </section>
   </div>
 }
