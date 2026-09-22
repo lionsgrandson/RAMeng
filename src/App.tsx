@@ -421,9 +421,9 @@ export default function App() {
   const openReport = (id: string, itemId: string | null = null) => permissions.reports.view ? applyRoute({ page: 'reports', reportId: id, reportItemId: itemId || undefined }) : setPermissionNotice('אין הרשאת צפייה בדוחות')
   const openUrgent = () => permissions.tasks.view ? applyRoute({ page: 'tasks', attention: true }) : setPermissionNotice('אין הרשאת צפייה במשימות')
 
-  if (!runtime) return <div className="app-loading"><img src="/ram-engineering-logo.png" alt="ר.א.ם הנדסה" /><span>טוען מערכת...</span></div>
+  if (!runtime) return <div className="app-loading"><span className="ram-logo-shell loading-logo-shell"><img src="/ram-engineering-logo.png" alt="ר.א.ם הנדסה" width="1024" height="276" decoding="async" fetchPriority="high" /></span><span>טוען מערכת...</span></div>
   if (!runtime.configured) return <SetupScreen />
-  if (user === undefined) return <div className="app-loading"><img src="/ram-engineering-logo.png" alt="ר.א.ם הנדסה" /><span>בודק התחברות...</span></div>
+  if (user === undefined) return <div className="app-loading"><span className="ram-logo-shell loading-logo-shell"><img src="/ram-engineering-logo.png" alt="ר.א.ם הנדסה" width="1024" height="276" decoding="async" fetchPriority="high" /></span><span>בודק התחברות...</span></div>
   if (!user) return <LoginScreen onSuccess={() => void getCurrentUser().then(setUser)} />
   if (inviteMode) return <SetPasswordScreen onSuccess={() => {
     const url = new URL(window.location.href)
@@ -434,7 +434,7 @@ export default function App() {
     setInviteMode(false)
   }} />
   if (loadError) return <div className="auth-screen"><section className="login-card"><h1>לא ניתן לטעון את סביבת העבודה</h1><div className="error-banner">{loadError}</div><p>ודאו שהגדרת מסד הנתונים הושלמה ושיש למשתמש הרשאה למערכת.</p><button className="secondary" onClick={() => window.location.reload()}>ניסיון מחדש</button></section></div>
-  if (!loaded) return <div className="app-loading"><img src="/ram-engineering-logo.png" alt="ר.א.ם הנדסה" /><span>טוען פרויקטים...</span></div>
+  if (!loaded) return <div className="app-loading"><span className="ram-logo-shell loading-logo-shell"><img src="/ram-engineering-logo.png" alt="ר.א.ם הנדסה" width="1024" height="276" decoding="async" fetchPriority="high" /></span><span>טוען פרויקטים...</span></div>
 
   if (selectedProject) return <div className={`app-shell project-mode ${!canEdit ? 'read-only-mode' : ''}`}><Sidebar page={page} setPage={(next) => openPage(next)} workspace={visibleWorkspace} permissions={permissions} open={sidebarOpen} setOpen={setSidebarOpen} user={user} onLogout={() => void signOut()} isDeveloper={isDeveloper} canManageUsers={canManageUsers} /><div className="main"><Topbar search={search} setSearch={setSearch} searchResults={searchResults} urgentCount={urgentCount} onMenu={() => setSidebarOpen(true)} onAttention={openUrgent} saveState={saveState} canEdit={canEdit} /><main className="page-wrap project-page-wrap">{permissionNotice && <div className="error-banner permission-notice" role="alert">{permissionNotice}</div>}<ProjectWorkspace key={selectedProject} projectId={selectedProject} initialTab={projectTab} workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} orgId={orgId} projectPermissions={permissions.projects} taskPermissions={permissions.tasks} calendarPermissions={permissions.calendar} filePermissions={permissions.files} reportPermissions={permissions.reports} communicationPermissions={permissions.communication} onBack={() => openPage('projects')} onClient={permissions.contacts.view ? openClient : undefined} onTabChange={(tab) => { setProjectTab(tab); writeAppRoute({ page: 'projects', projectId: selectedProject, tab }) }} /></main></div></div>
 
@@ -492,7 +492,7 @@ function Sidebar({ page, setPage, workspace, permissions, open, setOpen, user, o
   return <>
     <div className={`sidebar-overlay ${open ? 'show' : ''}`} onClick={() => setOpen(false)} />
     <aside className={`sidebar ${open ? 'open' : ''}`}>
-      <div className="brand"><img src="/ram-engineering-logo.png" alt={workspace.settings.organizationShortName} /><div><strong>{workspace.settings.organizationShortName}</strong><span>RAM Engineering CRM</span></div><button type="button" className="sidebar-close" onClick={() => setOpen(false)} aria-label="סגירת תפריט"><X /></button></div>
+      <div className="brand"><span className="ram-logo-shell sidebar-logo-shell"><img src="/ram-engineering-logo.png" alt={workspace.settings.organizationShortName} width="1024" height="276" decoding="async" fetchPriority="high" /></span><div><strong>{workspace.settings.organizationShortName}</strong><span>RAM Engineering CRM</span></div><button type="button" className="sidebar-close" onClick={() => setOpen(false)} aria-label="סגירת תפריט"><X /></button></div>
       <div className="sidebar-date" aria-label={`${weekday}, ${gregorianDate}`}><strong>{weekday}</strong><span>{gregorianDate}</span></div>
       <nav>{visibleItems.map((item) => {
         const Icon = item.icon
