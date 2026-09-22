@@ -102,6 +102,16 @@ deploy.cmd
 
 ה-CRM לא שומר סיסמאות ולא יודע אותן.
 
+## חיפוש כתובות בישראל
+
+חיפוש הכתובות בפרויקטים עובד בשכבות:
+
+1. **Google Places Autocomplete** כאשר מוגדר `Google Maps / Places API Key` — האפשרות המועדפת לדיוק ברמת רחוב ומספר בית.
+2. **GovMap** של המרכז למיפוי ישראל — חיפוש עברי ממוקד לכתובות בישראל ללא מפתח API.
+3. **OpenStreetMap** כגיבוי אחרון.
+
+כדי להפעיל Google Places, הפעילו בפרויקט Google Cloud את **Places API (New)**, צרו API key שמוגבל ל-Places API והזינו אותו תחת הגדרות המפתח ב-CRM.
+
 ## Google Workspace
 
 כאשר חשבון Google Cloud של הלקוח יהיה זמין:
