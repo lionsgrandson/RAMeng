@@ -33,6 +33,7 @@ export const integrationsApi = {
   createCalendarEvent: (payload: { summary: string; start: string; end?: string; description?: string; location?: string }) => request<{ id: string; htmlLink?: string }>('/api/google/calendar/events', { method: 'POST', body: JSON.stringify(payload) }),
   ensureProjectFolder: (payload: { projectId: string; name: string; parentId?: string }) => request<{ id: string; webViewLink: string }>('/api/google/drive/project-folder', { method: 'POST', body: JSON.stringify(payload) }),
   driveFiles: (folderId: string) => request<{ files: GoogleDriveFile[] }>(`/api/google/drive/files?folderId=${encodeURIComponent(folderId)}`),
+  addressSuggestions: (query: string) => request<{ suggestions: { label: string; value: string }[] }>(`/api/address/suggest?q=${encodeURIComponent(query)}`),
   rewrite: (text: string, mode = 'inspection') => request<{ text: string }>('/api/ai/rewrite', { method: 'POST', body: JSON.stringify({ text, mode }) }),
   inviteUser: (payload: { orgId: string; email: string; name?: string; role: string }) => request<{ ok: true; invited: boolean; existing: boolean; email: string; userId: string }>('/api/users/invite', { method: 'POST', body: JSON.stringify(payload) }),
   adminConfig: () => request<AdminConfig>('/api/admin/config'),
