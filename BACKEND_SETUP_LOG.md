@@ -132,7 +132,17 @@ Secret values are intentionally excluded. Public identifiers may be recorded aft
   - Verified the live developer permission editor displays `Google Workspace — חיבור והגדרה` with grantable View and Edit controls. No user's permissions were changed during verification.
   - Google OAuth credentials remain unconfigured. No passwords, OAuth secrets, access tokens, or refresh tokens were written to this log.
 
+- **2026-09-28 — Production Google Workspace OAuth configuration**
+  - Activated Google Cloud for the company-owned `r-eng.co.il` organization and created the `RAM Engineering CRM` project (`ram-engineering-crm`, project number `282796095113`).
+  - Enabled the Gmail API, Google Calendar API, and Google Drive API.
+  - Configured the Google Auth Platform application as `RAM Engineering CRM` with an Internal audience and the company support/contact email.
+  - Created the production Web OAuth client `RAM Engineering CRM Production` with the authorized callback `https://rameng-crm.rameng-crm-worker.workers.dev/api/google/callback`.
+  - Stored the OAuth Client ID and Client Secret through the live CRM's Google-only setup panel. The Worker keeps the shared credentials server-side in Cloudflare KV; the secret is never returned to the browser and neither credential was written to this log or committed to Git.
+  - Verified the live CRM reports that Google OAuth is configured and enables the one-click Google Workspace connection button.
+  - The Internal audience restricts Google authorization to users in the `r-eng.co.il` Google Workspace organization. Personal Gmail accounts cannot authorize this OAuth application.
+  - No Google Cloud paid trial or billing account was enabled.
+
 ## Pending provider work
 
 - Configure the Supabase Auth site/redirect URLs for any additional production domains if needed.
-- Have a company Google Cloud owner create/select the client project, enable Gmail/Calendar/Drive APIs, configure the consent screen, and create the Web OAuth client for the Worker callback. The developer or a user granted Google Workspace setup permission can enter its Client ID/Secret in the dedicated Google panel.
+- Add any additional production domains to the Google OAuth client's authorized redirect URIs before moving the CRM away from the current Workers URL.
