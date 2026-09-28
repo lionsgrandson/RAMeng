@@ -1,8 +1,9 @@
 import { createClient } from '@supabase/supabase-js'
 
 const CONFIG_KEY = 'rameng:admin-config:v1'
-const GOOGLE_TOKENS_KEY = 'rameng:google-tokens:v1'
+const GOOGLE_TOKENS_PREFIX = 'rameng:google-tokens:v2:'
 const OAUTH_STATE_PREFIX = 'rameng:oauth-state:'
+const PRODUCTION_APP_URL = 'https://rameng-crm.rameng-crm-worker.workers.dev'
 
 const json = (data, status = 200, extraHeaders = {}) => new Response(JSON.stringify(data), {
   status,
@@ -126,6 +127,7 @@ function rolePermissionAllowed(role, permissions, area, action) {
   if (role === 'developer') return true
   const custom = permissions?.[area]?.[action]
   if (typeof custom === 'boolean') return custom
+  if (['connections', 'imports', 'settings'].includes(area)) return false
   if (action === 'view') return ['admin', 'manager', 'assistant', 'inspector', 'engineer', 'viewer', 'reviewer', 'member'].includes(role)
   if (['admin', 'manager'].includes(role)) return true
   if (role === 'assistant') return ['contacts', 'projects', 'tasks', 'calendar', 'files', 'finance', 'communication'].includes(area)
@@ -160,6 +162,12 @@ async function requireAreaAction(request, env, config, area, action) {
   if (!membership || !rolePermissionAllowed(membership.role, membership.permissions, area, action)) {
     throw Object.assign(new Error('אין לחשבון הרשאה לפעולה הזו'), { status: 403 })
   }
+  return user
+}
+
+async function requireGoogleAreaAction(request, env, config, area, action) {
+  const user = await requireAreaAction(request, env, config, area, action)
+  await requireAreaAction(request, env, config, 'connections', 'view')
   return user
 }
 
@@ -201,19 +209,33 @@ function redirectUri(request) {
   return `${new URL(request.url).origin}/api/google/callback`
 }
 
-async function googleTokens(env) {
-  return (await env.CONFIG.get(GOOGLE_TOKENS_KEY, 'json')) || null
+function localizedExternalError(value, fallback) {
+  const message = cleanString(value)
+  return /[\u0590-\u05ff]/.test(message) ? message : fallback
 }
 
-async function putGoogleTokens(env, tokens) {
-  await env.CONFIG.put(GOOGLE_TOKENS_KEY, JSON.stringify(tokens))
+function inviteRedirectUri(request) {
+  const origin = new URL(request.url).origin
+  return /localhost|127\.0\.0\.1/i.test(origin) ? `${PRODUCTION_APP_URL}/?invite=1` : `${origin}/?invite=1`
 }
 
-async function validGoogleAccessToken(env, config) {
-  const stored = await googleTokens(env)
-  if (!stored?.refresh_token && !stored?.access_token) throw Object.assign(new Error('Google Workspace עדיין לא מחובר'), { status: 409 })
+function googleTokensKey(userId) {
+  return `${GOOGLE_TOKENS_PREFIX}${userId}`
+}
+
+async function googleTokens(env, userId) {
+  return (await env.CONFIG.get(googleTokensKey(userId), 'json')) || null
+}
+
+async function putGoogleTokens(env, userId, tokens) {
+  await env.CONFIG.put(googleTokensKey(userId), JSON.stringify(tokens))
+}
+
+async function validGoogleAccessToken(env, config, userId) {
+  const stored = await googleTokens(env, userId)
+  if (!stored?.refresh_token && !stored?.access_token) throw Object.assign(new Error('Google Workspace עדיין לא מחובר לחשבון שלך'), { status: 409 })
   if (stored.access_token && Number(stored.expires_at || 0) > Date.now() + 60_000) return stored.access_token
-  if (!stored.refresh_token) throw Object.assign(new Error('חיבור Google פג. יש להתחבר מחדש ממנהל המערכת.'), { status: 409 })
+  if (!stored.refresh_token) throw Object.assign(new Error('חיבור Google שלך פג. יש להתחבר מחדש בהגדרות.'), { status: 409 })
   const response = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
@@ -225,23 +247,23 @@ async function validGoogleAccessToken(env, config) {
     }),
   })
   const body = await response.json()
-  if (!response.ok || !body.access_token) throw Object.assign(new Error(body.error_description || 'לא ניתן לרענן את חיבור Google'), { status: 502 })
+  if (!response.ok || !body.access_token) throw Object.assign(new Error(localizedExternalError(body.error_description, 'לא ניתן לרענן את חיבור Google')), { status: 502 })
   const next = { ...stored, access_token: body.access_token, expires_at: Date.now() + Number(body.expires_in || 3600) * 1000 }
-  await putGoogleTokens(env, next)
+  await putGoogleTokens(env, userId, next)
   return next.access_token
 }
 
-async function googleFetch(env, config, url, init = {}) {
-  const token = await validGoogleAccessToken(env, config)
+async function googleFetch(env, config, userId, url, init = {}) {
+  const token = await validGoogleAccessToken(env, config, userId)
   const response = await fetch(url, {
     ...init,
     headers: { authorization: `Bearer ${token}`, ...(init.headers || {}) },
   })
   if (response.status === 401) {
-    const stored = await googleTokens(env)
+    const stored = await googleTokens(env, userId)
     if (stored) {
       stored.expires_at = 0
-      await putGoogleTokens(env, stored)
+      await putGoogleTokens(env, userId, stored)
     }
   }
   return response
@@ -319,8 +341,8 @@ function normalizeGmailMessage(message) {
 }
 
 async function handleGoogleAuthUrl(request, env, config) {
-  const user = await requireDeveloper(request, env, config)
-  if (!config.googleClientId || !config.googleClientSecret) throw Object.assign(new Error('יש להזין Google OAuth Client ID ו-Client Secret לפני החיבור'), { status: 400 })
+  const user = await requireAreaAction(request, env, config, 'connections', 'view')
+  if (!config.googleClientId || !config.googleClientSecret) throw Object.assign(new Error('חיבור Google Workspace טרם הוגדר עבור הארגון'), { status: 503 })
   const state = crypto.randomUUID()
   await env.CONFIG.put(`${OAUTH_STATE_PREFIX}${state}`, JSON.stringify({ userId: user.id, email: user.email || '', createdAt: Date.now() }), { expirationTtl: 600 })
   const params = new URLSearchParams({
@@ -347,11 +369,11 @@ async function handleGoogleCallback(request, env, config) {
   const code = url.searchParams.get('code') || ''
   const state = url.searchParams.get('state') || ''
   const oauthError = url.searchParams.get('error')
-  if (oauthError) return new Response(`Google OAuth error: ${oauthError}`, { status: 400 })
-  if (!code || !state) return new Response('Missing OAuth code/state', { status: 400 })
+  if (oauthError) return new Response('חיבור Google בוטל או נכשל.', { status: 400 })
+  if (!code || !state) return new Response('חסרים קוד או מזהה אימות של Google.', { status: 400 })
   const stateKey = `${OAUTH_STATE_PREFIX}${state}`
   const stateData = await env.CONFIG.get(stateKey, 'json')
-  if (!stateData) return new Response('OAuth state expired or invalid', { status: 400 })
+  if (!stateData?.userId) return new Response('בקשת החיבור פגה או אינה תקפה.', { status: 400 })
   await env.CONFIG.delete(stateKey)
 
   const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
@@ -366,9 +388,9 @@ async function handleGoogleCallback(request, env, config) {
     }),
   })
   const tokenBody = await tokenResponse.json()
-  if (!tokenResponse.ok || !tokenBody.access_token) return new Response(tokenBody.error_description || 'Google token exchange failed', { status: 502 })
+  if (!tokenResponse.ok || !tokenBody.access_token) return new Response('לא ניתן להשלים את חיבור Google.', { status: 502 })
 
-  const previous = await googleTokens(env)
+  const previous = await googleTokens(env, stateData.userId)
   let email = ''
   const profileResponse = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/profile', { headers: { authorization: `Bearer ${tokenBody.access_token}` } })
   if (profileResponse.ok) email = String((await profileResponse.json()).emailAddress || '')
@@ -381,31 +403,31 @@ async function handleGoogleCallback(request, env, config) {
     connectedBy: stateData.email || '',
     connectedAt: new Date().toISOString(),
   }
-  await putGoogleTokens(env, stored)
-  return Response.redirect(`${url.origin}/?google=connected`, 302)
+  await putGoogleTokens(env, stateData.userId, stored)
+  return Response.redirect(`${url.origin}/?google=connected#app?page=settings`, 302)
 }
 
 async function handleGmailThread(request, env, config) {
-  await requireAreaAction(request, env, config, 'communication', 'view')
+  const user = await requireGoogleAreaAction(request, env, config, 'communication', 'view')
   const threadId = new URL(request.url).searchParams.get('threadId') || ''
-  if (!threadId) throw Object.assign(new Error('חסר threadId'), { status: 400 })
-  const response = await googleFetch(env, config, `https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(threadId)}?format=full`)
+  if (!threadId) throw Object.assign(new Error('חסר מזהה שרשור'), { status: 400 })
+  const response = await googleFetch(env, config, user.id, `https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(threadId)}?format=full`)
   const body = await response.json()
-  if (!response.ok) throw Object.assign(new Error(body.error?.message || 'טעינת שרשור Gmail נכשלה'), { status: response.status })
+  if (!response.ok) throw Object.assign(new Error(localizedExternalError(body.error?.message, 'טעינת שרשור Gmail נכשלה')), { status: response.status })
   return apiJson(request, { messages: (body.messages || []).map(normalizeGmailMessage) })
 }
 
 async function handleGmailSearch(request, env, config) {
-  await requireAreaAction(request, env, config, 'communication', 'view')
+  const user = await requireGoogleAreaAction(request, env, config, 'communication', 'view')
   const query = new URL(request.url).searchParams.get('q') || ''
   const listUrl = new URL('https://gmail.googleapis.com/gmail/v1/users/me/threads')
   if (query) listUrl.searchParams.set('q', query)
   listUrl.searchParams.set('maxResults', '20')
-  const response = await googleFetch(env, config, listUrl.toString())
+  const response = await googleFetch(env, config, user.id, listUrl.toString())
   const body = await response.json()
-  if (!response.ok) throw Object.assign(new Error(body.error?.message || 'חיפוש Gmail נכשל'), { status: response.status })
+  if (!response.ok) throw Object.assign(new Error(localizedExternalError(body.error?.message, 'חיפוש Gmail נכשל')), { status: response.status })
   const summaries = await Promise.all((body.threads || []).slice(0, 20).map(async (thread) => {
-    const detail = await googleFetch(env, config, `https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(thread.id)}?format=metadata&metadataHeaders=Subject&metadataHeaders=From`)
+    const detail = await googleFetch(env, config, user.id, `https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(thread.id)}?format=metadata&metadataHeaders=Subject&metadataHeaders=From`)
     if (!detail.ok) return { id: thread.id, snippet: thread.snippet || '' }
     const detailBody = await detail.json()
     const messages = detailBody.messages || []
@@ -417,7 +439,7 @@ async function handleGmailSearch(request, env, config) {
 }
 
 async function handleGmailSend(request, env, config) {
-  await requireAreaAction(request, env, config, 'communication', 'create')
+  const user = await requireGoogleAreaAction(request, env, config, 'communication', 'create')
   const body = await parseBody(request)
   const to = cleanString(body.to)
   const subject = cleanString(body.subject)
@@ -436,18 +458,18 @@ async function handleGmailSend(request, env, config) {
     encodedBody,
   ].join('\r\n')
   const payload = { raw: utf8ToBase64Url(rfc822), ...(threadId ? { threadId } : {}) }
-  const response = await googleFetch(env, config, 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
+  const response = await googleFetch(env, config, user.id, 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(payload),
   })
   const result = await response.json()
-  if (!response.ok) throw Object.assign(new Error(result.error?.message || 'שליחת Gmail נכשלה'), { status: response.status })
+  if (!response.ok) throw Object.assign(new Error(localizedExternalError(result.error?.message, 'שליחת Gmail נכשלה')), { status: response.status })
   return apiJson(request, { id: result.id, threadId: result.threadId })
 }
 
 async function handleCalendarList(request, env, config) {
-  await requireAreaAction(request, env, config, 'calendar', 'view')
+  const user = await requireGoogleAreaAction(request, env, config, 'calendar', 'view')
   const url = new URL(request.url)
   const apiUrl = new URL('https://www.googleapis.com/calendar/v3/calendars/primary/events')
   apiUrl.searchParams.set('singleEvents', 'true')
@@ -457,9 +479,9 @@ async function handleCalendarList(request, env, config) {
   const to = url.searchParams.get('to') || ''
   apiUrl.searchParams.set('timeMin', new Date(from).toISOString())
   if (to) apiUrl.searchParams.set('timeMax', new Date(to).toISOString())
-  const response = await googleFetch(env, config, apiUrl.toString())
+  const response = await googleFetch(env, config, user.id, apiUrl.toString())
   const body = await response.json()
-  if (!response.ok) throw Object.assign(new Error(body.error?.message || 'טעינת Google Calendar נכשלה'), { status: response.status })
+  if (!response.ok) throw Object.assign(new Error(localizedExternalError(body.error?.message, 'טעינת יומן Google נכשלה')), { status: response.status })
   return apiJson(request, { items: (body.items || []).map((item) => ({ id: item.id, summary: item.summary || '(ללא כותרת)', start: item.start?.dateTime || item.start?.date || '', end: item.end?.dateTime || item.end?.date || '', htmlLink: item.htmlLink || '', location: item.location || '' })) })
 }
 
@@ -470,7 +492,7 @@ function isoWithDefaultEnd(start, end) {
 }
 
 async function handleCalendarCreate(request, env, config) {
-  await requireAreaAction(request, env, config, 'calendar', 'create')
+  const user = await requireGoogleAreaAction(request, env, config, 'calendar', 'create')
   const body = await parseBody(request)
   const summary = cleanString(body.summary)
   const start = cleanString(body.start)
@@ -482,13 +504,13 @@ async function handleCalendarCreate(request, env, config) {
     start: { dateTime: new Date(start).toISOString(), timeZone: 'Asia/Jerusalem' },
     end: { dateTime: isoWithDefaultEnd(start, cleanString(body.end)), timeZone: 'Asia/Jerusalem' },
   }
-  const response = await googleFetch(env, config, 'https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+  const response = await googleFetch(env, config, user.id, 'https://www.googleapis.com/calendar/v3/calendars/primary/events', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(event),
   })
   const result = await response.json()
-  if (!response.ok) throw Object.assign(new Error(result.error?.message || 'יצירת אירוע Google נכשלה'), { status: response.status })
+  if (!response.ok) throw Object.assign(new Error(localizedExternalError(result.error?.message, 'יצירת האירוע ביומן Google נכשלה')), { status: response.status })
   return apiJson(request, { id: result.id, htmlLink: result.htmlLink || '' })
 }
 
@@ -497,23 +519,23 @@ function escapeDriveQuery(value) {
 }
 
 async function handleDriveProjectFolder(request, env, config) {
-  await requireAreaAction(request, env, config, 'files', 'create')
+  const user = await requireGoogleAreaAction(request, env, config, 'files', 'create')
   const body = await parseBody(request)
   const projectId = cleanString(body.projectId)
   const name = cleanString(body.name)
-  const parentId = cleanString(body.parentId) || cleanString(config.driveRootFolderId) || 'root'
-  if (!projectId || !name) throw Object.assign(new Error('חסרים projectId או שם פרויקט'), { status: 400 })
+  const parentId = cleanString(body.parentId) || 'root'
+  if (!projectId || !name) throw Object.assign(new Error('חסרים מזהה פרויקט או שם פרויקט'), { status: 400 })
 
   const search = new URL('https://www.googleapis.com/drive/v3/files')
   search.searchParams.set('q', `'${escapeDriveQuery(parentId)}' in parents and name='${escapeDriveQuery(name)}' and mimeType='application/vnd.google-apps.folder' and trashed=false`)
   search.searchParams.set('fields', 'files(id,name,webViewLink)')
   search.searchParams.set('pageSize', '10')
-  const searchResponse = await googleFetch(env, config, search.toString())
+  const searchResponse = await googleFetch(env, config, user.id, search.toString())
   const searchBody = await searchResponse.json()
-  if (!searchResponse.ok) throw Object.assign(new Error(searchBody.error?.message || 'חיפוש תיקיית Drive נכשל'), { status: searchResponse.status })
+  if (!searchResponse.ok) throw Object.assign(new Error(localizedExternalError(searchBody.error?.message, 'חיפוש התיקייה ב-Drive נכשל')), { status: searchResponse.status })
   if (searchBody.files?.[0]) return apiJson(request, { id: searchBody.files[0].id, webViewLink: searchBody.files[0].webViewLink || `https://drive.google.com/drive/folders/${searchBody.files[0].id}` })
 
-  const response = await googleFetch(env, config, 'https://www.googleapis.com/drive/v3/files?fields=id,name,webViewLink', {
+  const response = await googleFetch(env, config, user.id, 'https://www.googleapis.com/drive/v3/files?fields=id,name,webViewLink', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
@@ -524,22 +546,22 @@ async function handleDriveProjectFolder(request, env, config) {
     }),
   })
   const result = await response.json()
-  if (!response.ok) throw Object.assign(new Error(result.error?.message || 'יצירת תיקיית Drive נכשלה'), { status: response.status })
+  if (!response.ok) throw Object.assign(new Error(localizedExternalError(result.error?.message, 'יצירת התיקייה ב-Drive נכשלה')), { status: response.status })
   return apiJson(request, { id: result.id, webViewLink: result.webViewLink || `https://drive.google.com/drive/folders/${result.id}` })
 }
 
 async function handleDriveFiles(request, env, config) {
-  await requireAreaAction(request, env, config, 'files', 'view')
+  const user = await requireGoogleAreaAction(request, env, config, 'files', 'view')
   const folderId = new URL(request.url).searchParams.get('folderId') || ''
-  if (!folderId) throw Object.assign(new Error('חסר folderId'), { status: 400 })
+  if (!folderId) throw Object.assign(new Error('חסר מזהה תיקייה'), { status: 400 })
   const url = new URL('https://www.googleapis.com/drive/v3/files')
   url.searchParams.set('q', `'${escapeDriveQuery(folderId)}' in parents and trashed=false`)
   url.searchParams.set('orderBy', 'modifiedTime desc')
   url.searchParams.set('pageSize', '100')
   url.searchParams.set('fields', 'files(id,name,mimeType,modifiedTime,webViewLink,size)')
-  const response = await googleFetch(env, config, url.toString())
+  const response = await googleFetch(env, config, user.id, url.toString())
   const body = await response.json()
-  if (!response.ok) throw Object.assign(new Error(body.error?.message || 'טעינת קבצי Drive נכשלה'), { status: response.status })
+  if (!response.ok) throw Object.assign(new Error(localizedExternalError(body.error?.message, 'טעינת הקבצים מ-Drive נכשלה')), { status: response.status })
   return apiJson(request, { files: body.files || [] })
 }
 
@@ -669,7 +691,7 @@ async function handleAiRewrite(request, env, config) {
     body: JSON.stringify({ model: config.openaiModel || 'gpt-5.6-terra', instructions, input: text, reasoning: { effort: 'low' } }),
   })
   const result = await response.json()
-  if (!response.ok) throw Object.assign(new Error(result.error?.message || 'שגיאה בחיבור ל-OpenAI'), { status: response.status })
+  if (!response.ok) throw Object.assign(new Error(localizedExternalError(result.error?.message, 'שגיאה בחיבור לשירות הבינה המלאכותית')), { status: response.status })
   const outputText = (result.output || []).flatMap((item) => item.content || []).filter((item) => item.type === 'output_text').map((item) => item.text).join('\n').trim()
   if (!outputText) throw Object.assign(new Error('OpenAI לא החזיר טקסט'), { status: 502 })
   return apiJson(request, { text: outputText })
@@ -688,7 +710,7 @@ async function handleUserInvite(request, env, config) {
   const admin = supabaseAdmin(env, config)
 
   const listResult = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 })
-  if (listResult.error) throw Object.assign(new Error(listResult.error.message || 'לא ניתן לבדוק משתמשים ב-Supabase'), { status: 502 })
+  if (listResult.error) throw Object.assign(new Error('לא ניתן לבדוק את רשימת המשתמשים'), { status: 502 })
   let targetUser = (listResult.data.users || []).find((item) => String(item.email || '').toLowerCase() === email)
   const existed = Boolean(targetUser)
   let invited = false
@@ -696,9 +718,9 @@ async function handleUserInvite(request, env, config) {
   if (!targetUser) {
     const invite = await admin.auth.admin.inviteUserByEmail(email, {
       data: name ? { full_name: name } : undefined,
-      redirectTo: `${new URL(request.url).origin}/?invite=1`,
+      redirectTo: inviteRedirectUri(request),
     })
-    if (invite.error || !invite.data.user) throw Object.assign(new Error(invite.error?.message || 'שליחת ההזמנה נכשלה'), { status: 502 })
+    if (invite.error || !invite.data.user) throw Object.assign(new Error('שליחת ההזמנה נכשלה'), { status: 502 })
     targetUser = invite.data.user
     invited = true
   } else if (name && !targetUser.user_metadata?.full_name) {
@@ -708,9 +730,49 @@ async function handleUserInvite(request, env, config) {
 
   const role = developerEmails(config).includes(email) ? 'developer' : requestedRole
   const membership = await admin.from('memberships').upsert({ org_id: orgId, user_id: targetUser.id, role }, { onConflict: 'org_id,user_id' })
-  if (membership.error) throw Object.assign(new Error(membership.error.message || 'לא ניתן לשייך את המשתמש לארגון'), { status: 502 })
+  if (membership.error) throw Object.assign(new Error('לא ניתן לשייך את המשתמש לארגון'), { status: 502 })
 
   return apiJson(request, { ok: true, invited, existing: existed, email, userId: targetUser.id, role })
+}
+
+async function managedOrganizationUser(request, env, config, body) {
+  const orgId = cleanString(body.orgId)
+  const userId = cleanString(body.userId)
+  if (!orgId || !userId) throw Object.assign(new Error('חסרים פרטי המשתמש או הארגון'), { status: 400 })
+
+  const actor = await requireOrgManager(request, env, config, orgId)
+  const admin = supabaseAdmin(env, config)
+  const membership = await admin.from('memberships').select('user_id, role').eq('org_id', orgId).eq('user_id', userId).maybeSingle()
+  if (membership.error || !membership.data) throw Object.assign(new Error('המשתמש אינו משויך לארגון הזה'), { status: 404 })
+
+  const target = await admin.auth.admin.getUserById(userId)
+  if (target.error || !target.data.user) throw Object.assign(new Error('המשתמש לא נמצא'), { status: 404 })
+  return { actor, admin, membership: membership.data, targetUser: target.data.user }
+}
+
+async function handleUserPasswordReset(request, env, config) {
+  const body = await parseBody(request)
+  const { admin, targetUser } = await managedOrganizationUser(request, env, config, body)
+  const email = cleanString(targetUser.email).toLowerCase()
+  if (!email) throw Object.assign(new Error('לא מוגדרת כתובת מייל למשתמש הזה'), { status: 409 })
+
+  const result = await admin.auth.resetPasswordForEmail(email, { redirectTo: inviteRedirectUri(request) })
+  if (result.error) throw Object.assign(new Error('שליחת הקישור לאיפוס הסיסמה נכשלה'), { status: 502 })
+  return apiJson(request, { ok: true, email })
+}
+
+async function handleUserDelete(request, env, config) {
+  const body = await parseBody(request)
+  const { actor, admin, membership, targetUser } = await managedOrganizationUser(request, env, config, body)
+  const email = cleanString(targetUser.email).toLowerCase()
+  if (actor.id === targetUser.id) throw Object.assign(new Error('לא ניתן למחוק את החשבון שמחובר כעת'), { status: 409 })
+  if (membership.role === 'developer' || developerEmails(config).includes(email)) {
+    throw Object.assign(new Error('לא ניתן למחוק את חשבון המפתח המוגן'), { status: 403 })
+  }
+
+  const result = await admin.auth.admin.deleteUser(targetUser.id)
+  if (result.error) throw Object.assign(new Error('מחיקת המשתמש נכשלה. אם המשתמש העלה קבצים, יש להעביר או למחוק אותם תחילה.'), { status: 502 })
+  return apiJson(request, { ok: true, email })
 }
 
 async function handleAdminBootstrap(request, env) {
@@ -722,7 +784,7 @@ async function handleAdminBootstrap(request, env) {
   const supabaseUrl = cleanString(body.supabaseUrl).replace(/\/$/, '')
   const supabaseAnonKey = cleanString(body.supabaseAnonKey)
   const adminEmails = cleanEmails(body.adminEmails)
-  if (!/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(supabaseUrl) || supabaseAnonKey.length < 40 || !adminEmails.length) throw Object.assign(new Error('יש להזין Supabase URL, anon key ומייל מפתח תקינים'), { status: 400 })
+  if (!/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(supabaseUrl) || supabaseAnonKey.length < 40 || !adminEmails.length) throw Object.assign(new Error('יש להזין כתובת Supabase, מפתח ציבורי ומייל מפתח תקינים'), { status: 400 })
   const next = {
     organizationName: cleanString(body.organizationName) || 'ר.א.ם הנדסה',
     supabaseUrl,
@@ -756,7 +818,7 @@ async function handleAdminConfig(request, env, config) {
       driveRootFolderId: config.driveRootFolderId || '',
     })
   }
-  if (request.method !== 'PUT') throw Object.assign(new Error('Method not allowed'), { status: 405 })
+  if (request.method !== 'PUT') throw Object.assign(new Error('שיטת הבקשה אינה נתמכת'), { status: 405 })
   const body = await parseBody(request)
   const next = { ...config }
   for (const key of ['organizationName', 'supabaseUrl', 'supabaseAnonKey', 'googleClientId', 'openaiModel', 'driveRootFolderId']) {
@@ -771,12 +833,43 @@ async function handleAdminConfig(request, env, config) {
   return apiJson(request, { ok: true })
 }
 
+async function handleGoogleConfig(request, env, config) {
+  await requireAreaAction(request, env, config, 'connections', 'edit')
+  if (request.method === 'GET') {
+    return apiJson(request, {
+      clientId: config.googleClientId || '',
+      secretConfigured: Boolean(config.googleClientSecret),
+      redirectUri: redirectUri(request),
+    })
+  }
+  if (request.method !== 'PUT') throw Object.assign(new Error('שיטת הבקשה אינה נתמכת'), { status: 405 })
+
+  const body = await parseBody(request)
+  const clientId = cleanString(body.clientId)
+  const clientSecret = cleanString(body.clientSecret)
+  if (!/^[a-z0-9-]+\.apps\.googleusercontent\.com$/i.test(clientId)) {
+    throw Object.assign(new Error('יש להזין מזהה לקוח תקין של Google OAuth'), { status: 400 })
+  }
+  if (!clientSecret && !config.googleClientSecret) {
+    throw Object.assign(new Error('יש להזין סוד לקוח של Google OAuth בשמירה הראשונה'), { status: 400 })
+  }
+
+  const next = { ...config, googleClientId: clientId, updatedAt: new Date().toISOString() }
+  if (clientSecret) next.googleClientSecret = clientSecret
+  await saveConfig(env, next)
+  return apiJson(request, { ok: true, configured: Boolean(next.googleClientId && next.googleClientSecret) })
+}
+
 async function handleStatus(request, env, config) {
-  await requireUser(request, env, config)
-  const tokens = await googleTokens(env)
+  const user = await requireAreaAction(request, env, config, 'connections', 'view')
+  const tokens = await googleTokens(env, user.id)
   return apiJson(request, {
     configured: Boolean(config.supabaseUrl && config.supabaseAnonKey),
-    google: { connected: Boolean(tokens?.refresh_token || (tokens?.access_token && Number(tokens.expires_at || 0) > Date.now())), email: tokens?.email || '' },
+    google: {
+      configured: Boolean(config.googleClientId && config.googleClientSecret),
+      connected: Boolean(tokens?.refresh_token || (tokens?.access_token && Number(tokens.expires_at || 0) > Date.now())),
+      email: tokens?.email || '',
+    },
     openai: { configured: Boolean(config.openaiApiKey) },
     users: { invitationsConfigured: Boolean(cleanString(env.SUPABASE_SECRET_KEY)) },
   })
@@ -793,7 +886,10 @@ async function routeApi(request, env) {
   if (path === '/api/google/callback' && request.method === 'GET') return handleGoogleCallback(request, env, config)
   if (path === '/api/admin/config') return handleAdminConfig(request, env, config)
   if (path === '/api/users/invite' && request.method === 'POST') return handleUserInvite(request, env, config)
+  if (path === '/api/users/password-reset' && request.method === 'POST') return handleUserPasswordReset(request, env, config)
+  if (path === '/api/users/delete' && request.method === 'POST') return handleUserDelete(request, env, config)
   if (path === '/api/integrations/status' && request.method === 'GET') return handleStatus(request, env, config)
+  if (path === '/api/google/config' && ['GET', 'PUT'].includes(request.method)) return handleGoogleConfig(request, env, config)
   if (path === '/api/google/auth-url' && request.method === 'GET') return handleGoogleAuthUrl(request, env, config)
   if (path === '/api/google/gmail/thread' && request.method === 'GET') return handleGmailThread(request, env, config)
   if (path === '/api/google/gmail/search' && request.method === 'GET') return handleGmailSearch(request, env, config)
@@ -804,7 +900,7 @@ async function routeApi(request, env) {
   if (path === '/api/google/drive/files' && request.method === 'GET') return handleDriveFiles(request, env, config)
   if (path === '/api/address/suggest' && request.method === 'GET') return handleAddressSuggest(request, env, config)
   if (path === '/api/ai/rewrite' && request.method === 'POST') return handleAiRewrite(request, env, config)
-  return apiJson(request, { error: 'API route not found' }, 404)
+  return apiJson(request, { error: 'כתובת השירות לא נמצאה' }, 404)
 }
 
 export default {

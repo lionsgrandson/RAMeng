@@ -8,6 +8,16 @@ export interface RuntimeConfig {
   developerEmails?: string[]
 }
 
+// Auth emails must never send a real user to a local development server.
+// Production keeps the current origin so a future custom domain continues to work.
+export const PRODUCTION_APP_URL = 'https://rameng-crm.rameng-crm-worker.workers.dev'
+
+export function authRedirectUrl(path = '/?invite=1') {
+  const origin = typeof window !== 'undefined' ? window.location.origin : ''
+  const isLocal = /^(https?:\/\/)(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)
+  return `${isLocal || !origin ? PRODUCTION_APP_URL : origin}${path.startsWith('/') ? path : `/${path}`}`
+}
+
 const developerEmails = String(import.meta.env.VITE_DEVELOPER_EMAILS || '')
   .split(',')
   .map((value) => value.trim().toLowerCase())

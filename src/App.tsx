@@ -116,6 +116,8 @@ const pagePermissionArea: Partial<Record<Page, PermissionArea>> = {
   'reports-finance': 'finance',
   ai: 'communication',
   transcription: 'communication',
+  imports: 'imports',
+  settings: 'settings',
 }
 
 const changedEntity = (before: unknown, after: unknown) => {
@@ -280,12 +282,12 @@ export default function App() {
 
   const canManageUsers = isDeveloper || role === 'developer' || role === 'admin' || role === 'manager'
   const permissions = useMemo(() => normalizePermissions(role, customPermissions, isDeveloper), [role, customPermissions, isDeveloper])
-  const canViewAdminData = (isDeveloper || ['developer', 'admin', 'manager'].includes(role)) && permissionAreas.every((area) => permissions[area].view)
+  const canViewAdminData = (isDeveloper || ['developer', 'admin', 'manager'].includes(role)) && permissionAreas.filter((area) => area !== 'connections' && area !== 'imports' && area !== 'settings').every((area) => permissions[area].view)
   const canEdit = hasAnyWritePermission(permissions) || canManageUsers || isDeveloper
   const canViewPage = (target: Page) => {
     if (target === 'overview') return true
-    if (target === 'settings') return isDeveloper
-    if (target === 'team' || target === 'imports') return canManageUsers
+    if (target === 'team') return canManageUsers
+    if (target === 'settings') return isDeveloper || permissions.connections.view || permissions.settings.view
     const area = pagePermissionArea[target]
     return area ? permissions[area].view : true
   }
@@ -457,8 +459,8 @@ export default function App() {
         {page === 'ai' && <ModulePlaceholder icon={<Bot />} title="סוכן AI" text="המודול נוסף לניווט ומוכן לחיבור לזרימות העבודה של ראם. חיבור פעולות AI בפועל ייעשה רק לפי האפיון המאושר." />}
         {page === 'transcription' && <ModulePlaceholder icon={<AudioLines />} title="תמלול" text="המודול נוסף לניווט כנקודת כניסה לתמלול פגישות והקלטות. תהליך התמלול והפקת המשימות יחובר לפי האפיון המאושר." />}
         {page === 'team' && canManageUsers && <UserManagement orgId={orgId} canManage={canManageUsers} isDeveloper={isDeveloper} workspace={workspace} setWorkspace={editableSetWorkspace} />}
-        {page === 'imports' && canManageUsers && <ImportCenter workspace={workspace} setWorkspace={editableSetWorkspace} />}
-        {page === 'settings' && isDeveloper && <SettingsPage workspace={workspace} setWorkspace={editableSetWorkspace} />}
+        {page === 'imports' && permissions.imports.view && <ImportCenter workspace={workspace} setWorkspace={editableSetWorkspace} canImport={permissions.imports.create} />}
+        {page === 'settings' && <SettingsPage workspace={workspace} setWorkspace={editableSetWorkspace} canConnectGoogle={permissions.connections.view} canConfigureGoogle={permissions.connections.edit} canViewOrganization={permissions.settings.view} canEditOrganization={permissions.settings.edit} isDeveloper={isDeveloper} />}
       </main>
     </div>
   </div>
@@ -476,8 +478,8 @@ function Sidebar({ page, setPage, workspace, permissions, open, setOpen, user, o
   }, [])
 
   const visibleItems = navItems.filter((item) => {
-    if (item.id === 'settings') return isDeveloper
-    if (item.id === 'team' || item.id === 'imports') return canManageUsers
+    if (item.id === 'team') return canManageUsers
+    if (item.id === 'settings') return isDeveloper || permissions.connections.view || permissions.settings.view
     if (item.id === 'reports') return permissions.reports.view || permissions.finance.view
     const area = pagePermissionArea[item.id]
     return area ? permissions[area].view : true

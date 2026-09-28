@@ -111,6 +111,10 @@ begin
     return custom_value::boolean;
   end if;
 
+  if target_area in ('connections','imports','settings') then
+    return false;
+  end if;
+
   if target_action = 'view' then
     return user_role in ('admin','manager','assistant','inspector','engineer','viewer','reviewer','member');
   end if;
@@ -529,8 +533,8 @@ begin
     end if;
 
     if changed_key = 'settings' then
-      if caller_role <> 'developer' then
-        raise exception 'Only the developer can change system settings';
+      if not public.workspace_permission_allowed(caller_role, caller_permissions, 'settings', 'edit') then
+        raise exception 'Permission denied: edit in settings';
       end if;
       continue;
     end if;
@@ -801,6 +805,7 @@ as $$
 declare
   caller_role text;
   target_role text;
+  existing_target_permissions jsonb;
   area_entry record;
   action_entry record;
 begin
@@ -814,7 +819,7 @@ begin
     raise exception 'Only an administrator can manage users';
   end if;
 
-  select role into target_role
+  select role, permissions into target_role, existing_target_permissions
   from public.memberships
   where org_id = target_org
     and user_id = target_user
@@ -834,7 +839,7 @@ begin
     end if;
 
     for area_entry in select key, value from jsonb_each(target_permissions) loop
-      if area_entry.key not in ('contacts','projects','tasks','calendar','files','reports','finance','communication') then
+      if area_entry.key not in ('contacts','projects','tasks','calendar','files','reports','finance','communication','connections','imports','settings') then
         raise exception 'Invalid permission area: %', area_entry.key;
       end if;
       if jsonb_typeof(area_entry.value) <> 'object' then
@@ -846,6 +851,12 @@ begin
         end if;
         if jsonb_typeof(action_entry.value) <> 'boolean' then
           raise exception 'Permission % in % must be boolean', action_entry.key, area_entry.key;
+        end if;
+        if caller_role <> 'developer'
+          and area_entry.key in ('connections','imports','settings')
+          and action_entry.value = 'true'::jsonb
+          and coalesce(existing_target_permissions #> array[area_entry.key, action_entry.key], 'false'::jsonb) <> 'true'::jsonb then
+          raise exception 'Only the developer can grant Google connection, import, or settings permissions';
         end if;
       end loop;
     end loop;

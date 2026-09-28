@@ -60,13 +60,7 @@ In Supabase go to Authentication > URL Configuration.
 Set the production Site URL to the final CRM URL and allow the invite callback URL:
 
 ```text
-https://YOUR-CRM-DOMAIN/?invite=1
-```
-
-For local invitation testing you can also allow:
-
-```text
-http://localhost:5173/?invite=1
+https://rameng-crm.rameng-crm-worker.workers.dev/?invite=1
 ```
 
 Keep public self-signup disabled. Users should be invited from the CRM.
@@ -104,13 +98,18 @@ Delete or disable the test user after verification.
 
 ## Google synchronization later
 
-In the client Google Cloud project enable Gmail API, Google Calendar API and Google Drive API. Create one OAuth Web Application and add:
+In a company-controlled Google Cloud project, enable Gmail API, Google Calendar API and Google Drive API. Configure the OAuth consent screen and create one OAuth Web Application. Google requires this OAuth client to be created manually in Google Cloud Console; the CRM cannot create it automatically. Add this exact authorized redirect URI:
 
 ```text
-https://YOUR-CRM-DOMAIN/api/google/callback
+https://rameng-crm.rameng-crm-worker.workers.dev/api/google/callback
 ```
 
-Then enter the Client ID and Client Secret from the developer-only CRM settings and connect the company Google account.
+The developer can grant a trusted user `Google Workspace — connection and setup` permissions from Users → Permissions:
+
+- `View` allows that user to connect their own Google account.
+- `Edit` also displays the dedicated Google-only setup panel, where the user can enter the Client ID and Client Secret. It does not expose Supabase, code, or other infrastructure settings.
+
+After the shared OAuth application is configured once, every CRM user with `View` permission connects their own Google account using the single Google sign-in button. Tokens are isolated by Supabase user ID; Gmail, Calendar, and Drive actions always use the currently signed-in user's Google account.
 
 ## Normal update flow after production is configured
 

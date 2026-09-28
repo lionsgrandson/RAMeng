@@ -1,6 +1,6 @@
 import type { Workspace } from '../types'
 
-export const permissionAreas = ['contacts', 'projects', 'tasks', 'calendar', 'files', 'reports', 'finance', 'communication'] as const
+export const permissionAreas = ['contacts', 'projects', 'tasks', 'calendar', 'files', 'reports', 'finance', 'communication', 'connections', 'imports', 'settings'] as const
 export const permissionActions = ['view', 'create', 'edit', 'status', 'delete'] as const
 
 export type PermissionArea = typeof permissionAreas[number]
@@ -18,6 +18,9 @@ export const permissionAreaLabels: Record<PermissionArea, string> = {
   reports: 'דוחות',
   finance: 'כספים והצעות מחיר',
   communication: 'תקשורת והערות',
+  connections: 'Google Workspace — חיבור והגדרה',
+  imports: 'ייבוא נתונים',
+  settings: 'הגדרות חברה',
 }
 
 export const permissionActionLabels: Record<PermissionAction, string> = {
@@ -30,14 +33,30 @@ export const permissionActionLabels: Record<PermissionAction, string> = {
 
 const fullArea = (): AreaPermissions => ({ view: true, create: true, edit: true, status: true, delete: true })
 const viewArea = (): AreaPermissions => ({ view: true, create: false, edit: false, status: false, delete: false })
+const hiddenArea = (): AreaPermissions => ({ view: false, create: false, edit: false, status: false, delete: false })
 
 const matrix = (value: () => AreaPermissions): PermissionMatrix => Object.fromEntries(permissionAreas.map((area) => [area, value()])) as PermissionMatrix
 
 export function rolePermissionPreset(role: string, isDeveloper = false): PermissionMatrix {
   const effectiveRole = isDeveloper ? 'developer' : role
-  if (['developer', 'admin', 'manager'].includes(effectiveRole)) return matrix(fullArea)
+  if (effectiveRole === 'developer') {
+    const next = matrix(fullArea)
+    next.connections = { ...viewArea(), edit: true }
+    return next
+  }
+
+  if (['admin', 'manager'].includes(effectiveRole)) {
+    const next = matrix(fullArea)
+    next.connections = hiddenArea()
+    next.imports = hiddenArea()
+    next.settings = hiddenArea()
+    return next
+  }
 
   const next = matrix(viewArea)
+  next.connections = hiddenArea()
+  next.imports = hiddenArea()
+  next.settings = hiddenArea()
   const editable = effectiveRole === 'assistant'
     ? ['contacts', 'projects', 'tasks', 'calendar', 'files', 'finance', 'communication'] as PermissionArea[]
     : ['inspector', 'engineer'].includes(effectiveRole)
@@ -67,6 +86,9 @@ export function normalizePermissions(role: string, stored?: StoredPermissions | 
       next[area].view = true
     }
   }
+  next.connections.create = false
+  next.connections.status = false
+  next.connections.delete = false
   return next
 }
 
@@ -197,7 +219,7 @@ export function workspaceMutationError(
       continue
     }
     if (key === 'settings') {
-      if (!options.isDeveloper) return 'אין הרשאה לשנות הגדרות מערכת'
+      if (!options.isDeveloper && !permissions.settings.edit) return 'אין הרשאה לשנות את הגדרות החברה'
       continue
     }
 

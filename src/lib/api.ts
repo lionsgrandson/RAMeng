@@ -19,12 +19,14 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
 
   const body = await response.json().catch(() => ({})) as T & { error?: string }
-  if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`)
+  if (!response.ok) throw new Error(body.error || `שגיאת שרת (${response.status})`)
   return body
 }
 
 export const integrationsApi = {
-  status: () => request<{ google: { connected: boolean; email?: string }; openai: { configured: boolean }; configured: boolean }>('/api/integrations/status'),
+  status: () => request<IntegrationStatus>('/api/integrations/status'),
+  googleConfig: () => request<GoogleIntegrationConfig>('/api/google/config'),
+  saveGoogleConfig: (config: { clientId: string; clientSecret?: string }) => request<{ ok: true; configured: boolean }>('/api/google/config', { method: 'PUT', body: JSON.stringify(config) }),
   googleAuthUrl: () => request<{ url: string }>('/api/google/auth-url'),
   gmailThread: (threadId: string) => request<{ messages: GmailApiMessage[] }>(`/api/google/gmail/thread?threadId=${encodeURIComponent(threadId)}`),
   gmailSearch: (query: string) => request<{ threads: { id: string; snippet: string; subject?: string; from?: string }[] }>(`/api/google/gmail/search?q=${encodeURIComponent(query)}`),
@@ -36,6 +38,8 @@ export const integrationsApi = {
   addressSuggestions: (query: string) => request<{ suggestions: { label: string; value: string }[] }>(`/api/address/suggest?q=${encodeURIComponent(query)}`),
   rewrite: (text: string, mode = 'inspection') => request<{ text: string }>('/api/ai/rewrite', { method: 'POST', body: JSON.stringify({ text, mode }) }),
   inviteUser: (payload: { orgId: string; email: string; name?: string; role: string }) => request<{ ok: true; invited: boolean; existing: boolean; email: string; userId: string }>('/api/users/invite', { method: 'POST', body: JSON.stringify(payload) }),
+  resetUserPassword: (payload: { orgId: string; userId: string }) => request<{ ok: true; email: string }>('/api/users/password-reset', { method: 'POST', body: JSON.stringify(payload) }),
+  deleteUser: (payload: { orgId: string; userId: string }) => request<{ ok: true; email: string }>('/api/users/delete', { method: 'POST', body: JSON.stringify(payload) }),
   adminConfig: () => request<AdminConfig>('/api/admin/config'),
   saveAdminConfig: (config: AdminConfig) => request<{ ok: true }>('/api/admin/config', { method: 'PUT', body: JSON.stringify(config) }),
 }
@@ -43,6 +47,16 @@ export const integrationsApi = {
 export interface GmailApiMessage { id: string; threadId: string; from: string; to: string; subject: string; date: string; body: string; snippet: string }
 export interface GoogleCalendarEvent { id: string; summary: string; start: string; end?: string; htmlLink?: string; location?: string }
 export interface GoogleDriveFile { id: string; name: string; mimeType: string; modifiedTime?: string; webViewLink?: string }
+export interface IntegrationStatus {
+  google: { configured: boolean; connected: boolean; email?: string }
+  openai: { configured: boolean }
+  configured: boolean
+}
+export interface GoogleIntegrationConfig {
+  clientId: string
+  secretConfigured: boolean
+  redirectUri: string
+}
 export interface AdminConfig {
   organizationName?: string
   supabaseUrl?: string
@@ -60,6 +74,6 @@ export async function bootstrapServer(payload: AdminConfig & { setupToken: strin
   const base = String(import.meta.env.VITE_API_BASE || '')
   const response = await fetch(`${base}/api/admin/bootstrap`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) })
   const body = await response.json().catch(() => ({})) as { ok?: boolean; error?: string }
-  if (!response.ok) throw new Error(body.error || 'Bootstrap failed')
+  if (!response.ok) throw new Error(body.error || 'שמירת ההגדרה נכשלה')
   return body
 }

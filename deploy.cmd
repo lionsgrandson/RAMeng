@@ -121,8 +121,8 @@ echo   supabase\setup.sql
 echo in Supabase SQL Editor before using the CRM.
 echo.
 echo Also configure Supabase Authentication ^> URL Configuration:
-echo   Site URL    = your final CRM HTTPS URL
-echo   Redirect URL= your final CRM HTTPS URL/?invite=1
+echo   Site URL    = https://rameng-crm.rameng-crm-worker.workers.dev
+echo   Redirect URL= https://rameng-crm.rameng-crm-worker.workers.dev/?invite=1
 echo.
 
 echo [8/8] First-run CRM configuration...

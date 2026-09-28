@@ -12,6 +12,7 @@ dist/
 worker/.dev.vars
 worker/.dev.vars.*
 worker/node_modules/
+supabase/.temp/
 desktop/node_modules/
 desktop/dist/
 desktop/out/

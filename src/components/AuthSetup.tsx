@@ -4,6 +4,17 @@ import { bootstrapServer } from '../lib/api'
 import { requestPasswordReset, signIn, updatePassword } from '../lib/backend'
 import { Field } from './common'
 
+function authErrorMessage(error: unknown, fallback: string) {
+  const message = error instanceof Error ? error.message : ''
+  const normalized = message.toLowerCase()
+  if (normalized.includes('invalid login credentials')) return 'המייל או הסיסמה שגויים.'
+  if (normalized.includes('email not confirmed')) return 'יש לאשר את כתובת המייל לפני ההתחברות.'
+  if (normalized.includes('user already registered')) return 'כבר קיים חשבון עם כתובת המייל הזו.'
+  if (normalized.includes('password should be at least')) return 'הסיסמה קצרה מדי.'
+  if (normalized.includes('rate limit')) return 'בוצעו יותר מדי ניסיונות. נסו שוב בעוד כמה דקות.'
+  return message || fallback
+}
+
 export function SetupScreen() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -28,7 +39,7 @@ export function SetupScreen() {
       setDone(true)
       setTimeout(() => window.location.reload(), 1300)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'הגדרה נכשלה')
+      setError(authErrorMessage(e, 'ההגדרה נכשלה'))
     } finally {
       setLoading(false)
     }
@@ -42,13 +53,13 @@ export function SetupScreen() {
       {done && <div className="success-banner">ההגדרה נשמרה. המערכת נטענת מחדש...</div>}
       <form className="form-grid" onSubmit={(e) => void submit(e)}>
         <Field label="קוד הגדרה"><input name="setupToken" type="password" required autoComplete="off" /></Field>
-        <Field label="Supabase Project URL"><input name="supabaseUrl" inputMode="url" autoComplete="url" required placeholder="https://xxxxx.supabase.co" /></Field>
-        <Field label="Supabase anon key"><textarea name="supabaseAnonKey" rows={3} required /></Field>
+        <Field label="כתובת פרויקט Supabase"><input name="supabaseUrl" inputMode="url" autoComplete="url" required placeholder="https://xxxxx.supabase.co" /></Field>
+        <Field label="המפתח הציבורי של Supabase"><textarea name="supabaseAnonKey" rows={3} required /></Field>
         <Field label="מייל מפתח"><input name="adminEmails" type="email" required autoComplete="email" /></Field>
         <div className="setup-divider">Google — אפשר לחבר גם אחר כך</div>
-        <Field label="Google OAuth Client ID"><input name="googleClientId" /></Field>
-        <Field label="Google OAuth Client Secret"><input name="googleClientSecret" type="password" autoComplete="off" /></Field>
-        <Field label="Google Maps / Places API Key" hint="אופציונלי — משפר דיוק כתובות בישראל"><input name="googleMapsApiKey" type="password" autoComplete="off" /></Field>
+        <Field label="מזהה לקוח של Google OAuth"><input name="googleClientId" /></Field>
+        <Field label="סוד לקוח של Google OAuth"><input name="googleClientSecret" type="password" autoComplete="off" /></Field>
+        <Field label="מפתח API של Google Maps / Places" hint="אופציונלי — משפר דיוק כתובות בישראל"><input name="googleMapsApiKey" type="password" autoComplete="off" /></Field>
         <button className="primary setup-submit" disabled={loading}><KeyRound /> {loading ? 'שומר...' : 'שמירת הגדרה'}</button>
       </form>
     </section>
@@ -76,7 +87,7 @@ export function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
         onSuccess()
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : resetMode ? 'שליחת קישור האיפוס נכשלה' : 'התחברות נכשלה')
+      setError(authErrorMessage(e, resetMode ? 'שליחת קישור האיפוס נכשלה' : 'ההתחברות נכשלה'))
     } finally {
       setLoading(false)
     }
@@ -117,7 +128,7 @@ export function SetPasswordScreen({ onSuccess }: { onSuccess: () => void }) {
       await updatePassword(password)
       onSuccess()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'לא ניתן לשמור את הסיסמה')
+      setError(authErrorMessage(e, 'לא ניתן לשמור את הסיסמה'))
     } finally {
       setLoading(false)
     }

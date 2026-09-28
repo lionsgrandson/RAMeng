@@ -3,10 +3,24 @@ import type { RuntimeConfig } from './runtime'
 import type { Workspace } from '../types'
 import { cloneWorkspace } from '../seed'
 import type { StoredPermissions } from './permissions'
+import { authRedirectUrl } from './runtime'
 
 let client: SupabaseClient | null = null
 let runtime: RuntimeConfig | null = null
 let clientConfigKey = ''
+
+function localizedBackendError(error: unknown, fallback: string) {
+  const message = error instanceof Error ? error.message : ''
+  const normalized = message.toLowerCase()
+  if (/[\u0590-\u05ff]/.test(message)) return error instanceof Error ? error : new Error(message)
+  if (normalized.includes('invalid login credentials')) return new Error('המייל או הסיסמה שגויים.')
+  if (normalized.includes('email not confirmed')) return new Error('יש לאשר את כתובת המייל לפני ההתחברות.')
+  if (normalized.includes('password should be at least')) return new Error('הסיסמה קצרה מדי.')
+  if (normalized.includes('rate limit')) return new Error('בוצעו יותר מדי ניסיונות. נסו שוב בעוד כמה דקות.')
+  if (normalized.includes('row-level security') || normalized.includes('permission denied')) return new Error('אין הרשאה לבצע את הפעולה.')
+  if (normalized.includes('already exists') || normalized.includes('duplicate')) return new Error('הפריט כבר קיים במערכת.')
+  return new Error(fallback)
+}
 
 export interface OrganizationMember {
   userId: string
@@ -48,23 +62,23 @@ export async function getCurrentUser(): Promise<User | null> {
 }
 
 export async function signIn(email: string, password: string) {
-  if (!client) throw new Error('Supabase is not configured')
+  if (!client) throw new Error('החיבור למסד הנתונים אינו מוגדר')
   const { data, error } = await client.auth.signInWithPassword({ email, password })
-  if (error) throw error
+  if (error) throw localizedBackendError(error, 'ההתחברות נכשלה')
   return data.user
 }
 
 export async function requestPasswordReset(email: string) {
-  if (!client) throw new Error('Supabase is not configured')
-  const redirectTo = `${window.location.origin}/?invite=1`
+  if (!client) throw new Error('החיבור למסד הנתונים אינו מוגדר')
+  const redirectTo = authRedirectUrl('/?invite=1')
   const { error } = await client.auth.resetPasswordForEmail(email, { redirectTo })
-  if (error) throw error
+  if (error) throw localizedBackendError(error, 'שליחת קישור האיפוס נכשלה')
 }
 
 export async function updatePassword(password: string) {
-  if (!client) throw new Error('Supabase is not configured')
+  if (!client) throw new Error('החיבור למסד הנתונים אינו מוגדר')
   const { data, error } = await client.auth.updateUser({ password })
-  if (error) throw error
+  if (error) throw localizedBackendError(error, 'שמירת הסיסמה נכשלה')
   return data.user
 }
 
@@ -81,7 +95,7 @@ export async function getAccessToken() {
 export async function listOrganizationMembers(orgId: string): Promise<OrganizationMember[]> {
   if (!client || orgId === 'local') return []
   const { data, error } = await client.rpc('list_org_members', { target_org: orgId })
-  if (error) throw error
+  if (error) throw localizedBackendError(error, 'טעינת המשתמשים נכשלה')
   return (data || []).map((row: Record<string, unknown>) => ({
     userId: String(row.user_id || ''),
     email: String(row.email || ''),
@@ -95,7 +109,7 @@ export async function listOrganizationMembers(orgId: string): Promise<Organizati
 export async function setOrganizationMemberRole(orgId: string, email: string, role: string) {
   if (!client || orgId === 'local') throw new Error('ניהול משתמשים זמין לאחר חיבור מסד הנתונים')
   const { error } = await client.rpc('set_org_member_role', { target_org: orgId, target_email: email, target_role: role })
-  if (error) throw error
+  if (error) throw localizedBackendError(error, 'עדכון תפקיד המשתמש נכשל')
 }
 
 export async function setOrganizationMemberPermissions(orgId: string, userId: string, permissions: StoredPermissions | null) {
@@ -105,7 +119,7 @@ export async function setOrganizationMemberPermissions(orgId: string, userId: st
     target_user: userId,
     target_permissions: permissions,
   })
-  if (error) throw error
+  if (error) throw localizedBackendError(error, 'עדכון הרשאות המשתמש נכשל')
 }
 
 export async function loadOrganizationWorkspace(userId: string): Promise<{ orgId: string; role: string; permissions: StoredPermissions | null; workspace: Workspace; version: number }> {
@@ -115,13 +129,13 @@ export async function loadOrganizationWorkspace(userId: string): Promise<{ orgId
     .select('org_id, role, permissions')
     .eq('user_id', userId)
     .maybeSingle()
-  if (membershipError) throw membershipError
+  if (membershipError) throw localizedBackendError(membershipError, 'טעינת שיוך המשתמש לארגון נכשלה')
 
   if (!membership) {
     const { error: bootstrapError } = await client.rpc('bootstrap_first_admin')
-    if (bootstrapError && !bootstrapError.message.includes('already')) throw bootstrapError
+    if (bootstrapError && !bootstrapError.message.includes('already')) throw localizedBackendError(bootstrapError, 'אתחול הארגון נכשל')
     const retry = await client.from('memberships').select('org_id, role, permissions').eq('user_id', userId).maybeSingle()
-    if (retry.error) throw retry.error
+    if (retry.error) throw localizedBackendError(retry.error, 'טעינת שיוך המשתמש לארגון נכשלה')
     membership = retry.data
   }
   if (!membership) throw new Error('המשתמש אינו משויך לארגון. מנהל המערכת צריך להוסיף אותו.')
@@ -142,11 +156,11 @@ export async function loadOrganizationWorkspace(userId: string): Promise<{ orgId
       stateError = legacy.error
     }
   }
-  if (stateError) throw stateError
+  if (stateError) throw localizedBackendError(stateError, 'טעינת נתוני סביבת העבודה נכשלה')
   if (!state?.data) {
     const workspace = cloneWorkspace()
     const { error } = await client.from('workspace_state').upsert({ org_id: orgId, data: workspace, updated_by: userId }, { onConflict: 'org_id' })
-    if (error) throw error
+    if (error) throw localizedBackendError(error, 'שמירת סביבת העבודה נכשלה')
     saveLocalWorkspace(workspace)
     return { orgId, role: String(membership.role), permissions: membership.permissions as StoredPermissions | null, workspace, version: 0 }
   }
@@ -175,10 +189,10 @@ export async function saveOrganizationWorkspace(orgId: string, userId: string, w
     const rpcMissing = error.code === 'PGRST202' || (error.message.includes('save_workspace_state') && error.message.toLowerCase().includes('schema cache'))
     if (rpcMissing) {
       const legacy = await client.from('workspace_state').upsert({ org_id: orgId, data: workspace, updated_by: userId, updated_at: new Date().toISOString() }, { onConflict: 'org_id' })
-      if (legacy.error) throw legacy.error
+      if (legacy.error) throw localizedBackendError(legacy.error, 'שמירת הנתונים נכשלה')
       return { version: expectedVersion + 1 }
     }
-    throw error
+    throw localizedBackendError(error, 'שמירת הנתונים נכשלה')
   }
   return { version: Number(data || expectedVersion + 1) }
 }
@@ -198,16 +212,16 @@ export async function uploadFile(orgId: string, projectId: string, file: File) {
   const safeName = file.name.replace(/[^\p{L}\p{N}._-]+/gu, '_')
   const path = `${orgId}/${projectId || 'general'}/${Date.now()}-${safeName}`
   const { error } = await client.storage.from('crm-files').upload(path, file, { upsert: false })
-  if (error) throw error
+  if (error) throw localizedBackendError(error, 'העלאת הקובץ נכשלה')
   const { data, error: signedError } = await client.storage.from('crm-files').createSignedUrl(path, 60 * 60 * 24 * 7)
-  if (signedError) throw signedError
+  if (signedError) throw localizedBackendError(signedError, 'יצירת קישור מאובטח לקובץ נכשלה')
   return { url: data.signedUrl, path }
 }
 
 export async function refreshSignedUrl(path: string) {
   if (!client || !path) return ''
   const { data, error } = await client.storage.from('crm-files').createSignedUrl(path, 60 * 60)
-  if (error) throw error
+  if (error) throw localizedBackendError(error, 'רענון הקישור לקובץ נכשל')
   return data.signedUrl
 }
 

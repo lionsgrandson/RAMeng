@@ -56,7 +56,7 @@
 2. להריץ את כל `supabase/setup.sql` ב-SQL Editor.
 3. להריץ `deploy.cmd` בחשבון Cloudflare של הלקוח.
 4. להגדיר ב-Worker את `ADMIN_SETUP_TOKEN` ואת `SUPABASE_SECRET_KEY`.
-5. להגדיר ב-Supabase Auth את כתובת ה-CRM כ-Site URL ואת `/?invite=1` כ-Redirect URL.
+5. להגדיר ב-Supabase Auth את `https://rameng-crm.rameng-crm-worker.workers.dev` כ-Site URL ואת `https://rameng-crm.rameng-crm-worker.workers.dev/?invite=1` כ-Redirect URL.
 6. לפתוח את ה-CRM ולהזין Supabase URL, publishable/anon key ומייל המפתח.
 7. ליצור/להזמין את חשבון המפתח הראשון ב-Supabase Auth.
 8. לאחר מכן להוסיף את כל שאר המשתמשים מתוך `משתמשים והרשאות` ב-CRM.
@@ -121,11 +121,11 @@ deploy.cmd
 3. מוסיפים Redirect URI:
 
 ```text
-https://YOUR-CRM-DOMAIN/api/google/callback
+https://rameng-crm.rameng-crm-worker.workers.dev/api/google/callback
 ```
 
-4. מזינים Client ID ו-Client Secret בהגדרות המפתח.
-5. מחברים את חשבון Google של החברה.
+4. המפתח מעניק למשתמש מהימן הרשאת צפייה ועריכה תחת `Google Workspace — חיבור והגדרה`. המשתמש מזין את ה-Client ID וה-Client Secret בפאנל Google הייעודי, בלי לקבל גישה ל-Supabase או להגדרות תשתית אחרות. לחלופין, המפתח יכול לבצע זאת בעצמו.
+5. כל משתמש שקיבל הרשאת צפייה מחבר את חשבון Google האישי שלו מתוך הגדרות ← Google Workspace בלחיצה אחת. החיבור מבודד לפי מזהה המשתמש ב-Supabase ומשמש את Gmail, היומן וה-Drive של אותו משתמש בלבד.
 
 ## פיתוח מקומי
 

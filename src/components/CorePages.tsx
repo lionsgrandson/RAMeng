@@ -70,7 +70,7 @@ export function TeamPage({ workspace, setWorkspace }: { workspace: Workspace; se
   return <section className="card"><div className="card-head"><div><h2>צוות והרשאות</h2><p>אחראים למשימות, תפקידים ונראות</p></div><button className="primary" onClick={() => setAdding(true)}><Plus /> איש צוות</button></div><div className="team-grid">{workspace.team.map((member) => <article className="team-card" key={member.id}><span className="avatar large">{member.name.slice(0, 2)}</span><strong>{member.name}</strong><span>{member.email}</span><Chip tone={member.active ? 'good' : 'neutral'}>{member.role}</Chip><label className="switch-line"><input type="checkbox" checked={member.active} onChange={(e) => setWorkspace((current) => ({ ...current, team: current.team.map((item) => item.id === member.id ? { ...item, active: e.target.checked } : item) }))} /> פעיל</label></article>)}{!workspace.team.length && <EmptyState title="הצוות עדיין ריק" text="הוסיפו את האנשים שיופיעו כאחראים במשימות ובדוחות." />}</div>{adding && <Modal title="איש צוות חדש" onClose={() => setAdding(false)}><form className="form-grid" onSubmit={submit}><Field label="שם"><input name="name" required /></Field><Field label="מייל"><input name="email" type="email" required /></Field><Field label="תפקיד"><select name="role"><option>מנהל</option><option>מפקח</option><option>מהנדס</option><option>משרד</option><option>צפייה</option></select></Field><div className="form-actions"><button className="primary">שמירה</button></div></form></Modal>}</section>
 }
 
-export function ImportCenter({ workspace, setWorkspace }: { workspace: Workspace; setWorkspace: React.Dispatch<React.SetStateAction<Workspace>> }) {
+export function ImportCenter({ workspace, setWorkspace, canImport }: { workspace: Workspace; setWorkspace: React.Dispatch<React.SetStateAction<Workspace>>; canImport: boolean }) {
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
 
@@ -109,8 +109,9 @@ export function ImportCenter({ workspace, setWorkspace }: { workspace: Workspace
   }
 
   return <div className="import-grid">
-    <section className="card import-card"><span><UsersRound /></span><h2>ייבוא לקוחות</h2><p>Excel או CSV עם עמודות שם, חברה, טלפון ומייל.</p><label className="upload-button"><Upload /> בחירת קובץ<input aria-label="ייבוא קובץ לקוחות" type="file" accept=".xlsx,.xls,.csv" onChange={(e) => onPick(e, 'contacts')} /></label></section>
-    <section className="card import-card"><span><ListChecks /></span><h2>ייבוא משימות</h2><p>Excel או CSV עם משימה, סטטוס, תאריכים, הערות ומייל.</p><label className="upload-button"><FileSpreadsheet /> בחירת קובץ<input aria-label="ייבוא קובץ משימות" type="file" accept=".xlsx,.xls,.csv" onChange={(e) => onPick(e, 'tasks')} /></label></section>
+    {!canImport && <div className="info-banner"><FileSpreadsheet /> קיימת הרשאת צפייה בלבד. כדי לייבא קבצים נדרשת גם הרשאת הוספה.</div>}
+    <section className="card import-card"><span><UsersRound /></span><h2>ייבוא לקוחות</h2><p>Excel או CSV עם עמודות שם, חברה, טלפון ומייל.</p><label className="upload-button" aria-disabled={!canImport}><Upload /> בחירת קובץ<input disabled={!canImport} aria-label="ייבוא קובץ לקוחות" type="file" accept=".xlsx,.xls,.csv" onChange={(e) => onPick(e, 'contacts')} /></label></section>
+    <section className="card import-card"><span><ListChecks /></span><h2>ייבוא משימות</h2><p>Excel או CSV עם משימה, סטטוס, תאריכים, הערות ומייל.</p><label className="upload-button" aria-disabled={!canImport}><FileSpreadsheet /> בחירת קובץ<input disabled={!canImport} aria-label="ייבוא קובץ משימות" type="file" accept=".xlsx,.xls,.csv" onChange={(e) => onPick(e, 'tasks')} /></label></section>
     {message && <div className="success-banner" role="status">{message}</div>}
     {error && <div className="error-banner" role="alert">{error}</div>}
   </div>

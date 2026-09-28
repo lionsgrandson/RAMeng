@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { MailPlus, Plus, RefreshCw, ShieldCheck, SlidersHorizontal, UsersRound } from 'lucide-react'
+import { KeyRound, MailPlus, Plus, RefreshCw, ShieldCheck, SlidersHorizontal, Trash2, UsersRound } from 'lucide-react'
 import { listOrganizationMembers, setOrganizationMemberPermissions, setOrganizationMemberRole, type OrganizationMember } from '../lib/backend'
 import { integrationsApi } from '../lib/api'
 import {
@@ -52,6 +52,7 @@ const allAreasPreset = (actions: Partial<Record<PermissionAction, boolean>>): Pe
       delete: Boolean(actions.delete),
     }
   }
+  next.connections = { view: Boolean(actions.view), create: false, edit: Boolean(actions.edit), status: false, delete: false }
   return next
 }
 
@@ -66,6 +67,7 @@ export default function UserManagement({ orgId, canManage, isDeveloper, workspac
   const [loading, setLoading] = useState(true)
   const [adding, setAdding] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [activeAction, setActiveAction] = useState('')
   const [editingPermissions, setEditingPermissions] = useState<OrganizationMember | null>(null)
   const [permissionDraft, setPermissionDraft] = useState<PermissionMatrix | null>(null)
   const [resetToRoleDefault, setResetToRoleDefault] = useState(false)
@@ -147,20 +149,28 @@ export default function UserManagement({ orgId, canManage, isDeveloper, workspac
 
   const applyPermissionPreset = (preset: 'role' | 'view' | 'edit-no-delete' | 'status' | 'full') => {
     if (!editingPermissions) return
+    const preserveDeveloperOnlyAreas = (next: PermissionMatrix) => {
+      if (isDeveloper) return next
+      const current = normalizePermissions(editingPermissions.role, editingPermissions.permissions)
+      next.connections = { ...current.connections }
+      next.imports = { ...current.imports }
+      next.settings = { ...current.settings }
+      return next
+    }
     if (preset === 'role') {
-      setPermissionDraft(clonePermissions(rolePermissionPreset(editingPermissions.role)))
+      setPermissionDraft(preserveDeveloperOnlyAreas(clonePermissions(rolePermissionPreset(editingPermissions.role))))
       setResetToRoleDefault(true)
       return
     }
     setResetToRoleDefault(false)
-    if (preset === 'view') setPermissionDraft(allAreasPreset({ view: true }))
-    if (preset === 'edit-no-delete') setPermissionDraft(allAreasPreset({ view: true, create: true, edit: true, status: true }))
+    if (preset === 'view') setPermissionDraft(preserveDeveloperOnlyAreas(allAreasPreset({ view: true })))
+    if (preset === 'edit-no-delete') setPermissionDraft(preserveDeveloperOnlyAreas(allAreasPreset({ view: true, create: true, edit: true, status: true })))
     if (preset === 'status') {
       const next = allAreasPreset({ view: true })
       ;(['contacts', 'projects', 'tasks', 'reports', 'finance'] as PermissionArea[]).forEach((area) => { next[area].status = true })
-      setPermissionDraft(next)
+      setPermissionDraft(preserveDeveloperOnlyAreas(next))
     }
-    if (preset === 'full') setPermissionDraft(allAreasPreset({ view: true, create: true, edit: true, status: true, delete: true }))
+    if (preset === 'full') setPermissionDraft(preserveDeveloperOnlyAreas(allAreasPreset({ view: true, create: true, edit: true, status: true, delete: true })))
   }
 
   const savePermissions = async () => {
@@ -202,6 +212,39 @@ export default function UserManagement({ orgId, canManage, isDeveloper, workspac
     }
   }
 
+  const sendPasswordReset = async (member: OrganizationMember) => {
+    if (!window.confirm(`לשלוח אל ${member.email} קישור לאיפוס הסיסמה?`)) return
+    setError('')
+    setMessage('')
+    setActiveAction(`reset:${member.userId}`)
+    try {
+      const result = await integrationsApi.resetUserPassword({ orgId, userId: member.userId })
+      setMessage(`קישור לאיפוס הסיסמה נשלח אל ${result.email}`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'שליחת הקישור לאיפוס הסיסמה נכשלה')
+    } finally {
+      setActiveAction('')
+    }
+  }
+
+  const removeUser = async (member: OrganizationMember) => {
+    if (member.role === 'developer') return
+    const label = member.displayName || member.email
+    if (!window.confirm(`למחוק את ${label} לצמיתות? המשתמש יאבד גישה למערכת.`)) return
+    setError('')
+    setMessage('')
+    setActiveAction(`delete:${member.userId}`)
+    try {
+      const result = await integrationsApi.deleteUser({ orgId, userId: member.userId })
+      setMessage(`המשתמש ${result.email} נמחק מהמערכת`)
+      await refresh()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'מחיקת המשתמש נכשלה')
+    } finally {
+      setActiveAction('')
+    }
+  }
+
   return <section className="card">
     <div className="card-head">
       <div><h2><UsersRound /> משתמשים והרשאות</h2><p>בחרו תפקיד כנקודת התחלה, ואז התאימו הרשאות לכל משתמש לפי הצורך.</p></div>
@@ -215,7 +258,7 @@ export default function UserManagement({ orgId, canManage, isDeveloper, workspac
     {message && <div className="success-banner" role="status">{message}</div>}
     {loading ? <div className="loading-state"><RefreshCw className="spin" /> טוען משתמשים...</div> : <div className="table-scroll">
       <table className="data-table">
-        <thead><tr><th scope="col">משתמש</th><th scope="col">מייל</th><th scope="col">תפקיד</th><th scope="col">גישה</th><th scope="col">הרשאות</th></tr></thead>
+        <thead><tr><th scope="col">משתמש</th><th scope="col">מייל</th><th scope="col">תפקיד</th><th scope="col">גישה</th><th scope="col">הרשאות</th><th scope="col">פעולות</th></tr></thead>
         <tbody>{members.map((member) => {
           const effective = normalizePermissions(member.role, member.permissions, member.role === 'developer')
           const protectedDeveloper = member.role === 'developer'
@@ -234,6 +277,24 @@ export default function UserManagement({ orgId, canManage, isDeveloper, workspac
               : canManage
                 ? <button type="button" className="secondary" onClick={() => openPermissions(member)}><SlidersHorizontal /> התאמה</button>
                 : <span className="muted-text">—</span>}</td>
+            <td>{canManage
+              ? <div className="user-actions">
+                  <button
+                    type="button"
+                    className="secondary"
+                    disabled={Boolean(activeAction)}
+                    onClick={() => void sendPasswordReset(member)}
+                    aria-label={`שליחת איפוס סיסמה אל ${member.email}`}
+                  ><KeyRound /> {activeAction === `reset:${member.userId}` ? 'שולח...' : 'איפוס סיסמה'}</button>
+                  {!protectedDeveloper && <button
+                    type="button"
+                    className="secondary danger"
+                    disabled={Boolean(activeAction)}
+                    onClick={() => void removeUser(member)}
+                    aria-label={`מחיקת המשתמש ${member.displayName || member.email}`}
+                  ><Trash2 /> {activeAction === `delete:${member.userId}` ? 'מוחק...' : 'מחיקה'}</button>}
+                </div>
+              : <span className="muted-text">—</span>}</td>
           </tr>
         })}</tbody>
       </table>
@@ -252,7 +313,7 @@ export default function UserManagement({ orgId, canManage, isDeveloper, workspac
 
     {editingPermissions && permissionDraft && <Modal title={`הרשאות · ${editingPermissions.displayName || editingPermissions.email}`} onClose={() => !submitting && setEditingPermissions(null)} wide>
       <div className="permission-editor">
-        <div className="info-banner"><ShieldCheck /> התפקיד <strong>{roleLabels[editingPermissions.role] || editingPermissions.role}</strong> הוא ברירת המחדל. כל שינוי כאן חל רק על המשתמש הזה.</div>
+        <div className="info-banner"><ShieldCheck /> התפקיד <strong>{roleLabels[editingPermissions.role] || editingPermissions.role}</strong> הוא ברירת המחדל. כל שינוי כאן חל רק על המשתמש הזה. הרשאות חיבור Google אישי, ייבוא והגדרות חברה ניתנות לשינוי על ידי המפתח בלבד.</div>
         <div className="permission-presets" aria-label="תבניות הרשאה">
           <button type="button" className={resetToRoleDefault ? 'primary' : 'secondary'} onClick={() => applyPermissionPreset('role')}>ברירת מחדל לתפקיד</button>
           <button type="button" className="secondary" onClick={() => applyPermissionPreset('view')}>צפייה בלבד</button>
@@ -271,6 +332,7 @@ export default function UserManagement({ orgId, canManage, isDeveloper, workspac
                   <input
                     type="checkbox"
                     checked={permissionDraft[area][action]}
+                    disabled={(area === 'connections' && !['view', 'edit'].includes(action)) || (!isDeveloper && (area === 'connections' || area === 'imports' || area === 'settings'))}
                     onChange={(e) => setPermission(area, action, e.target.checked)}
                     aria-label={`${permissionActionLabels[action]} · ${permissionAreaLabels[area]}`}
                   />
