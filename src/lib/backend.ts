@@ -82,6 +82,17 @@ export async function updatePassword(password: string) {
   return data.user
 }
 
+export async function updateCurrentUserName(fullName: string) {
+  if (!client) throw new Error('החיבור למסד הנתונים אינו מוגדר')
+  const name = fullName.trim()
+  if (!name) throw new Error('יש להזין שם מלא.')
+  const { data, error } = await client.auth.updateUser({
+    data: { full_name: name },
+  })
+  if (error) throw localizedBackendError(error, 'שמירת השם נכשלה')
+  return data.user
+}
+
 export async function signOut() {
   if (client) await client.auth.signOut()
 }

@@ -100,6 +100,8 @@ const roleLabel = (role: string, isDeveloper: boolean) => {
   return role
 }
 
+const userDisplayName = (user: User) => String(user.user_metadata?.full_name || user.user_metadata?.name || user.email || 'משתמש').trim()
+
 const invitedFromUrl = () => {
   const params = new URLSearchParams(window.location.search)
   return params.get('invite') === '1' || window.location.hash.includes('type=invite')
@@ -287,7 +289,7 @@ export default function App() {
   const canViewPage = (target: Page) => {
     if (target === 'overview') return true
     if (target === 'team') return canManageUsers
-    if (target === 'settings') return isDeveloper || permissions.connections.view || permissions.settings.view
+    if (target === 'settings') return true
     const area = pagePermissionArea[target]
     return area ? permissions[area].view : true
   }
@@ -460,7 +462,7 @@ export default function App() {
         {page === 'transcription' && <ModulePlaceholder icon={<AudioLines />} title="תמלול" text="המודול נוסף לניווט כנקודת כניסה לתמלול פגישות והקלטות. תהליך התמלול והפקת המשימות יחובר לפי האפיון המאושר." />}
         {page === 'team' && canManageUsers && <UserManagement orgId={orgId} canManage={canManageUsers} isDeveloper={isDeveloper} workspace={workspace} setWorkspace={editableSetWorkspace} />}
         {page === 'imports' && permissions.imports.view && <ImportCenter workspace={workspace} setWorkspace={editableSetWorkspace} canImport={permissions.imports.create} />}
-        {page === 'settings' && <SettingsPage workspace={workspace} setWorkspace={editableSetWorkspace} canConnectGoogle={permissions.connections.view} canConfigureGoogle={permissions.connections.edit} canViewOrganization={permissions.settings.view} canEditOrganization={permissions.settings.edit} isDeveloper={isDeveloper} />}
+        {page === 'settings' && <SettingsPage user={user} onUserUpdated={setUser} workspace={workspace} setWorkspace={editableSetWorkspace} canConfigureGoogle={permissions.connections.edit} canViewOrganization={permissions.settings.view} canEditOrganization={permissions.settings.edit} isDeveloper={isDeveloper} />}
       </main>
     </div>
   </div>
@@ -479,7 +481,7 @@ function Sidebar({ page, setPage, workspace, permissions, open, setOpen, user, o
 
   const visibleItems = navItems.filter((item) => {
     if (item.id === 'team') return canManageUsers
-    if (item.id === 'settings') return isDeveloper || permissions.connections.view || permissions.settings.view
+    if (item.id === 'settings') return true
     if (item.id === 'reports') return permissions.reports.view || permissions.finance.view
     const area = pagePermissionArea[item.id]
     return area ? permissions[area].view : true
@@ -508,7 +510,7 @@ function Sidebar({ page, setPage, workspace, permissions, open, setOpen, user, o
         }
         return <button type="button" key={item.id} className={page === item.id ? 'active' : ''} aria-current={page === item.id ? 'page' : undefined} onClick={() => setPage(item.id)}><Icon /><span>{item.label}</span>{count > 0 && <em aria-label={`${count} פריטים`}>{count}</em>}</button>
       })}</nav>
-      <div className="sidebar-bottom"><div className="profile"><span className="avatar">{(user.email || 'R').slice(0, 2).toUpperCase()}</span><div><strong>{user.email}</strong><small>מחובר</small></div><button type="button" className="icon-btn" onClick={onLogout} title="יציאה" aria-label="יציאה"><LogOut /></button></div><a href={workspace.settings.website} target="_blank" rel="noreferrer">{workspace.settings.website.replace(/^https?:\/\//, '')}</a></div>
+      <div className="sidebar-bottom"><div className="profile"><span className="avatar">{userDisplayName(user).slice(0, 2).toUpperCase()}</span><div><strong>{userDisplayName(user)}</strong><small>{user.email}</small></div><button type="button" className="icon-btn" onClick={onLogout} title="יציאה" aria-label="יציאה"><LogOut /></button></div><a href={workspace.settings.website} target="_blank" rel="noreferrer">{workspace.settings.website.replace(/^https?:\/\//, '')}</a></div>
     </aside>
   </>
 }

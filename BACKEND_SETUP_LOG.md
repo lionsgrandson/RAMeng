@@ -142,6 +142,15 @@ Secret values are intentionally excluded. Public identifiers may be recorded aft
   - The Internal audience restricts Google authorization to users in the `r-eng.co.il` Google Workspace organization. Personal Gmail accounts cannot authorize this OAuth application.
   - No Google Cloud paid trial or billing account was enabled.
 
+- **2026-09-30 — Self-service user profile and Google Workspace connection**
+  - Made Settings available to every authenticated organization member, regardless of CRM area permissions.
+  - Added a personal profile tab where each user can update their own display name. The name is saved to that user's Supabase Auth metadata and is shown in the CRM sidebar and organization user list; it is not used for authorization.
+  - Made the personal Google Workspace connection and integration-status endpoints available to every authenticated organization member once the shared OAuth client is configured.
+  - Preserved per-user Google token isolation in Cloudflare KV. Each user connects only their own Gmail, Calendar, and Drive account.
+  - Removed the obsolete personal-connection permission gate from Gmail, Calendar, and Drive requests while preserving each CRM area's existing permissions.
+  - Kept organization-level OAuth Client ID/Secret configuration separately protected by the developer-grantable Google OAuth setup permission.
+  - No passwords, OAuth secrets, access tokens, refresh tokens, or Supabase secret keys were written to this log or committed to Git.
+
 ## Pending provider work
 
 - Configure the Supabase Auth site/redirect URLs for any additional production domains if needed.

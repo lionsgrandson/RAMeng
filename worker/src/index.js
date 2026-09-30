@@ -113,7 +113,14 @@ async function ensureDeveloperMembership(env, config, user) {
 }
 
 async function requireUser(request, env, config) {
-  return getAuthenticatedUser(request, env, config)
+  const user = await getAuthenticatedUser(request, env, config)
+  if (isDeveloper(user, config)) {
+    await ensureDeveloperMembership(env, config, user)
+    return user
+  }
+  const membership = await currentMembership(request, env, config, user)
+  if (!membership) throw Object.assign(new Error('המשתמש אינו משויך לארגון'), { status: 403 })
+  return user
 }
 
 async function requireDeveloper(request, env, config) {
@@ -125,6 +132,7 @@ async function requireDeveloper(request, env, config) {
 
 function rolePermissionAllowed(role, permissions, area, action) {
   if (role === 'developer') return true
+  if (area === 'connections' && action === 'view') return true
   const custom = permissions?.[area]?.[action]
   if (typeof custom === 'boolean') return custom
   if (['connections', 'imports', 'settings'].includes(area)) return false
@@ -166,9 +174,7 @@ async function requireAreaAction(request, env, config, area, action) {
 }
 
 async function requireGoogleAreaAction(request, env, config, area, action) {
-  const user = await requireAreaAction(request, env, config, area, action)
-  await requireAreaAction(request, env, config, 'connections', 'view')
-  return user
+  return requireAreaAction(request, env, config, area, action)
 }
 
 async function requireAnyAreaAction(request, env, config, checks) {
@@ -341,7 +347,7 @@ function normalizeGmailMessage(message) {
 }
 
 async function handleGoogleAuthUrl(request, env, config) {
-  const user = await requireAreaAction(request, env, config, 'connections', 'view')
+  const user = await requireUser(request, env, config)
   if (!config.googleClientId || !config.googleClientSecret) throw Object.assign(new Error('חיבור Google Workspace טרם הוגדר עבור הארגון'), { status: 503 })
   const state = crypto.randomUUID()
   await env.CONFIG.put(`${OAUTH_STATE_PREFIX}${state}`, JSON.stringify({ userId: user.id, email: user.email || '', createdAt: Date.now() }), { expirationTtl: 600 })
@@ -861,7 +867,7 @@ async function handleGoogleConfig(request, env, config) {
 }
 
 async function handleStatus(request, env, config) {
-  const user = await requireAreaAction(request, env, config, 'connections', 'view')
+  const user = await requireUser(request, env, config)
   const tokens = await googleTokens(env, user.id)
   return apiJson(request, {
     configured: Boolean(config.supabaseUrl && config.supabaseAnonKey),

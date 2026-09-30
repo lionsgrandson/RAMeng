@@ -1,42 +1,90 @@
 import { useEffect, useState } from 'react'
-import { Cloud, RefreshCw, Save } from 'lucide-react'
+import type { User } from '@supabase/supabase-js'
+import { Cloud, RefreshCw, Save, UserRound } from 'lucide-react'
 import { integrationsApi, type AdminConfig, type GoogleIntegrationConfig, type IntegrationStatus } from '../lib/api'
+import { updateCurrentUserName } from '../lib/backend'
 import type { Workspace } from '../types'
 import { Chip, Field } from './common'
 
-type SettingsTab = 'google' | 'organization' | 'system'
+type SettingsTab = 'profile' | 'google' | 'organization' | 'system'
 
 export default function SettingsPage({
+  user,
+  onUserUpdated,
   workspace,
   setWorkspace,
-  canConnectGoogle,
   canConfigureGoogle,
   canViewOrganization,
   canEditOrganization,
   isDeveloper,
 }: {
+  user: User
+  onUserUpdated: (user: User) => void
   workspace: Workspace
   setWorkspace: React.Dispatch<React.SetStateAction<Workspace>>
-  canConnectGoogle: boolean
   canConfigureGoogle: boolean
   canViewOrganization: boolean
   canEditOrganization: boolean
   isDeveloper: boolean
 }) {
-  const [tab, setTab] = useState<SettingsTab>(() => canConnectGoogle ? 'google' : canViewOrganization ? 'organization' : 'system')
+  const [tab, setTab] = useState<SettingsTab>(() => new URLSearchParams(window.location.search).get('google') === 'connected' ? 'google' : 'profile')
 
   return <div className="settings-layout">
     <aside className="settings-nav card" role="tablist" aria-label="הגדרות">
-      {canConnectGoogle && <button type="button" role="tab" aria-selected={tab === 'google'} className={tab === 'google' ? 'active' : ''} onClick={() => setTab('google')}>Google Workspace</button>}
+      <button type="button" role="tab" aria-selected={tab === 'profile'} className={tab === 'profile' ? 'active' : ''} onClick={() => setTab('profile')}>הפרופיל שלי</button>
+      <button type="button" role="tab" aria-selected={tab === 'google'} className={tab === 'google' ? 'active' : ''} onClick={() => setTab('google')}>Google Workspace</button>
       {canViewOrganization && <button type="button" role="tab" aria-selected={tab === 'organization'} className={tab === 'organization' ? 'active' : ''} onClick={() => setTab('organization')}>חברה</button>}
       {isDeveloper && <button type="button" role="tab" aria-selected={tab === 'system'} className={tab === 'system' ? 'active' : ''} onClick={() => setTab('system')}>הגדרות מערכת</button>}
     </aside>
     <main>
-      {tab === 'google' && canConnectGoogle && <GoogleWorkspaceSettings canConfigure={canConfigureGoogle} />}
+      {tab === 'profile' && <PersonalSettings user={user} onUserUpdated={onUserUpdated} />}
+      {tab === 'google' && <GoogleWorkspaceSettings canConfigure={canConfigureGoogle} />}
       {tab === 'organization' && canViewOrganization && <OrganizationSettings workspace={workspace} setWorkspace={setWorkspace} canEdit={canEditOrganization} />}
       {tab === 'system' && isDeveloper && <SystemSettings />}
     </main>
   </div>
+}
+
+function PersonalSettings({ user, onUserUpdated }: { user: User; onUserUpdated: (user: User) => void }) {
+  const currentName = String(user.user_metadata?.full_name || user.user_metadata?.name || '').trim()
+  const [name, setName] = useState(currentName)
+  const [saving, setSaving] = useState(false)
+  const [message, setMessage] = useState('')
+  const [error, setError] = useState('')
+
+  useEffect(() => { setName(currentName) }, [user.id, currentName])
+
+  const save = async () => {
+    const nextName = name.trim()
+    if (!nextName) {
+      setError('יש להזין שם מלא.')
+      return
+    }
+    setSaving(true)
+    setError('')
+    setMessage('')
+    try {
+      const updated = await updateCurrentUserName(nextName)
+      onUserUpdated(updated)
+      setName(String(updated.user_metadata?.full_name || nextName))
+      setMessage('השם נשמר בהצלחה.')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'שמירת השם נכשלה')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return <section className="card settings-card">
+    <div className="card-head"><div><h2>הפרופיל שלי</h2><p>הפרטים האישיים שמוצגים במערכת.</p></div><UserRound /></div>
+    {error && <div className="error-banner" role="alert">{error}</div>}
+    {message && <div className="success-banner" role="status">{message}</div>}
+    <div className="settings-form">
+      <Field label="שם מלא"><input value={name} maxLength={100} autoComplete="name" onChange={(event) => setName(event.target.value)} /></Field>
+      <Field label="כתובת מייל" hint="כתובת המייל משמשת לכניסה ואינה משתנה במסך זה."><input type="email" value={user.email || ''} readOnly /></Field>
+      <div className="form-actions"><button type="button" className="primary" disabled={saving || !name.trim() || name.trim() === currentName} onClick={() => void save()}><Save /> {saving ? 'שומר...' : 'שמירת השם'}</button></div>
+    </div>
+  </section>
 }
 
 function OrganizationSettings({ workspace, setWorkspace, canEdit }: { workspace: Workspace; setWorkspace: React.Dispatch<React.SetStateAction<Workspace>>; canEdit: boolean }) {
@@ -116,7 +164,7 @@ function GoogleWorkspaceSettings({ canConfigure }: { canConfigure: boolean }) {
     try {
       await integrationsApi.saveGoogleConfig({ clientId: config.clientId, clientSecret: clientSecret || undefined })
       setClientSecret('')
-      setMessage('הגדרת Google OAuth נשמרה. כעת כל משתמש שקיבל הרשאת חיבור יכול להתחבר בלחיצה אחת.')
+      setMessage('הגדרת Google OAuth נשמרה. כעת כל משתמש בארגון יכול להתחבר בלחיצה אחת.')
       await refresh()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'שמירת הגדרת Google OAuth נכשלה')

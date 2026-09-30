@@ -313,7 +313,7 @@ export default function UserManagement({ orgId, canManage, isDeveloper, workspac
 
     {editingPermissions && permissionDraft && <Modal title={`הרשאות · ${editingPermissions.displayName || editingPermissions.email}`} onClose={() => !submitting && setEditingPermissions(null)} wide>
       <div className="permission-editor">
-        <div className="info-banner"><ShieldCheck /> התפקיד <strong>{roleLabels[editingPermissions.role] || editingPermissions.role}</strong> הוא ברירת המחדל. כל שינוי כאן חל רק על המשתמש הזה. הרשאות חיבור Google אישי, ייבוא והגדרות חברה ניתנות לשינוי על ידי המפתח בלבד.</div>
+        <div className="info-banner"><ShieldCheck /> התפקיד <strong>{roleLabels[editingPermissions.role] || editingPermissions.role}</strong> הוא ברירת המחדל. כל משתמש יכול לחבר את חשבון Google האישי שלו. רק הרשאת הגדרת OAuth הארגוני, ייבוא והגדרות חברה ניתנות לשינוי על ידי המפתח.</div>
         <div className="permission-presets" aria-label="תבניות הרשאה">
           <button type="button" className={resetToRoleDefault ? 'primary' : 'secondary'} onClick={() => applyPermissionPreset('role')}>ברירת מחדל לתפקיד</button>
           <button type="button" className="secondary" onClick={() => applyPermissionPreset('view')}>צפייה בלבד</button>
@@ -332,7 +332,7 @@ export default function UserManagement({ orgId, canManage, isDeveloper, workspac
                   <input
                     type="checkbox"
                     checked={permissionDraft[area][action]}
-                    disabled={(area === 'connections' && !['view', 'edit'].includes(action)) || (!isDeveloper && (area === 'connections' || area === 'imports' || area === 'settings'))}
+                    disabled={(area === 'connections' && action !== 'edit') || (!isDeveloper && (area === 'connections' || area === 'imports' || area === 'settings'))}
                     onChange={(e) => setPermission(area, action, e.target.checked)}
                     aria-label={`${permissionActionLabels[action]} · ${permissionAreaLabels[area]}`}
                   />

@@ -18,7 +18,7 @@ export const permissionAreaLabels: Record<PermissionArea, string> = {
   reports: 'דוחות',
   finance: 'כספים והצעות מחיר',
   communication: 'תקשורת והערות',
-  connections: 'Google Workspace — חיבור והגדרה',
+  connections: 'Google Workspace — הגדרת OAuth לארגון',
   imports: 'ייבוא נתונים',
   settings: 'הגדרות חברה',
 }
@@ -47,14 +47,14 @@ export function rolePermissionPreset(role: string, isDeveloper = false): Permiss
 
   if (['admin', 'manager'].includes(effectiveRole)) {
     const next = matrix(fullArea)
-    next.connections = hiddenArea()
+    next.connections = viewArea()
     next.imports = hiddenArea()
     next.settings = hiddenArea()
     return next
   }
 
   const next = matrix(viewArea)
-  next.connections = hiddenArea()
+  next.connections = viewArea()
   next.imports = hiddenArea()
   next.settings = hiddenArea()
   const editable = effectiveRole === 'assistant'
@@ -87,6 +87,7 @@ export function normalizePermissions(role: string, stored?: StoredPermissions | 
     }
   }
   next.connections.create = false
+  next.connections.view = true
   next.connections.status = false
   next.connections.delete = false
   return next
