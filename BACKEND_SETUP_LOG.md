@@ -149,6 +149,8 @@ Secret values are intentionally excluded. Public identifiers may be recorded aft
   - Preserved per-user Google token isolation in Cloudflare KV. Each user connects only their own Gmail, Calendar, and Drive account.
   - Removed the obsolete personal-connection permission gate from Gmail, Calendar, and Drive requests while preserving each CRM area's existing permissions.
   - Kept organization-level OAuth Client ID/Secret configuration separately protected by the developer-grantable Google OAuth setup permission.
+  - Deployed Cloudflare Worker version `428d2360-971e-4621-9633-e9bb17289b65` to `https://rameng-crm.rameng-crm-worker.workers.dev`.
+  - Verified the live Worker returns HTTP 200, serves the new personal-profile and universal Google-connection UI, and continues to reject unauthenticated Google authorization requests with HTTP 401.
   - No passwords, OAuth secrets, access tokens, refresh tokens, or Supabase secret keys were written to this log or committed to Git.
 
 ## Pending provider work
