@@ -48,18 +48,18 @@ export function SetupScreen() {
   return <div className="auth-screen">
     <div className="auth-brand"><span className="ram-logo-shell auth-logo-shell"><img src="/ram-engineering-logo.png" alt="ר.א.ם הנדסה" width="1024" height="276" decoding="async" fetchPriority="high" /></span><div><strong>ר.א.ם הנדסה</strong><span>מערכת ניהול ופיקוח פרויקטים</span></div></div>
     <section className="setup-card">
-      <div className="setup-intro"><span><Building2 /></span><h1>הגדרה ראשונית</h1><p>הזינו את פרטי המערכת הראשוניים. את חיבור Google אפשר להשלים גם בהמשך.</p></div>
+      <div className="setup-intro"><span><Building2 /></span><h1>הגדרה ראשונית</h1><p>הזינו את פרטי ההגדרה.</p></div>
       {error && <div className="error-banner">{error}</div>}
       {done && <div className="success-banner">ההגדרה נשמרה. המערכת נטענת מחדש...</div>}
       <form className="form-grid" onSubmit={(e) => void submit(e)}>
         <Field label="קוד הגדרה"><input name="setupToken" type="password" required autoComplete="off" /></Field>
-        <Field label="כתובת פרויקט Supabase"><input name="supabaseUrl" inputMode="url" autoComplete="url" required placeholder="https://xxxxx.supabase.co" /></Field>
-        <Field label="המפתח הציבורי של Supabase"><textarea name="supabaseAnonKey" rows={3} required /></Field>
-        <Field label="מייל מפתח"><input name="adminEmails" type="email" required autoComplete="email" /></Field>
+        <Field label="כתובת Supabase"><input name="supabaseUrl" inputMode="url" autoComplete="url" required placeholder="https://xxxxx.supabase.co" /></Field>
+        <Field label="מפתח Supabase"><textarea name="supabaseAnonKey" rows={3} required /></Field>
+        <Field label="מייל מנהל"><input name="adminEmails" type="email" required autoComplete="email" /></Field>
         <div className="setup-divider">Google — אפשר לחבר גם אחר כך</div>
-        <Field label="מזהה לקוח של Google OAuth"><input name="googleClientId" /></Field>
-        <Field label="סוד לקוח של Google OAuth"><input name="googleClientSecret" type="password" autoComplete="off" /></Field>
-        <Field label="מפתח API של Google Maps / Places" hint="אופציונלי — משפר דיוק כתובות בישראל"><input name="googleMapsApiKey" type="password" autoComplete="off" /></Field>
+        <Field label="מזהה Google"><input name="googleClientId" /></Field>
+        <Field label="מפתח Google"><input name="googleClientSecret" type="password" autoComplete="off" /></Field>
+        <Field label="מפתח Google Maps" hint="אופציונלי"><input name="googleMapsApiKey" type="password" autoComplete="off" /></Field>
         <button className="primary setup-submit" disabled={loading}><KeyRound /> {loading ? 'שומר...' : 'שמירת הגדרה'}</button>
       </form>
     </section>

@@ -437,7 +437,7 @@ export default function App() {
     window.history.replaceState({}, '', `${url.pathname}${url.search}`)
     setInviteMode(false)
   }} />
-  if (loadError) return <div className="auth-screen"><section className="login-card"><h1>לא ניתן לטעון את סביבת העבודה</h1><div className="error-banner">{loadError}</div><p>ודאו שהגדרת מסד הנתונים הושלמה ושיש למשתמש הרשאה למערכת.</p><button className="secondary" onClick={() => window.location.reload()}>ניסיון מחדש</button></section></div>
+  if (loadError) return <div className="auth-screen"><section className="login-card"><h1>לא ניתן לטעון את סביבת העבודה</h1><div className="error-banner">{loadError}</div><p>נסו שוב או פנו למנהל המערכת.</p><button className="secondary" onClick={() => window.location.reload()}>ניסיון מחדש</button></section></div>
   if (!loaded) return <div className="app-loading"><span className="ram-logo-shell loading-logo-shell"><img src="/ram-engineering-logo.png" alt="ר.א.ם הנדסה" width="1024" height="276" decoding="async" fetchPriority="high" /></span><span>טוען פרויקטים...</span></div>
 
   if (selectedProject) return <div className={`app-shell project-mode ${!canEdit ? 'read-only-mode' : ''}`}><Sidebar page={page} setPage={(next) => openPage(next)} workspace={visibleWorkspace} permissions={permissions} open={sidebarOpen} setOpen={setSidebarOpen} user={user} onLogout={() => void signOut()} isDeveloper={isDeveloper} canManageUsers={canManageUsers} /><div className="main"><Topbar search={search} setSearch={setSearch} searchResults={searchResults} urgentCount={urgentCount} onMenu={() => setSidebarOpen(true)} onAttention={openUrgent} saveState={saveState} canEdit={canEdit} /><main className="page-wrap project-page-wrap">{permissionNotice && <div className="error-banner permission-notice" role="alert">{permissionNotice}</div>}<ProjectWorkspace key={selectedProject} projectId={selectedProject} initialTab={projectTab} workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} orgId={orgId} projectPermissions={permissions.projects} taskPermissions={permissions.tasks} calendarPermissions={permissions.calendar} filePermissions={permissions.files} reportPermissions={permissions.reports} communicationPermissions={permissions.communication} onBack={() => openPage('projects')} onClient={permissions.contacts.view ? openClient : undefined} onTabChange={(tab) => { setProjectTab(tab); writeAppRoute({ page: 'projects', projectId: selectedProject, tab }) }} /></main></div></div>
@@ -458,8 +458,8 @@ export default function App() {
         {page === 'reports' && <ReportsPage key={createIntent === 'reports' ? 'new-report' : selectedReport || 'reports'} startCreating={createIntent === 'reports' && permissions.reports.create} workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} orgId={orgId} permissions={permissions.reports} canUploadFiles={permissions.files.create} initialReportId={selectedReport} focusItemId={selectedReportItem} onProject={permissions.projects.view ? openProject : undefined} onSelectReport={(id) => id ? openReport(id) : openPage('reports')} />}
         {page === 'reports-projects' && <ReportsPage workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} orgId={orgId} permissions={permissions.reports} canUploadFiles={permissions.files.create} onProject={permissions.projects.view ? openProject : undefined} />}
         {page === 'reports-finance' && <FinancialReports workspace={visibleWorkspace} />}
-        {page === 'ai' && <ModulePlaceholder icon={<Bot />} title="סוכן AI" text="המודול נוסף לניווט ומוכן לחיבור לזרימות העבודה של ראם. חיבור פעולות AI בפועל ייעשה רק לפי האפיון המאושר." />}
-        {page === 'transcription' && <ModulePlaceholder icon={<AudioLines />} title="תמלול" text="המודול נוסף לניווט כנקודת כניסה לתמלול פגישות והקלטות. תהליך התמלול והפקת המשימות יחובר לפי האפיון המאושר." />}
+        {page === 'ai' && <ModulePlaceholder icon={<Bot />} title="סוכן AI" text="כתיבה, סיכום וניסוח בעזרת AI." />}
+        {page === 'transcription' && <ModulePlaceholder icon={<AudioLines />} title="תמלול" text="תמלול פגישות והקלטות." />}
         {page === 'team' && canManageUsers && <UserManagement orgId={orgId} canManage={canManageUsers} isDeveloper={isDeveloper} workspace={workspace} setWorkspace={editableSetWorkspace} />}
         {page === 'imports' && permissions.imports.view && <ImportCenter workspace={workspace} setWorkspace={editableSetWorkspace} canImport={permissions.imports.create} />}
         {page === 'settings' && <SettingsPage user={user} onUserUpdated={setUser} workspace={workspace} setWorkspace={editableSetWorkspace} canConfigureGoogle={permissions.connections.edit} canViewOrganization={permissions.settings.view} canEditOrganization={permissions.settings.edit} isDeveloper={isDeveloper} />}
@@ -575,7 +575,7 @@ function FinancialReports({ workspace }: { workspace: Workspace }) {
       <article className="metric card"><div><small>שולם</small><strong>{currency(paid)}</strong></div></article>
       <article className="metric card"><div><small>יתרה פתוחה</small><strong>{currency(outstanding)}</strong></div></article>
     </div>
-    <section className="card"><div className="card-head"><div><h2>מידע פיננסי</h2><p>ריכוז הצעות מחיר / חיובים קיימים במערכת. אינטגרציית חשבוניות חיצונית אינה מתווספת ללא אישור היקף.</p></div></div>
+    <section className="card"><div className="card-head"><div><h2>מידע פיננסי</h2><p>ריכוז הצעות מחיר וחיובים.</p></div></div>
       <div className="finance-report-list">{filteredQuotes.map((quote) => {
         const client = workspace.contacts.find((item) => item.id === quote.contactId)
         const project = workspace.projects.find((item) => item.id === quote.projectId)

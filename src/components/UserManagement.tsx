@@ -203,7 +203,7 @@ export default function UserManagement({ orgId, canManage, isDeveloper, workspac
     try {
       const result = await integrationsApi.inviteUser({ orgId, email, name, role })
       setAdding(false)
-      setMessage(result.invited ? `הזמנה נשלחה אל ${result.email}` : `${result.email} כבר קיים ב-Supabase ונוסף למערכת`)
+      setMessage(result.invited ? `הזמנה נשלחה אל ${result.email}` : `${result.email} כבר קיים ונוסף למערכת`)
       await refresh()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'הוספת המשתמש נכשלה')
@@ -247,7 +247,7 @@ export default function UserManagement({ orgId, canManage, isDeveloper, workspac
 
   return <section className="card">
     <div className="card-head">
-      <div><h2><UsersRound /> משתמשים והרשאות</h2><p>בחרו תפקיד כנקודת התחלה, ואז התאימו הרשאות לכל משתמש לפי הצורך.</p></div>
+      <h2><UsersRound /> משתמשים והרשאות</h2>
       <div className="page-action-row">
         <button type="button" className="secondary" onClick={() => void refresh()}><RefreshCw /> רענון</button>
         {canManage && <button type="button" className="primary" onClick={() => setAdding(true)}><Plus /> הוספת משתמש</button>}
@@ -313,7 +313,7 @@ export default function UserManagement({ orgId, canManage, isDeveloper, workspac
 
     {editingPermissions && permissionDraft && <Modal title={`הרשאות · ${editingPermissions.displayName || editingPermissions.email}`} onClose={() => !submitting && setEditingPermissions(null)} wide>
       <div className="permission-editor">
-        <div className="info-banner"><ShieldCheck /> התפקיד <strong>{roleLabels[editingPermissions.role] || editingPermissions.role}</strong> הוא ברירת המחדל. כל משתמש יכול לחבר את חשבון Google האישי שלו. רק הרשאת הגדרת OAuth הארגוני, ייבוא והגדרות חברה ניתנות לשינוי על ידי המפתח.</div>
+        <div className="info-banner"><ShieldCheck /> בחרו את ההרשאות עבור המשתמש.</div>
         <div className="permission-presets" aria-label="תבניות הרשאה">
           <button type="button" className={resetToRoleDefault ? 'primary' : 'secondary'} onClick={() => applyPermissionPreset('role')}>ברירת מחדל לתפקיד</button>
           <button type="button" className="secondary" onClick={() => applyPermissionPreset('view')}>צפייה בלבד</button>

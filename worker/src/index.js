@@ -72,7 +72,7 @@ function developerEmails(config) {
 async function getAuthenticatedUser(request, env, config) {
   const auth = request.headers.get('authorization') || ''
   if (!auth.startsWith('Bearer ')) throw Object.assign(new Error('נדרשת התחברות'), { status: 401 })
-  if (!config.supabaseUrl || !config.supabaseAnonKey) throw Object.assign(new Error('Supabase אינו מוגדר'), { status: 503 })
+  if (!config.supabaseUrl || !config.supabaseAnonKey) throw Object.assign(new Error('השירות אינו זמין כרגע.'), { status: 503 })
   const response = await fetch(`${config.supabaseUrl.replace(/\/$/, '')}/auth/v1/user`, {
     headers: { authorization: auth, apikey: config.supabaseAnonKey },
   })
@@ -89,8 +89,8 @@ function isDeveloper(user, config) {
 
 function supabaseAdmin(env, config) {
   const secret = cleanString(env.SUPABASE_SECRET_KEY)
-  if (!secret) throw Object.assign(new Error('יש להגדיר SUPABASE_SECRET_KEY ב-Cloudflare Worker כדי לנהל הזמנות משתמשים'), { status: 503 })
-  if (!config.supabaseUrl) throw Object.assign(new Error('Supabase אינו מוגדר'), { status: 503 })
+  if (!secret) throw Object.assign(new Error('הזמנות משתמשים אינן זמינות כרגע.'), { status: 503 })
+  if (!config.supabaseUrl) throw Object.assign(new Error('השירות אינו זמין כרגע.'), { status: 503 })
   return createClient(config.supabaseUrl, secret, {
     auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false },
   })
@@ -348,7 +348,7 @@ function normalizeGmailMessage(message) {
 
 async function handleGoogleAuthUrl(request, env, config) {
   const user = await requireUser(request, env, config)
-  if (!config.googleClientId || !config.googleClientSecret) throw Object.assign(new Error('חיבור Google Workspace טרם הוגדר עבור הארגון'), { status: 503 })
+  if (!config.googleClientId || !config.googleClientSecret) throw Object.assign(new Error('החיבור ל-Google עדיין לא זמין.'), { status: 503 })
   const state = crypto.randomUUID()
   await env.CONFIG.put(`${OAUTH_STATE_PREFIX}${state}`, JSON.stringify({ userId: user.id, email: user.email || '', createdAt: Date.now() }), { expirationTtl: 600 })
   const params = new URLSearchParams({
@@ -376,7 +376,7 @@ async function handleGoogleCallback(request, env, config) {
   const state = url.searchParams.get('state') || ''
   const oauthError = url.searchParams.get('error')
   if (oauthError) return new Response('חיבור Google בוטל או נכשל.', { status: 400 })
-  if (!code || !state) return new Response('חסרים קוד או מזהה אימות של Google.', { status: 400 })
+  if (!code || !state) return new Response('החיבור ל-Google נכשל. נסו שוב.', { status: 400 })
   const stateKey = `${OAUTH_STATE_PREFIX}${state}`
   const stateData = await env.CONFIG.get(stateKey, 'json')
   if (!stateData?.userId) return new Response('בקשת החיבור פגה או אינה תקפה.', { status: 400 })
@@ -416,7 +416,7 @@ async function handleGoogleCallback(request, env, config) {
 async function handleGmailThread(request, env, config) {
   const user = await requireGoogleAreaAction(request, env, config, 'communication', 'view')
   const threadId = new URL(request.url).searchParams.get('threadId') || ''
-  if (!threadId) throw Object.assign(new Error('חסר מזהה שרשור'), { status: 400 })
+  if (!threadId) throw Object.assign(new Error('לא נמצאה התכתבות.'), { status: 400 })
   const response = await googleFetch(env, config, user.id, `https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(threadId)}?format=full`)
   const body = await response.json()
   if (!response.ok) throw Object.assign(new Error(localizedExternalError(body.error?.message, 'טעינת שרשור Gmail נכשלה')), { status: response.status })
@@ -683,7 +683,7 @@ async function handleAiRewrite(request, env, config) {
     { area: 'reports', action: 'edit' },
     { area: 'communication', action: 'edit' },
   ])
-  if (!config.openaiApiKey) throw Object.assign(new Error('OpenAI API Key אינו מוגדר'), { status: 409 })
+  if (!config.openaiApiKey) throw Object.assign(new Error('הכלי אינו זמין כרגע.'), { status: 409 })
   const body = await parseBody(request)
   const text = cleanString(body.text)
   const mode = cleanString(body.mode) || 'inspection'
@@ -785,12 +785,12 @@ async function handleAdminBootstrap(request, env) {
   const current = await readConfig(env)
   if (current.supabaseUrl && current.supabaseAnonKey) throw Object.assign(new Error('המערכת כבר הוגדרה. שינויים נוספים מבוצעים ממנהל המערכת.'), { status: 409 })
   const body = await parseBody(request)
-  if (!env.ADMIN_SETUP_TOKEN) throw Object.assign(new Error('ADMIN_SETUP_TOKEN לא הוגדר ב-Cloudflare Worker'), { status: 503 })
-  if (cleanString(body.setupToken) !== env.ADMIN_SETUP_TOKEN) throw Object.assign(new Error('Cloudflare Setup Token שגוי'), { status: 403 })
+  if (!env.ADMIN_SETUP_TOKEN) throw Object.assign(new Error('ההגדרה הראשונית אינה זמינה כרגע.'), { status: 503 })
+  if (cleanString(body.setupToken) !== env.ADMIN_SETUP_TOKEN) throw Object.assign(new Error('קוד ההגדרה שגוי.'), { status: 403 })
   const supabaseUrl = cleanString(body.supabaseUrl).replace(/\/$/, '')
   const supabaseAnonKey = cleanString(body.supabaseAnonKey)
   const adminEmails = cleanEmails(body.adminEmails)
-  if (!/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(supabaseUrl) || supabaseAnonKey.length < 40 || !adminEmails.length) throw Object.assign(new Error('יש להזין כתובת Supabase, מפתח ציבורי ומייל מפתח תקינים'), { status: 400 })
+  if (!/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(supabaseUrl) || supabaseAnonKey.length < 40 || !adminEmails.length) throw Object.assign(new Error('יש לבדוק את פרטי ההגדרה.'), { status: 400 })
   const next = {
     organizationName: cleanString(body.organizationName) || 'ר.א.ם הנדסה',
     supabaseUrl,
@@ -854,10 +854,10 @@ async function handleGoogleConfig(request, env, config) {
   const clientId = cleanString(body.clientId)
   const clientSecret = cleanString(body.clientSecret)
   if (!/^[a-z0-9-]+\.apps\.googleusercontent\.com$/i.test(clientId)) {
-    throw Object.assign(new Error('יש להזין מזהה לקוח תקין של Google OAuth'), { status: 400 })
+    throw Object.assign(new Error('יש להזין מזהה Google תקין.'), { status: 400 })
   }
   if (!clientSecret && !config.googleClientSecret) {
-    throw Object.assign(new Error('יש להזין סוד לקוח של Google OAuth בשמירה הראשונה'), { status: 400 })
+    throw Object.assign(new Error('יש להזין מפתח Google.'), { status: 400 })
   }
 
   const next = { ...config, googleClientId: clientId, updatedAt: new Date().toISOString() }
@@ -919,7 +919,7 @@ export default {
     } catch (error) {
       console.error(error)
       const status = Number(error?.status || 500)
-      const message = error instanceof Error ? error.message : 'שגיאת שרת'
+      const message = error instanceof Error ? error.message : 'הפעולה נכשלה.'
       return apiJson(request, { error: message }, status)
     }
   },

@@ -14,12 +14,11 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       },
     })
   } catch {
-    const target = base || window.location.origin
-    throw new Error(`לא ניתן להתחבר לשרת ה-CRM (${target}). ודא ש-Cloudflare Worker פועל ונסה שוב.`)
+    throw new Error('לא ניתן להתחבר כרגע. נסו שוב.')
   }
 
   const body = await response.json().catch(() => ({})) as T & { error?: string }
-  if (!response.ok) throw new Error(body.error || `שגיאת שרת (${response.status})`)
+  if (!response.ok) throw new Error(body.error || 'הפעולה נכשלה.')
   return body
 }
 

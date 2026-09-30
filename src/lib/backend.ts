@@ -62,28 +62,28 @@ export async function getCurrentUser(): Promise<User | null> {
 }
 
 export async function signIn(email: string, password: string) {
-  if (!client) throw new Error('החיבור למסד הנתונים אינו מוגדר')
+  if (!client) throw new Error('השירות אינו זמין כרגע.')
   const { data, error } = await client.auth.signInWithPassword({ email, password })
   if (error) throw localizedBackendError(error, 'ההתחברות נכשלה')
   return data.user
 }
 
 export async function requestPasswordReset(email: string) {
-  if (!client) throw new Error('החיבור למסד הנתונים אינו מוגדר')
+  if (!client) throw new Error('השירות אינו זמין כרגע.')
   const redirectTo = authRedirectUrl('/?invite=1')
   const { error } = await client.auth.resetPasswordForEmail(email, { redirectTo })
   if (error) throw localizedBackendError(error, 'שליחת קישור האיפוס נכשלה')
 }
 
 export async function updatePassword(password: string) {
-  if (!client) throw new Error('החיבור למסד הנתונים אינו מוגדר')
+  if (!client) throw new Error('השירות אינו זמין כרגע.')
   const { data, error } = await client.auth.updateUser({ password })
   if (error) throw localizedBackendError(error, 'שמירת הסיסמה נכשלה')
   return data.user
 }
 
 export async function updateCurrentUserName(fullName: string) {
-  if (!client) throw new Error('החיבור למסד הנתונים אינו מוגדר')
+  if (!client) throw new Error('השירות אינו זמין כרגע.')
   const name = fullName.trim()
   if (!name) throw new Error('יש להזין שם מלא.')
   const { data, error } = await client.auth.updateUser({
@@ -118,13 +118,13 @@ export async function listOrganizationMembers(orgId: string): Promise<Organizati
 }
 
 export async function setOrganizationMemberRole(orgId: string, email: string, role: string) {
-  if (!client || orgId === 'local') throw new Error('ניהול משתמשים זמין לאחר חיבור מסד הנתונים')
+  if (!client || orgId === 'local') throw new Error('ניהול המשתמשים אינו זמין כרגע.')
   const { error } = await client.rpc('set_org_member_role', { target_org: orgId, target_email: email, target_role: role })
   if (error) throw localizedBackendError(error, 'עדכון תפקיד המשתמש נכשל')
 }
 
 export async function setOrganizationMemberPermissions(orgId: string, userId: string, permissions: StoredPermissions | null) {
-  if (!client || orgId === 'local') throw new Error('ניהול משתמשים זמין לאחר חיבור מסד הנתונים')
+  if (!client || orgId === 'local') throw new Error('ניהול המשתמשים אינו זמין כרגע.')
   const { error } = await client.rpc('set_org_member_permissions', {
     target_org: orgId,
     target_user: userId,
@@ -140,16 +140,16 @@ export async function loadOrganizationWorkspace(userId: string): Promise<{ orgId
     .select('org_id, role, permissions')
     .eq('user_id', userId)
     .maybeSingle()
-  if (membershipError) throw localizedBackendError(membershipError, 'טעינת שיוך המשתמש לארגון נכשלה')
+  if (membershipError) throw localizedBackendError(membershipError, 'טעינת החשבון נכשלה')
 
   if (!membership) {
     const { error: bootstrapError } = await client.rpc('bootstrap_first_admin')
-    if (bootstrapError && !bootstrapError.message.includes('already')) throw localizedBackendError(bootstrapError, 'אתחול הארגון נכשל')
+    if (bootstrapError && !bootstrapError.message.includes('already')) throw localizedBackendError(bootstrapError, 'פתיחת החשבון נכשלה')
     const retry = await client.from('memberships').select('org_id, role, permissions').eq('user_id', userId).maybeSingle()
-    if (retry.error) throw localizedBackendError(retry.error, 'טעינת שיוך המשתמש לארגון נכשלה')
+    if (retry.error) throw localizedBackendError(retry.error, 'טעינת החשבון נכשלה')
     membership = retry.data
   }
-  if (!membership) throw new Error('המשתמש אינו משויך לארגון. מנהל המערכת צריך להוסיף אותו.')
+  if (!membership) throw new Error('החשבון עדיין לא נוסף למערכת. פנו למנהל.')
 
   const orgId = String(membership.org_id)
   const filteredState = await client.rpc('get_workspace_state', { target_org: orgId })
@@ -193,7 +193,7 @@ export async function saveOrganizationWorkspace(orgId: string, userId: string, w
   })
   if (error) {
     if (error.message.includes('WORKSPACE_VERSION_CONFLICT')) {
-      const conflict = new Error('הנתונים עודכנו במקביל על ידי משתמש אחר. השינויים המקומיים נשמרו במסך אך לא נדרסו בשרת. יש לרענן לפני המשך עריכה.')
+      const conflict = new Error('הנתונים עודכנו על ידי משתמש אחר. רעננו את המסך ונסו שוב.')
       conflict.name = 'WorkspaceConflictError'
       throw conflict
     }

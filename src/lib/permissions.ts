@@ -18,7 +18,7 @@ export const permissionAreaLabels: Record<PermissionArea, string> = {
   reports: 'דוחות',
   finance: 'כספים והצעות מחיר',
   communication: 'תקשורת והערות',
-  connections: 'Google Workspace — הגדרת OAuth לארגון',
+  connections: 'הגדרת Google',
   imports: 'ייבוא נתונים',
   settings: 'הגדרות חברה',
 }

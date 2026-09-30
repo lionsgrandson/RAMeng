@@ -76,12 +76,12 @@ function PersonalSettings({ user, onUserUpdated }: { user: User; onUserUpdated: 
   }
 
   return <section className="card settings-card">
-    <div className="card-head"><div><h2>הפרופיל שלי</h2><p>הפרטים האישיים שמוצגים במערכת.</p></div><UserRound /></div>
+    <div className="card-head"><h2>הפרופיל שלי</h2><UserRound /></div>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {message && <div className="success-banner" role="status">{message}</div>}
     <div className="settings-form">
       <Field label="שם מלא"><input value={name} maxLength={100} autoComplete="name" onChange={(event) => setName(event.target.value)} /></Field>
-      <Field label="כתובת מייל" hint="כתובת המייל משמשת לכניסה ואינה משתנה במסך זה."><input type="email" value={user.email || ''} readOnly /></Field>
+      <Field label="כתובת מייל"><input type="email" value={user.email || ''} readOnly /></Field>
       <div className="form-actions"><button type="button" className="primary" disabled={saving || !name.trim() || name.trim() === currentName} onClick={() => void save()}><Save /> {saving ? 'שומר...' : 'שמירת השם'}</button></div>
     </div>
   </section>
@@ -135,7 +135,7 @@ function GoogleWorkspaceSettings({ canConfigure }: { canConfigure: boolean }) {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     if (params.get('google') === 'connected') {
-      setMessage('חשבון Google Workspace האישי שלך חובר בהצלחה.')
+      setMessage('Google חובר בהצלחה.')
       params.delete('google')
       const query = params.toString()
       window.history.replaceState({}, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`)
@@ -164,10 +164,10 @@ function GoogleWorkspaceSettings({ canConfigure }: { canConfigure: boolean }) {
     try {
       await integrationsApi.saveGoogleConfig({ clientId: config.clientId, clientSecret: clientSecret || undefined })
       setClientSecret('')
-      setMessage('הגדרת Google OAuth נשמרה. כעת כל משתמש בארגון יכול להתחבר בלחיצה אחת.')
+      setMessage('החיבור נשמר.')
       await refresh()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'שמירת הגדרת Google OAuth נכשלה')
+      setError(e instanceof Error ? e.message : 'שמירת החיבור נכשלה')
     } finally {
       setSavingConfig(false)
     }
@@ -176,21 +176,19 @@ function GoogleWorkspaceSettings({ canConfigure }: { canConfigure: boolean }) {
   if (loading) return <section className="card settings-card"><div className="loading-state"><RefreshCw className="spin" /> טוען את חיבור Google שלך...</div></section>
 
   return <section className="card settings-card">
-    <div className="card-head"><div><h2>Google Workspace האישי שלי</h2><p>לחיצה אחת והתחברות ל-Google מקשרות את Gmail, יומן Google ו-Google Drive של החשבון שלך בלבד.</p></div><button type="button" className="secondary" onClick={() => void refresh()}><RefreshCw /> רענון</button></div>
+    <div className="card-head"><div><h2>Google Workspace</h2><p>Gmail, יומן ו-Drive.</p></div><button type="button" className="secondary" onClick={() => void refresh()}><RefreshCw /> רענון</button></div>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {message && <div className="success-banner" role="status">{message}</div>}
     <div className="integration-health">
       <article><span className="google-g">G</span><div><strong>Google Workspace</strong><span>{status?.google.email || 'Gmail · Calendar · Drive'}</span></div><Chip tone={status?.google.connected ? 'good' : 'warn'}>{status?.google.connected ? 'מחובר לחשבון שלך' : 'לא מחובר'}</Chip><button type="button" className="primary" disabled={connecting || !status?.google.configured} onClick={() => void connectGoogle()}>{connecting ? 'מעביר ל-Google...' : status?.google.connected ? 'חיבור חשבון אחר' : 'התחברות עם Google'}</button></article>
     </div>
-    {!status?.google.configured && <div className="error-banner" role="status">חיבור Google Workspace טרם הוגדר עבור הארגון.</div>}
-    <p className="settings-help">החיבור אישי לכל משתמש. פרטי הכניסה והמידע שלך אינם משותפים עם משתמשים אחרים, ואין במסך הזה גישה ל-Supabase, למפתחות מערכת או לקוד.</p>
+    {!status?.google.configured && <div className="error-banner" role="status">החיבור ל-Google עדיין לא זמין.</div>}
     {canConfigure && config && <div className="integration-form">
-      <h3>הגדרת חיבור Google לארגון</h3>
-      <div className="security-note">Google דורשת יצירה חד-פעמית של לקוח OAuth במסוף Google Cloud ואינה מאפשרת לאפליקציות ליצור אותו אוטומטית. לאחר שמירת המזהה והסוד כאן, החיבור האישי של המשתמשים מתבצע בכפתור אחד.</div>
-      <Field label="כתובת חזרה מורשית" hint="יש להוסיף כתובת זו בדיוק ל-Authorized redirect URIs ב-Google Cloud."><input readOnly value={config.redirectUri} /></Field>
-      <Field label="מזהה לקוח של Google OAuth"><input value={config.clientId} onChange={(e) => setConfig({ ...config, clientId: e.target.value })} placeholder="...apps.googleusercontent.com" /></Field>
-      <Field label="סוד לקוח של Google OAuth" hint={config.secretConfigured ? 'כבר נשמר סוד. השאירו ריק כדי לא לשנות אותו.' : 'נדרש בשמירה הראשונה.'}><input type="password" autoComplete="off" value={clientSecret} onChange={(e) => setClientSecret(e.target.value)} placeholder={config.secretConfigured ? 'סוד שמור' : 'הזנת סוד לקוח'} /></Field>
-      <div className="form-actions"><a className="secondary link-button" href="https://console.cloud.google.com/auth/clients" target="_blank" rel="noreferrer">פתיחת Google Cloud</a><button type="button" className="primary" disabled={savingConfig || !config.clientId.trim() || (!config.secretConfigured && !clientSecret.trim())} onClick={() => void saveGoogleConfig()}><Save /> {savingConfig ? 'שומר...' : 'שמירת חיבור Google'}</button></div>
+      <h3>הגדרת Google</h3>
+      <Field label="כתובת הפניה" hint="העתיקו את הכתובת ל-Google Cloud."><input readOnly value={config.redirectUri} /></Field>
+      <Field label="מזהה Google"><input value={config.clientId} onChange={(e) => setConfig({ ...config, clientId: e.target.value })} placeholder="...apps.googleusercontent.com" /></Field>
+      <Field label="מפתח Google" hint={config.secretConfigured ? 'כבר שמור. השאירו ריק אם אין שינוי.' : 'נדרש בשמירה הראשונה.'}><input type="password" autoComplete="off" value={clientSecret} onChange={(e) => setClientSecret(e.target.value)} placeholder={config.secretConfigured ? 'מפתח שמור' : 'הזנת מפתח'} /></Field>
+      <div className="form-actions"><a className="secondary link-button" href="https://console.cloud.google.com/auth/clients" target="_blank" rel="noreferrer">פתיחת Google Cloud</a><button type="button" className="primary" disabled={savingConfig || !config.clientId.trim() || (!config.secretConfigured && !clientSecret.trim())} onClick={() => void saveGoogleConfig()}><Save /> {savingConfig ? 'שומר...' : 'שמירה'}</button></div>
     </div>}
   </section>
 }
@@ -234,16 +232,16 @@ function SystemSettings() {
   if (loading) return <section className="card settings-card"><div className="loading-state"><RefreshCw className="spin" /> טוען הגדרות מערכת...</div></section>
 
   return <section className="card settings-card">
-    <div className="card-head"><div><h2>הגדרות מערכת למפתח</h2><p>מפתחות ותשתיות משותפות. מסך זה אינו זמין למנהלים או למשתמשים רגילים.</p></div><Cloud /></div>
+    <div className="card-head"><h2>הגדרות מערכת</h2><Cloud /></div>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {message && <div className="success-banner" role="status">{message}</div>}
     <div className="integration-form">
-      <Field label="כתובת פרויקט Supabase"><input value={config.supabaseUrl || ''} onChange={(e) => setConfig({ ...config, supabaseUrl: e.target.value })} placeholder="https://xxxxx.supabase.co" /></Field>
-      <Field label="המפתח הציבורי של Supabase"><textarea rows={3} value={config.supabaseAnonKey || ''} onChange={(e) => setConfig({ ...config, supabaseAnonKey: e.target.value })} /></Field>
-      <Field label="מייל מפתח"><input value={(config.adminEmails || []).join(', ')} onChange={(e) => setConfig({ ...config, adminEmails: e.target.value.split(',').map((value) => value.trim()).filter(Boolean) })} /></Field>
-      <Field label="מזהה לקוח של Google OAuth"><input value={config.googleClientId || ''} onChange={(e) => setConfig({ ...config, googleClientId: e.target.value })} /></Field>
-      <Field label="סוד לקוח של Google OAuth"><input type="password" autoComplete="off" value={config.googleClientSecret || ''} onChange={(e) => setConfig({ ...config, googleClientSecret: e.target.value })} placeholder="השאירו ריק אם אין שינוי" /></Field>
-      <Field label="מפתח API של Google Maps / Places" hint="אופציונלי. משפר חיפוש כתובות; המפתח נשמר בצד השרת בלבד."><input type="password" autoComplete="off" value={config.googleMapsApiKey || ''} onChange={(e) => setConfig({ ...config, googleMapsApiKey: e.target.value })} placeholder="השאירו ריק אם אין שינוי" /></Field>
+      <Field label="כתובת Supabase"><input value={config.supabaseUrl || ''} onChange={(e) => setConfig({ ...config, supabaseUrl: e.target.value })} placeholder="https://xxxxx.supabase.co" /></Field>
+      <Field label="מפתח Supabase"><textarea rows={3} value={config.supabaseAnonKey || ''} onChange={(e) => setConfig({ ...config, supabaseAnonKey: e.target.value })} /></Field>
+      <Field label="מייל מנהל"><input value={(config.adminEmails || []).join(', ')} onChange={(e) => setConfig({ ...config, adminEmails: e.target.value.split(',').map((value) => value.trim()).filter(Boolean) })} /></Field>
+      <Field label="מזהה Google"><input value={config.googleClientId || ''} onChange={(e) => setConfig({ ...config, googleClientId: e.target.value })} /></Field>
+      <Field label="מפתח Google"><input type="password" autoComplete="off" value={config.googleClientSecret || ''} onChange={(e) => setConfig({ ...config, googleClientSecret: e.target.value })} placeholder="השאירו ריק אם אין שינוי" /></Field>
+      <Field label="מפתח Google Maps" hint="אופציונלי"><input type="password" autoComplete="off" value={config.googleMapsApiKey || ''} onChange={(e) => setConfig({ ...config, googleMapsApiKey: e.target.value })} placeholder="השאירו ריק אם אין שינוי" /></Field>
       <div className="form-actions"><button type="button" className="primary" disabled={saving} onClick={() => void save()}><Save /> {saving ? 'שומר...' : 'שמירת הגדרות מערכת'}</button></div>
     </div>
   </section>
