@@ -153,6 +153,15 @@ Secret values are intentionally excluded. Public identifiers may be recorded aft
   - Verified the live Worker returns HTTP 200, serves the new personal-profile and universal Google-connection UI, and continues to reject unauthenticated Google authorization requests with HTTP 401.
   - No passwords, OAuth secrets, access tokens, refresh tokens, or Supabase secret keys were written to this log or committed to Git.
 
+- **2026-09-30 — User-facing copy cleanup**
+  - Removed technical implementation commentary from the profile, Google connection, permission editor, files, Drive, AI, finance, setup, and error states.
+  - Deleted the personal-connection disclaimer and shortened Google Workspace copy to the user actions and services that matter.
+  - Replaced provider and infrastructure details in ordinary error messages with short Hebrew instructions. Essential developer-only setup fields remain available with concise labels.
+  - Ran `npm run build` and `node --check worker/src/index.js` successfully. The existing Vite large-chunk warning remains unchanged.
+  - Deployed Cloudflare Worker version `b630729c-af2b-4867-a777-4e30746ea03f` to `https://rameng-crm.rameng-crm-worker.workers.dev`.
+  - Verified the live page and JavaScript bundle return HTTP 200, the removed technical copy is absent, the simplified Hebrew copy is present, and the unauthenticated API path still returns HTTP 401.
+  - No passwords, OAuth secrets, access tokens, refresh tokens, or Supabase secret keys were written to this log or committed to Git.
+
 ## Pending provider work
 
 - Configure the Supabase Auth site/redirect URLs for any additional production domains if needed.
