@@ -87,3 +87,13 @@ Run `npm test`, `npm run build`, and `npm run qa`. The local QA server is bound 
 `127.0.0.1:4175`. It persists disposable records under `rameng-qa-*` keys. Supported
 query flags: `qaRole=viewer`, `qaRole=status`, `qaRole=restricted`, `qaSave=error`
 (first save fails, retry succeeds), `qaSave=conflict`, and `qaUpload=error`.
+
+## Publication
+
+- Code commit pushed to `main`: `42929cc522a4379b16dcca142924687465dee767`.
+- Published to <https://rameng-crm.rameng-crm-worker.workers.dev> on 4 October 2026.
+- Cloudflare version: `3db81f6b-d67a-4d71-8a03-6acf2eee1bca`.
+- The live HTML and all five JavaScript/CSS assets matched local build SHA-256
+  hashes. Public configuration remained configured without private credential
+  fields; unauthenticated admin/Google-config/integration-status requests returned
+  HTTP 401. The live login screen rendered successfully in the browser.
