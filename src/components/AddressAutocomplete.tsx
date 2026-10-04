@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Loader2, MapPin } from 'lucide-react'
 import { integrationsApi } from '../lib/api'
 
@@ -51,6 +51,8 @@ export default function AddressAutocomplete({
   const [remote, setRemote] = useState<{ label: string; value: string }[]>([])
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [activeIndex, setActiveIndex] = useState(-1)
+  const listId = useId()
   const focused = useRef(false)
   const requestId = useRef(0)
 
@@ -69,12 +71,12 @@ export default function AddressAutocomplete({
 
   useEffect(() => {
     const query = draft.trim()
+    const id = ++requestId.current
     if (!focused.current || query.length < 2) {
       setRemote([])
       setLoading(false)
       return
     }
-    const id = ++requestId.current
     const timer = window.setTimeout(() => {
       setLoading(true)
       void integrationsApi.addressSuggestions(query)
@@ -96,7 +98,7 @@ export default function AddressAutocomplete({
           if (requestId.current === id) setLoading(false)
         })
     }, 500)
-    return () => window.clearTimeout(timer)
+    return () => { window.clearTimeout(timer); requestId.current += 1 }
   }, [draft])
 
   const suggestions = useMemo(() => {
@@ -112,6 +114,7 @@ export default function AddressAutocomplete({
   const choose = (next: string) => {
     setDraft(next)
     setOpen(false)
+    setActiveIndex(-1)
     onValueChange?.(next)
   }
 
@@ -139,9 +142,20 @@ export default function AddressAutocomplete({
         dir="rtl"
         inputMode="text"
         aria-autocomplete="list"
+        role="combobox"
+        aria-controls={listId}
+        aria-activedescendant={open && activeIndex >= 0 && suggestions[activeIndex] ? `${listId}-${activeIndex}` : undefined}
         aria-expanded={open && (loading || suggestions.length > 0)}
         onFocus={() => { focused.current = true; setOpen(true) }}
-        onChange={(event) => { setDraft(event.target.value); setOpen(true) }}
+        onChange={(event) => { setDraft(event.target.value); setOpen(true); setActiveIndex(-1) }}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setOpen(false); setActiveIndex(-1) }
+          if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && suggestions.length) {
+            event.preventDefault(); setOpen(true)
+            setActiveIndex((current) => event.key === 'ArrowDown' ? (current + 1) % suggestions.length : (current < 0 ? suggestions.length - 1 : (current - 1 + suggestions.length) % suggestions.length))
+          }
+          if (event.key === 'Enter' && open && activeIndex >= 0 && suggestions[activeIndex]) { event.preventDefault(); choose(suggestions[activeIndex].value) }
+        }}
         onBlur={() => {
           focused.current = false
           window.setTimeout(() => { commit(); setOpen(false) }, 130)
@@ -149,10 +163,10 @@ export default function AddressAutocomplete({
       />
       {loading && <Loader2 className="address-loading" aria-label="טוען הצעות כתובת" />}
     </div>
-    {open && draft.trim().length >= 2 && (loading || suggestions.length > 0) && <div className="address-suggestions" role="listbox">
-      {suggestions.map((item) => <button type="button" role="option" key={item.value} onMouseDown={(event) => event.preventDefault()} onClick={() => choose(item.value)}><MapPin /><span>{item.label}</span></button>)}
+    {open && draft.trim().length >= 2 && (loading || suggestions.length > 0) && <div className="address-suggestions" id={listId} role="listbox" aria-label="הצעות כתובת">
+      {suggestions.map((item, index) => <button type="button" role="option" aria-selected={index === activeIndex} id={`${listId}-${index}`} key={item.value} onMouseDown={(event) => event.preventDefault()} onClick={() => choose(item.value)}><MapPin /><span>{item.label}</span></button>)}
       {loading && !suggestions.length && <div className="address-suggestion-loading">מחפש כתובות…</div>}
-      <small>הצעות כתובת בעברית מבוססות OpenStreetMap</small>
+      <small>אפשר לבחור הצעה או להזין כתובת מלאה</small>
     </div>}
   </div>
 }

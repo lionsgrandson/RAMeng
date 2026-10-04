@@ -1,12 +1,12 @@
 import { useMemo, useState, type FormEvent } from 'react'
-import * as XLSX from '@e965/xlsx'
 import { AlertTriangle, ArrowLeft, ArrowRight, BriefcaseBusiness, CalendarDays, CircleDollarSign, FileSpreadsheet, ListChecks, Plus, Search, Sparkles, Upload, UsersRound } from 'lucide-react'
 import type { Contact, Deal, DealStage, Quote, TeamMember, Workspace } from '../types'
 import { integrationsApi } from '../lib/api'
+import { readImportRows } from '../lib/imports'
 import { Chip, EmptyState, Field, Modal, dateLabel, money, nowIso, uid } from './common'
 
 type DashboardPage = 'clients' | 'projects' | 'tasks' | 'calendar' | 'reports'
-export function Dashboard({ workspace, onProject, onTask, onReport, onPage, onCreate, onUrgent, canCreate }: { workspace: Workspace; onProject: (id: string) => void; onTask: (id: string) => void; onReport: (reportId: string, itemId: string) => void; onPage: (page: DashboardPage) => void; onCreate: (page: DashboardPage) => void; onUrgent: () => void; canCreate: Partial<Record<DashboardPage, boolean>> }) {
+export function Dashboard({ workspace, onProject, onTask, onReport, onPage, onCreate, onUrgent, canCreate, canView }: { workspace: Workspace; onProject: (id: string) => void; onTask: (id: string) => void; onReport: (reportId: string, itemId: string) => void; onPage: (page: DashboardPage) => void; onCreate: (page: DashboardPage) => void; onUrgent: () => void; canCreate: Partial<Record<DashboardPage, boolean>>; canView: Partial<Record<DashboardPage, boolean>> }) {
   const openTasks = workspace.tasks.filter((task) => !['בוצע', 'סגור'].includes(task.status))
   const urgentTasks = openTasks.filter((task) => task.status === 'דורש מעקב' || task.priority === 'דחופה' || (task.followUpDate && new Date(task.followUpDate).getTime() < Date.now()))
   const openReportItems = workspace.reports.flatMap((report) => report.sections.flatMap((section) => section.items.map((item) => ({ ...item, report })))).filter((item) => !['בוצע', 'תקין', 'סגור'].includes(item.status))
@@ -16,18 +16,18 @@ export function Dashboard({ workspace, onProject, onTask, onReport, onPage, onCr
   return <>
     {Object.values(canCreate).some(Boolean) && <div className="dashboard-actions" aria-label="פעולות מהירות"><span>מה רוצים לעשות?</span>{canCreate.tasks && <button type="button" className="primary" onClick={() => onCreate('tasks')}><Plus /> משימה חדשה</button>}{canCreate.projects && <button type="button" className="secondary" onClick={() => onCreate('projects')}><Plus /> פרויקט חדש</button>}{canCreate.clients && <button type="button" className="secondary" onClick={() => onCreate('clients')}><Plus /> לקוח חדש</button>}{canCreate.reports && <button type="button" className="secondary" onClick={() => onCreate('reports')}><Plus /> דוח חדש</button>}{canCreate.calendar && <button type="button" className="secondary" onClick={() => onCreate('calendar')}><Plus /> אירוע חדש</button>}</div>}
     <div className="metric-grid dashboard-metrics">
-      <button type="button" className="metric card metric-link" onClick={() => onPage('projects')}><span className="metric-icon brand"><BriefcaseBusiness /></span><div><small>פרויקטים</small><strong>{activeProjects.length}</strong></div></button>
-      <button type="button" className="metric card metric-link" onClick={onUrgent}><span className="metric-icon warn"><AlertTriangle /></span><div><small>משימות לטיפול</small><strong>{urgentTasks.length}</strong></div></button>
-      <button type="button" className="metric card metric-link" onClick={() => onPage('tasks')}><span className="metric-icon good"><ListChecks /></span><div><small>משימות</small><strong>{openTasks.length}</strong></div></button>
-      <button type="button" className="metric card metric-link" onClick={() => onPage('calendar')}><span className="metric-icon neutral"><CalendarDays /></span><div><small>יומן</small><strong>{upcoming}</strong></div></button>
+      {canView.projects && <button type="button" className="metric card metric-link" onClick={() => onPage('projects')}><span className="metric-icon brand"><BriefcaseBusiness /></span><div><small>פרויקטים</small><strong>{activeProjects.length}</strong></div></button>}
+      {canView.tasks && <button type="button" className="metric card metric-link" onClick={onUrgent}><span className="metric-icon warn"><AlertTriangle /></span><div><small>משימות לטיפול</small><strong>{urgentTasks.length}</strong></div></button>}
+      {canView.tasks && <button type="button" className="metric card metric-link" onClick={() => onPage('tasks')}><span className="metric-icon good"><ListChecks /></span><div><small>משימות</small><strong>{openTasks.length}</strong></div></button>}
+      {canView.calendar && <button type="button" className="metric card metric-link" onClick={() => onPage('calendar')}><span className="metric-icon neutral"><CalendarDays /></span><div><small>יומן</small><strong>{upcoming}</strong></div></button>}
     </div>
     <div className="dashboard-grid compact-dashboard">
-      <section className="card"><div className="card-head"><h2>פרויקטים אחרונים</h2><button type="button" className="text-button" onClick={() => onPage('projects')}>כל הפרויקטים</button></div><div className="card-body project-health-list">{activeProjects.length ? activeProjects.slice(0, 10).map((project) => {
+      {canView.projects && <section className="card"><div className="card-head"><h2>פרויקטים אחרונים</h2><button type="button" className="text-button" onClick={() => onPage('projects')}>כל הפרויקטים</button></div><div className="card-body project-health-list">{activeProjects.length ? activeProjects.slice(0, 10).map((project) => {
         const tasks = openTasks.filter((task) => task.projectId === project.id)
         const urgent = tasks.filter((task) => task.priority === 'דחופה' || task.status === 'דורש מעקב').length
         return <button className="project-health" key={project.id} onClick={() => onProject(project.id)}><div className="project-health-main"><strong>{project.name || 'פרויקט בנייה'}</strong><span>{project.address || 'חסרה כתובת'}</span></div><div className="project-progress-cell"><div className="progress"><i style={{ width: `${project.progress}%` }} /></div><span>{project.progress}%</span></div><div className={`project-task-count ${urgent ? 'urgent' : ''}`}><b>{tasks.length}</b><span>משימות</span>{urgent > 0 && <small>{urgent} לטיפול</small>}</div></button>
-      }) : <EmptyState title="אין פרויקטים" text="צרו פרויקט ראשון." />}</div></section>
-      <section className="card"><div className="card-head"><h2>דורש טיפול</h2><button type="button" className="text-button" onClick={onUrgent}>כל המשימות לטיפול</button></div><div className="card-body attention-list">{[
+      }) : <EmptyState title="אין פרויקטים" text={canCreate.projects ? 'צרו פרויקט ראשון.' : 'פרויקטים שיוספו למערכת יופיעו כאן.'} />}</div></section>}
+      <section className="card"><div className="card-head"><h2>דורש טיפול</h2>{canView.tasks && <button type="button" className="text-button" onClick={onUrgent}>כל המשימות לטיפול</button>}</div><div className="card-body attention-list">{[
         ...urgentTasks.slice(0, 6).map((task) => ({ id: task.id, title: task.title, text: dateLabel(task.followUpDate), tone: 'bad' as const, action: () => onTask(task.id) })),
         ...openReportItems.slice(0, 6).map((item) => ({ id: `${item.report.id}-${item.id}`, title: item.description, text: item.report.title, tone: 'warn' as const, action: () => onReport(item.report.id, item.id) })),
       ].slice(0, 10).map((item) => <button type="button" className="attention-item attention-action" key={item.id} onClick={item.action}><span className={`dot ${item.tone}`} /><div><strong>{item.title}</strong><small>{item.text}</small></div><ArrowLeft aria-hidden="true" /></button>)}{!urgentTasks.length && !openReportItems.length && <EmptyState title="הכול מעודכן" text="אין כרגע פריטים דחופים." />}</div></section>
@@ -79,12 +79,7 @@ export function ImportCenter({ workspace, setWorkspace, canImport }: { workspace
     setError('')
     try {
       const buffer = await file.arrayBuffer()
-      const workbook = XLSX.read(buffer, { type: 'array' })
-      const firstName = workbook.SheetNames[0]
-      if (!firstName) throw new Error('הקובץ לא מכיל גיליון נתונים')
-      const first = workbook.Sheets[firstName]
-      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(first, { defval: '' })
-      if (!rows.length) throw new Error('לא נמצאו שורות לייבוא')
+      const rows = await readImportRows(buffer, /\.csv$/i.test(file.name))
 
       if (kind === 'contacts') {
         const contacts: Contact[] = rows.map((row) => ({ id: uid('contact'), name: String(row['שם'] || row.name || row.Name || ''), company: String(row['חברה'] || row.company || ''), phone: String(row['טלפון'] || row.phone || ''), email: String(row['מייל'] || row.email || ''), status: 'פעיל', tags: [], createdAt: nowIso() })).filter((item) => item.name)
@@ -92,7 +87,7 @@ export function ImportCenter({ workspace, setWorkspace, canImport }: { workspace
         setWorkspace((current) => ({ ...current, contacts: [...current.contacts, ...contacts] }))
         setMessage(`יובאו ${contacts.length} לקוחות`)
       } else {
-        const tasks = rows.map((row, index) => ({ id: uid('task'), projectId: String(row['projectId'] || '') || undefined, title: String(row['משימה'] || row.title || row.Task || ''), description: String(row['הערות'] || row.notes || ''), status: String(row['סטטוס'] || 'טרם התחיל'), priority: 'רגילה' as const, startDate: String(row['תאריך התחלה'] || '') || undefined, followUpDate: String(row['מועד מעקב'] || row['תאריך סיום'] || '') || undefined, emailTo: String(row['מייל'] || '') || undefined, custom: {}, order: workspace.tasks.length + index + 1, createdAt: nowIso() })).filter((item) => item.title)
+        const tasks = rows.map((row, index) => ({ id: uid('task'), projectId: String(row['projectId'] || '') || undefined, title: String(row['משימה'] || row.title || row.Task || ''), description: String(row['הערות'] || row.notes || ''), status: String(row['סטטוס'] || 'טרם התחיל'), priority: 'רגילה' as const, startDate: String(row['תאריך התחלה'] || '') || undefined, dueDate: String(row['תאריך סיום'] || '') || undefined, followUpDate: String(row['מועד מעקב'] || '') || undefined, emailTo: String(row['מייל'] || '') || undefined, custom: {}, order: workspace.tasks.length + index + 1, createdAt: nowIso() })).filter((item) => item.title)
         if (!tasks.length) throw new Error('לא נמצאה עמודת משימה תקינה')
         setWorkspace((current) => ({ ...current, tasks: [...current.tasks, ...tasks] }))
         setMessage(`יובאו ${tasks.length} משימות`)

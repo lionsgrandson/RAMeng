@@ -208,7 +208,7 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
     tasks: current.tasks.map((task) => task.id === id ? {
       ...task,
       status,
-      completedAt: COMPLETED_STATUSES.includes(status) ? (task.completedAt || nowIso()) : undefined,
+      ...(canUpdate ? { completedAt: COMPLETED_STATUSES.includes(status) ? (task.completedAt || nowIso()) : undefined } : {}),
     } : task),
   }))
 
@@ -221,7 +221,7 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
       tasks: current.tasks.map((item) => item.id === task.id ? {
         ...item,
         status: complete ? completedStatus : restoreStatus,
-        completedAt: complete ? nowIso() : undefined,
+        ...(canUpdate ? { completedAt: complete ? nowIso() : undefined } : {}),
       } : item),
     }
   })
@@ -400,12 +400,12 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
             {!projectId && <td><div className="task-project-cell"><select className="cell-input" disabled={!canUpdate} aria-label={`פרויקט עבור ${task.title}`} value={task.projectId || ''} onChange={(e) => changeTaskProject(task.id, e.target.value || undefined)}><option value="">ללא פרויקט</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.name} — {project.address || 'כתובת חסרה'}</option>)}</select>{task.projectId && onProject && <button type="button" className="text-button" onClick={() => onProject(task.projectId!)}>פתיחה</button>}</div></td>}
             {visibleColumns.map((column) => <td key={column.id}>
               {column.key === 'title' ? <input className="cell-input task-title-input" disabled={!canUpdate} aria-label="שם משימה" style={{ paddingInlineStart: 8 + depth * 22 }} value={task.title} onChange={(e) => updateTask(task.id, { title: e.target.value })} />
-                : column.type === 'status' ? <select className="cell-input" disabled={!canStatus} value={fieldValue(task, column)} onChange={(e) => editCell(task, column, e.target.value)}>{workspace.taskStatuses.map((status) => <option key={status}>{status}</option>)}</select>
-                : column.type === 'member' ? <select className="cell-input" disabled={!canUpdate} value={fieldValue(task, column)} onChange={(e) => editCell(task, column, e.target.value)}><option value="">לא משויך</option>{workspace.team.filter((member) => member.active).map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select>
-                : column.type === 'date' ? <input className="cell-input" disabled={!canUpdate} type="date" value={dateInput(fieldValue(task, column))} onChange={(e) => editCell(task, column, e.target.value)} />
-                : column.type === 'priority' ? <select className="cell-input" disabled={!canUpdate} value={fieldValue(task, column)} onChange={(e) => editCell(task, column, e.target.value)}><option>נמוכה</option><option>רגילה</option><option>גבוהה</option><option>דחופה</option></select>
-                : column.type === 'email' ? <div className="email-cell"><input className="cell-input" disabled={!canUpdate} type="email" value={fieldValue(task, column)} onChange={(e) => editCell(task, column, e.target.value)} placeholder="name@example.com" />{onEmail && <button type="button" className="secondary task-action-btn" title="פתיחת התכתבות" aria-label="פתיחת התכתבות" onClick={() => onEmail(task)}><Mail /> מייל</button>}</div>
-                : <input className="cell-input" disabled={!canUpdate} value={fieldValue(task, column)} onChange={(e) => editCell(task, column, e.target.value)} />}
+                : column.type === 'status' ? <select className="cell-input" disabled={!canStatus} aria-label={`${column.label} עבור ${task.title}`} value={fieldValue(task, column)} onChange={(e) => editCell(task, column, e.target.value)}>{workspace.taskStatuses.map((status) => <option key={status}>{status}</option>)}</select>
+                : column.type === 'member' ? <select className="cell-input" disabled={!canUpdate} aria-label={`${column.label} עבור ${task.title}`} value={fieldValue(task, column)} onChange={(e) => editCell(task, column, e.target.value)}><option value="">לא משויך</option>{workspace.team.filter((member) => member.active).map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select>
+                : column.type === 'date' ? <input className="cell-input" disabled={!canUpdate} aria-label={`${column.label} עבור ${task.title}`} type="date" value={dateInput(fieldValue(task, column))} onChange={(e) => editCell(task, column, e.target.value)} />
+                : column.type === 'priority' ? <select className="cell-input" disabled={!canUpdate} aria-label={`${column.label} עבור ${task.title}`} value={fieldValue(task, column)} onChange={(e) => editCell(task, column, e.target.value)}><option>נמוכה</option><option>רגילה</option><option>גבוהה</option><option>דחופה</option></select>
+                : column.type === 'email' ? <div className="email-cell"><input className="cell-input" disabled={!canUpdate} aria-label={`${column.label} עבור ${task.title}`} type="email" value={fieldValue(task, column)} onChange={(e) => editCell(task, column, e.target.value)} placeholder="name@example.com" />{onEmail && <button type="button" className="secondary task-action-btn" title="פתיחת התכתבות" aria-label="פתיחת התכתבות" onClick={() => onEmail(task)}><Mail /> מייל</button>}</div>
+                : <input className="cell-input" disabled={!canUpdate} aria-label={`${column.label} עבור ${task.title}`} value={fieldValue(task, column)} onChange={(e) => editCell(task, column, e.target.value)} />}
             </td>)}
             <td className="row-actions">{(canCreate || canDelete) && <div className="task-row-actions">{canCreate && <button type="button" className="secondary task-action-btn" onClick={() => setCreatingFor({ parentId: task.id })}><Plus /> תת-משימה</button>}{canDelete && <button type="button" className="secondary danger task-action-btn" onClick={() => removeTask(task.id)}><Trash2 /> מחיקה</button>}</div>}</td>
           </tr>)}

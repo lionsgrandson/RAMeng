@@ -96,7 +96,7 @@ const roleLabel = (role: string, isDeveloper: boolean) => {
   if (role === 'assistant') return 'עוזר/ת'
   if (role === 'inspector') return 'מפקח/ת'
   if (role === 'engineer') return 'מהנדס/ת'
-  if (role === 'viewer' || role === 'reviewer') return 'סוקר/ת · צפייה בלבד'
+  if (role === 'viewer' || role === 'reviewer') return 'סוקר/ת'
   return role
 }
 
@@ -177,6 +177,7 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [search, setSearch] = useState('')
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error' | 'conflict'>('idle')
+  const [saveAttempt, setSaveAttempt] = useState(0)
   const workspaceVersionRef = useRef(0)
   const localRevisionRef = useRef(0)
   const dirtyRef = useRef(false)
@@ -223,7 +224,7 @@ export default function App() {
 
       void getCurrentUser().then((currentUser) => {
         if (active) setUser(currentUser)
-      })
+      }).catch(() => { if (active) setUser(null) })
 
       const backend = getBackend()
       if (backend) {
@@ -287,6 +288,7 @@ export default function App() {
   const canViewAdminData = (isDeveloper || ['developer', 'admin', 'manager'].includes(role)) && permissionAreas.filter((area) => area !== 'connections' && area !== 'imports' && area !== 'settings').every((area) => permissions[area].view)
   const canEdit = hasAnyWritePermission(permissions) || canManageUsers || isDeveloper
   const canViewPage = (target: Page) => {
+    if (target === 'ai' || target === 'transcription') return false
     if (target === 'overview') return true
     if (target === 'team') return canManageUsers
     if (target === 'settings') return true
@@ -369,14 +371,25 @@ export default function App() {
       })
     }, 650)
     return () => window.clearTimeout(timer)
-  }, [workspace, loaded, user?.id, orgId, canEdit])
+  }, [workspace, loaded, user?.id, orgId, canEdit, saveAttempt])
 
   useEffect(() => {
-    if (saveState !== 'saving') return
-    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = '' }
+    const warn = (event: BeforeUnloadEvent) => { if (dirtyRef.current) { event.preventDefault(); event.returnValue = '' } }
     window.addEventListener('beforeunload', warn)
     return () => window.removeEventListener('beforeunload', warn)
-  }, [saveState])
+  }, [])
+
+  const logout = async () => {
+    if (dirtyRef.current) { setPermissionNotice('יש שינויים שטרם נשמרו. שמרו אותם לפני היציאה.'); return }
+    try { await signOut() } catch { setPermissionNotice('היציאה נכשלה. נסו שוב.') }
+  }
+
+  const saveNotice = (saveState === 'error' || saveState === 'conflict') && <div className="error-banner save-recovery" role="alert">
+    <span>{saveState === 'conflict' ? 'משתמש אחר עדכן את הנתונים. השינויים שלכם טרם נשמרו.' : 'השינויים טרם נשמרו. בדקו את החיבור ונסו שוב.'}</span>
+    {saveState === 'error' ? <button type="button" className="secondary" onClick={() => { setPermissionNotice(''); setSaveAttempt((value) => value + 1) }}>ניסיון שמירה נוסף</button> : <button type="button" className="secondary" onClick={() => {
+      if (window.confirm('רענון יטען את הגרסה העדכנית ויבטל את השינויים שלכם שלא נשמרו. להמשיך?')) { dirtyRef.current = false; window.location.reload() }
+    }}>טעינת הגרסה העדכנית</button>}
+  </div>
 
   useEffect(() => {
     if (!loaded || !orgId) return
@@ -440,16 +453,16 @@ export default function App() {
   if (loadError) return <div className="auth-screen"><section className="login-card"><h1>לא ניתן לטעון את סביבת העבודה</h1><div className="error-banner">{loadError}</div><p>נסו שוב או פנו למנהל המערכת.</p><button className="secondary" onClick={() => window.location.reload()}>ניסיון מחדש</button></section></div>
   if (!loaded) return <div className="app-loading"><span className="ram-logo-shell loading-logo-shell"><img src="/ram-engineering-logo.png" alt="ר.א.ם הנדסה" width="1024" height="276" decoding="async" fetchPriority="high" /></span><span>טוען פרויקטים...</span></div>
 
-  if (selectedProject) return <div className={`app-shell project-mode ${!canEdit ? 'read-only-mode' : ''}`}><Sidebar page={page} setPage={(next) => openPage(next)} workspace={visibleWorkspace} permissions={permissions} open={sidebarOpen} setOpen={setSidebarOpen} user={user} onLogout={() => void signOut()} isDeveloper={isDeveloper} canManageUsers={canManageUsers} /><div className="main"><Topbar search={search} setSearch={setSearch} searchResults={searchResults} urgentCount={urgentCount} onMenu={() => setSidebarOpen(true)} onAttention={openUrgent} saveState={saveState} canEdit={canEdit} /><main className="page-wrap project-page-wrap">{permissionNotice && <div className="error-banner permission-notice" role="alert">{permissionNotice}</div>}<ProjectWorkspace key={selectedProject} projectId={selectedProject} initialTab={projectTab} workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} orgId={orgId} projectPermissions={permissions.projects} taskPermissions={permissions.tasks} calendarPermissions={permissions.calendar} filePermissions={permissions.files} reportPermissions={permissions.reports} communicationPermissions={permissions.communication} onBack={() => openPage('projects')} onClient={permissions.contacts.view ? openClient : undefined} onTabChange={(tab) => { setProjectTab(tab); writeAppRoute({ page: 'projects', projectId: selectedProject, tab }) }} /></main></div></div>
+  if (selectedProject) return <div className={`app-shell project-mode ${!canEdit ? 'read-only-mode' : ''}`}><Sidebar page={page} setPage={(next) => openPage(next)} workspace={visibleWorkspace} permissions={permissions} open={sidebarOpen} setOpen={setSidebarOpen} user={user} onLogout={() => void logout()} isDeveloper={isDeveloper} canManageUsers={canManageUsers} /><div className="main"><Topbar search={search} setSearch={setSearch} searchResults={searchResults} urgentCount={urgentCount} onMenu={() => setSidebarOpen(true)} onAttention={openUrgent} saveState={saveState} canEdit={canEdit} /><main className="page-wrap project-page-wrap">{saveNotice}{permissionNotice && <div className="error-banner permission-notice" role="alert">{permissionNotice}</div>}<ProjectWorkspace key={selectedProject} projectId={selectedProject} initialTab={projectTab} workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} orgId={orgId} projectPermissions={permissions.projects} taskPermissions={permissions.tasks} calendarPermissions={permissions.calendar} filePermissions={permissions.files} reportPermissions={permissions.reports} communicationPermissions={permissions.communication} onBack={() => openPage('projects')} onClient={permissions.contacts.view ? openClient : undefined} onTabChange={(tab) => { setProjectTab(tab); writeAppRoute({ page: 'projects', projectId: selectedProject, tab }) }} /></main></div></div>
 
   return <div className={`app-shell ${!canEdit ? 'read-only-mode' : ''}`}>
-    <Sidebar page={page} setPage={(next) => openPage(next)} workspace={visibleWorkspace} permissions={permissions} open={sidebarOpen} setOpen={setSidebarOpen} user={user} onLogout={() => void signOut()} isDeveloper={isDeveloper} canManageUsers={canManageUsers} />
+    <Sidebar page={page} setPage={(next) => openPage(next)} workspace={visibleWorkspace} permissions={permissions} open={sidebarOpen} setOpen={setSidebarOpen} user={user} onLogout={() => void logout()} isDeveloper={isDeveloper} canManageUsers={canManageUsers} />
     <div className="main">
       <Topbar search={search} setSearch={setSearch} searchResults={searchResults} urgentCount={urgentCount} onMenu={() => setSidebarOpen(true)} onAttention={openUrgent} saveState={saveState} canEdit={canEdit} />
-      <main className="page-wrap">
+      <main className="page-wrap">{saveNotice}
         <header className="page-heading"><h1>{pageInfo[page]}</h1>{(role || isDeveloper) && <span className="role-badge">{roleLabel(role, isDeveloper)}</span>}</header>
         {permissionNotice && <div className="error-banner permission-notice" role="alert">{permissionNotice}</div>}
-        {page === 'overview' && <Dashboard workspace={visibleWorkspace} onProject={openProject} onTask={openTask} onReport={openReport} onPage={(next) => openPage(next)} onCreate={(next) => openPage(next, true)} onUrgent={openUrgent} canCreate={{ clients: permissions.contacts.create, projects: permissions.projects.create, tasks: permissions.tasks.create, reports: permissions.reports.create, calendar: permissions.calendar.create }} />}
+        {page === 'overview' && <Dashboard workspace={visibleWorkspace} onProject={openProject} onTask={openTask} onReport={openReport} onPage={(next) => openPage(next)} onCreate={(next) => openPage(next, true)} onUrgent={openUrgent} canView={{ clients: permissions.contacts.view, projects: permissions.projects.view, tasks: permissions.tasks.view, reports: permissions.reports.view, calendar: permissions.calendar.view }} canCreate={{ clients: permissions.contacts.create, projects: permissions.projects.create, tasks: permissions.tasks.create, reports: permissions.reports.create, calendar: permissions.calendar.create }} />}
         {page === 'clients' && <ClientsCenter key={createIntent === 'clients' ? 'new-client' : 'clients'} startCreating={createIntent === 'clients' && permissions.contacts.create} workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} selectedClientId={selectedClient} onSelectClient={(id) => id ? openClient(id) : openPage('clients')} onProject={openProject} canEditContacts={canMutateArea(permissions, 'contacts')} canEditProjects={canMutateArea(permissions, 'projects')} canEditTasks={canMutateArea(permissions, 'tasks')} canEditCommunication={canMutateArea(permissions, 'communication')} canEditFinance={canMutateArea(permissions, 'finance')} contactPermissions={permissions.contacts} projectPermissions={permissions.projects} taskPermissions={permissions.tasks} communicationPermissions={permissions.communication} financePermissions={permissions.finance} calendarPermissions={permissions.calendar} filePermissions={permissions.files} isAdmin={canViewAdminData} actor={user.email || 'משתמש'} />}
         {page === 'projects' && <ProjectsPage key={createIntent === 'projects' ? 'new-project' : 'projects'} startCreating={createIntent === 'projects' && permissions.projects.create} workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} onOpen={openProject} canEdit={permissions.projects.create} />}
         {page === 'tasks' && <section className="card board-card"><TaskBoard key={createIntent === 'tasks' ? 'new-task' : selectedTask || 'tasks'} startCreating={createIntent === 'tasks' && permissions.tasks.create} workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} permissions={permissions.tasks} focusTaskId={selectedTask} attentionOnly={attentionMode} onClearAttention={() => openPage('tasks')} onProject={permissions.projects.view ? openProject : undefined} onEmail={permissions.communication.view && permissions.projects.view ? (task) => { if (task.projectId) openProject(task.projectId, 'mail') } : undefined} /></section>}
@@ -469,6 +482,25 @@ export default function App() {
 }
 
 function Sidebar({ page, setPage, workspace, permissions, open, setOpen, user, onLogout, isDeveloper, canManageUsers }: { page: Page; setPage: (page: Page) => void; workspace: Workspace; permissions: PermissionMatrix; open: boolean; setOpen: (value: boolean) => void; user: User; onLogout: () => void; isDeveloper: boolean; canManageUsers: boolean }) {
+  const sidebarRef = useRef<HTMLElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const oldOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { event.preventDefault(); setOpen(false) }
+      if (event.key === 'Tab') {
+        const controls = Array.from(sidebarRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]), a[href]') || []).filter((element) => element.getClientRects().length > 0)
+        const first = controls[0], last = controls.at(-1)
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus() }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
+      }
+    }
+    document.addEventListener('keydown', keydown)
+    const timer = window.setTimeout(() => sidebarRef.current?.querySelector<HTMLElement>('.sidebar-close')?.focus(), 0)
+    return () => { window.clearTimeout(timer); document.removeEventListener('keydown', keydown); document.body.style.overflow = oldOverflow; previous?.focus() }
+  }, [open])
   const [reportsOpen, setReportsOpen] = useState(page === 'reports' || page === 'reports-projects' || page === 'reports-finance')
   const [clock, setClock] = useState(() => new Date())
   useEffect(() => {
@@ -480,6 +512,7 @@ function Sidebar({ page, setPage, workspace, permissions, open, setOpen, user, o
   }, [])
 
   const visibleItems = navItems.filter((item) => {
+    if (item.id === 'ai' || item.id === 'transcription') return false
     if (item.id === 'team') return canManageUsers
     if (item.id === 'settings') return true
     if (item.id === 'reports') return permissions.reports.view || permissions.finance.view
@@ -495,7 +528,7 @@ function Sidebar({ page, setPage, workspace, permissions, open, setOpen, user, o
 
   return <>
     <div className={`sidebar-overlay ${open ? 'show' : ''}`} onClick={() => setOpen(false)} />
-    <aside className={`sidebar ${open ? 'open' : ''}`}>
+    <aside ref={sidebarRef} className={`sidebar ${open ? 'open' : ''}`}>
       <div className="brand"><span className="ram-logo-shell sidebar-logo-shell"><img src="/ram-engineering-logo.png" alt={workspace.settings.organizationShortName} width="1024" height="276" decoding="async" fetchPriority="high" /></span><div><strong>{workspace.settings.organizationShortName}</strong><span>RAM Engineering CRM</span></div><button type="button" className="sidebar-close" onClick={() => setOpen(false)} aria-label="סגירת תפריט"><X /></button></div>
       <div className="sidebar-date" aria-label={`${weekday}, ${gregorianDate}`}><strong>{weekday}</strong><span>{gregorianDate}</span></div>
       <nav>{visibleItems.map((item) => {

@@ -10,6 +10,22 @@ export const dateLabel = (value?: string) => value ? new Intl.DateTimeFormat('he
 export const dateTimeLabel = (value?: string) => value ? new Intl.DateTimeFormat('he-IL', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value)) : ''
 export const money = (value = 0) => new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 }).format(value)
 
+export function StoredImage({ photo, alt }: { photo: { url: string; storagePath?: string }; alt: string }) {
+  const [url, setUrl] = useState(photo.url)
+  // Older reports stored only the signed URL. Recover its bucket-relative path
+  // so those photos can also be reopened after the original token expires.
+  const signedPath = photo.url.split('/storage/v1/object/sign/crm-files/')[1]?.split('?')[0]
+  let storagePath = photo.storagePath
+  if (!storagePath && signedPath) { try { storagePath = decodeURIComponent(signedPath) } catch { /* Keep the original URL. */ } }
+  useEffect(() => {
+    let active = true
+    setUrl(photo.url)
+    if (storagePath) void refreshSignedUrl(storagePath).then((next) => { if (active && next) setUrl(next) }).catch(() => undefined)
+    return () => { active = false }
+  }, [storagePath, photo.url])
+  return <img src={url} alt={alt} />
+}
+
 export function StoredFileLink({ file, className, children }: { file: FileRecord; className?: string; children: ReactNode }) {
   const [resolvedUrl, setResolvedUrl] = useState(file.storagePath ? '' : file.url)
 
@@ -40,7 +56,7 @@ export function Modal({ title, children, onClose, wide = false }: { title: strin
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onCloseRef.current()
       if (event.key === 'Tab' && dialogRef.current) {
-        const focusable = Array.from(dialogRef.current.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'))
+        const focusable = Array.from(dialogRef.current.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')).filter((element) => element.getClientRects().length > 0)
         if (!focusable.length) return
         const first = focusable[0]
         const last = focusable[focusable.length - 1]
@@ -50,7 +66,7 @@ export function Modal({ title, children, onClose, wide = false }: { title: strin
     }
     document.addEventListener('keydown', onKeyDown)
     window.setTimeout(() => {
-      const target = dialogRef.current?.querySelector<HTMLElement>('.modal-content input:not([disabled]), .modal-content select:not([disabled]), .modal-content textarea:not([disabled]), .modal-content button:not([disabled])')
+      const target = dialogRef.current?.querySelector<HTMLElement>('.modal-content input:not([disabled]):not([type="hidden"]), .modal-content select:not([disabled]), .modal-content textarea:not([disabled]), .modal-content button:not([disabled])')
         || dialogRef.current?.querySelector<HTMLElement>('button:not([disabled])')
       target?.focus()
     }, 0)

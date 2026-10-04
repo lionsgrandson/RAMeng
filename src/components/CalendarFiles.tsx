@@ -14,6 +14,8 @@ export function CalendarPage({ workspace, setWorkspace, onProject, onTask, start
   const dateKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
   const [adding, setAdding] = useState(startCreating && canCreate)
   const [syncing, setSyncing] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [formError, setFormError] = useState('')
   const [error, setError] = useState('')
   const [eventProjectId, setEventProjectId] = useState('')
   const [eventTaskId, setEventTaskId] = useState('')
@@ -58,12 +60,20 @@ export function CalendarPage({ workspace, setWorkspace, onProject, onTask, start
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    if (submitting) return
     const data = new FormData(event.currentTarget)
+    setFormError('')
+    const start = new Date(String(data.get('start')))
+    const end = data.get('end') ? new Date(String(data.get('end'))) : undefined
+    if (!String(data.get('title') || '').trim() || Number.isNaN(start.getTime())) { setFormError('יש להזין כותרת ותאריך התחלה תקינים.'); return }
+    if (end && (Number.isNaN(end.getTime()) || end <= start)) { setFormError('מועד הסיום חייב להיות אחרי מועד ההתחלה.'); return }
+    setSubmitting(true)
+    setError('')
     const item: CalendarEvent = {
       id: uid('event'),
-      title: String(data.get('title') || ''),
-      start: new Date(String(data.get('start'))).toISOString(),
-      end: data.get('end') ? new Date(String(data.get('end'))).toISOString() : undefined,
+      title: String(data.get('title') || '').trim(),
+      start: start.toISOString(),
+      end: end?.toISOString(),
       location: String(data.get('location') || ''),
       notes: String(data.get('notes') || ''),
       projectId: eventProjectId || undefined,
@@ -82,6 +92,7 @@ export function CalendarPage({ workspace, setWorkspace, onProject, onTask, start
     setSelectedDate(dateKey(new Date(item.start)))
     setMonth(new Date(new Date(item.start).getFullYear(), new Date(item.start).getMonth(), 1))
     setAdding(false)
+    setSubmitting(false)
   }
 
   const monthStart = new Date(month.getFullYear(), month.getMonth(), 1)
@@ -165,8 +176,9 @@ export function CalendarPage({ workspace, setWorkspace, onProject, onTask, start
       </div>
     </section>
 
-    {canCreate && adding && <Modal title="אירוע חדש" onClose={() => setAdding(false)}>
+    {canCreate && adding && <Modal title="אירוע חדש" onClose={() => { if (!submitting) { setAdding(false); setFormError('') } }}>
       <form className="form-grid" onSubmit={(e) => void submit(e)}>
+        {formError && <div className="error-banner" role="alert">{formError}</div>}
         <Field label="כותרת"><input name="title" required /></Field>
         <Field label="התחלה"><input name="start" type="datetime-local" defaultValue={`${selectedDate}T09:00`} required /></Field>
         <Field label="סיום"><input name="end" type="datetime-local" /></Field>
@@ -175,7 +187,7 @@ export function CalendarPage({ workspace, setWorkspace, onProject, onTask, start
         <Field label="משימה"><select name="taskId" value={eventTaskId} onChange={(e) => { const next = e.target.value; setEventTaskId(next); const task = workspace.tasks.find((item) => item.id === next); if (task?.projectId) setEventProjectId(task.projectId) }}><option value="">ללא</option>{workspace.tasks.filter((task) => !eventProjectId || task.projectId === eventProjectId).map((task) => <option key={task.id} value={task.id}>{task.title}</option>)}</select></Field>
         <Field label="הערות"><textarea name="notes" rows={3} /></Field>
         <label className="check-line"><input name="google" type="checkbox" /> יצירה גם ב-Google Calendar (אם מחובר)</label>
-        <div className="form-actions"><button className="primary">שמירה</button></div>
+        <div className="form-actions"><button className="primary" disabled={submitting}>{submitting ? 'שומר...' : 'שמירה'}</button></div>
       </form>
     </Modal>}
   </div>

@@ -141,6 +141,7 @@ export interface ChecklistTemplate {
 export interface InspectionPhoto {
   id: ID
   url: string
+  storagePath?: string
   caption?: string
 }
 

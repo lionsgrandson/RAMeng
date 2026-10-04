@@ -133,6 +133,7 @@ async function requireDeveloper(request, env, config) {
 function rolePermissionAllowed(role, permissions, area, action) {
   if (role === 'developer') return true
   if (area === 'connections' && action === 'view') return true
+  if (area !== 'connections' && permissions?.[area]?.view === false) return false
   const custom = permissions?.[area]?.[action]
   if (typeof custom === 'boolean') return custom
   if (['connections', 'imports', 'settings'].includes(area)) return false
@@ -503,12 +504,14 @@ async function handleCalendarCreate(request, env, config) {
   const summary = cleanString(body.summary)
   const start = cleanString(body.start)
   if (!summary || !start || Number.isNaN(new Date(start).getTime())) throw Object.assign(new Error('כותרת ותאריך התחלה תקינים נדרשים'), { status: 400 })
+  const end = cleanString(body.end)
+  if (end && (Number.isNaN(new Date(end).getTime()) || new Date(end) <= new Date(start))) throw Object.assign(new Error('מועד הסיום חייב להיות אחרי מועד ההתחלה'), { status: 400 })
   const event = {
     summary,
     description: cleanString(body.description),
     location: cleanString(body.location),
     start: { dateTime: new Date(start).toISOString(), timeZone: 'Asia/Jerusalem' },
-    end: { dateTime: isoWithDefaultEnd(start, cleanString(body.end)), timeZone: 'Asia/Jerusalem' },
+    end: { dateTime: isoWithDefaultEnd(start, end), timeZone: 'Asia/Jerusalem' },
   }
   const response = await googleFetch(env, config, user.id, 'https://www.googleapis.com/calendar/v3/calendars/primary/events', {
     method: 'POST',

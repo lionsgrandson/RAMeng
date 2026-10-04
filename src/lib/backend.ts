@@ -10,7 +10,7 @@ let runtime: RuntimeConfig | null = null
 let clientConfigKey = ''
 
 function localizedBackendError(error: unknown, fallback: string) {
-  const message = error instanceof Error ? error.message : ''
+  const message = error && typeof error === 'object' && 'message' in error ? String(error.message) : ''
   const normalized = message.toLowerCase()
   if (/[\u0590-\u05ff]/.test(message)) return error instanceof Error ? error : new Error(message)
   if (normalized.includes('invalid login credentials')) return new Error('המייל או הסיסמה שגויים.')
@@ -94,7 +94,10 @@ export async function updateCurrentUserName(fullName: string) {
 }
 
 export async function signOut() {
-  if (client) await client.auth.signOut()
+  if (client) {
+    const { error } = await client.auth.signOut()
+    if (error) throw localizedBackendError(error, 'היציאה נכשלה. נסו שוב.')
+  }
 }
 
 export async function getAccessToken() {
@@ -246,7 +249,8 @@ export function loadLocalWorkspace(): Workspace {
 }
 
 export function saveLocalWorkspace(workspace: Workspace) {
-  localStorage.setItem('rameng-workspace', JSON.stringify(workspace))
+  // A full or unavailable browser cache must not block saving to the server.
+  try { localStorage.setItem('rameng-workspace', JSON.stringify(workspace)) } catch { /* Best-effort cache. */ }
 }
 
 function fileToDataUrl(file: File): Promise<string> {

@@ -7,6 +7,8 @@
     "dev": "vite --host 0.0.0.0",
     "build": "tsc -b && vite build",
     "lint": "tsc -b --pretty false",
+    "qa": "vite --config tests/qa.config.mjs",
+    "test": "node --test tests/regression.test.mjs",
     "preview": "vite preview --host 0.0.0.0",
     "mobile:init": "npx cap add android",
     "mobile:sync": "npm run build && cap sync android",
