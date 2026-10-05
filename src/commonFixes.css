@@ -8,3 +8,6 @@
 @media(max-width:720px){.modal-card,.modal-card.wide{width:100%;max-height:94vh;border-radius:12px}.modal-content{padding:14px}}
 
 .save-recovery{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.save-recovery .secondary{flex-shrink:0}.address-suggestions button[aria-selected='true']{background:var(--brand-soft);outline:2px solid var(--brand);outline-offset:-2px}
+
+.workspace-save-button{flex-shrink:0;white-space:nowrap}.client-header-actions,.editor-actions{flex-wrap:wrap}.thread-list article{overflow-wrap:anywhere}.thread-list article header{display:flex;gap:8px;flex-wrap:wrap}.thread-list article p{white-space:pre-wrap;overflow-wrap:anywhere}
+@media(max-width:720px){.topbar{gap:8px}.workspace-save-button{padding:8px}.project-topline{flex-wrap:wrap;gap:8px}}

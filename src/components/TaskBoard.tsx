@@ -1,3 +1,4 @@
+import DeleteButton from './RecordDelete'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { ChevronDown, ChevronUp, Columns3, Mail, Plus, Settings2, Trash2 } from 'lucide-react'
 import type { ChecklistTemplateItem, Priority, Task, TaskColumn, TaskColumnType, Workspace } from '../types'
@@ -275,7 +276,6 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
   }
 
   const removeTask = (id: string) => {
-    if (!confirmDelete('המשימה וכל תתי-המשימות שלה')) return
     setWorkspace((current) => {
       const remove = new Set<string>([id])
       let changed = true
@@ -407,7 +407,7 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
                 : column.type === 'email' ? <div className="email-cell"><input className="cell-input" disabled={!canUpdate} aria-label={`${column.label} עבור ${task.title}`} type="email" value={fieldValue(task, column)} onChange={(e) => editCell(task, column, e.target.value)} placeholder="name@example.com" />{onEmail && <button type="button" className="secondary task-action-btn" title="פתיחת התכתבות" aria-label="פתיחת התכתבות" onClick={() => onEmail(task)}><Mail /> מייל</button>}</div>
                 : <input className="cell-input" disabled={!canUpdate} aria-label={`${column.label} עבור ${task.title}`} value={fieldValue(task, column)} onChange={(e) => editCell(task, column, e.target.value)} />}
             </td>)}
-            <td className="row-actions">{(canCreate || canDelete) && <div className="task-row-actions">{canCreate && <button type="button" className="secondary task-action-btn" onClick={() => setCreatingFor({ parentId: task.id })}><Plus /> תת-משימה</button>}{canDelete && <button type="button" className="secondary danger task-action-btn" onClick={() => removeTask(task.id)}><Trash2 /> מחיקה</button>}</div>}</td>
+            <td className="row-actions">{(canCreate || canDelete) && <div className="task-row-actions">{canCreate && <button type="button" className="secondary task-action-btn" onClick={() => setCreatingFor({ parentId: task.id })}><Plus /> תת-משימה</button>}{canDelete && <DeleteButton message={`למחוק את המשימה "${task.title}" וכל תתי-המשימות שלה?`} onConfirm={() => removeTask(task.id)} />}</div>}</td>
           </tr>)}
           {!rows.length && <tr><td colSpan={visibleColumns.length + (projectId ? 3 : 4)}><div className="table-empty">{view === 'archive' ? 'אין משימות שהושלמו.' : 'אין משימות פעילות שמתאימות לסינון.'}</div></td></tr>}
         </tbody>

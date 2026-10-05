@@ -211,12 +211,20 @@ export async function saveOrganizationWorkspace(orgId: string, userId: string, w
   return { version: Number(data || expectedVersion + 1) }
 }
 
+export async function readWorkspaceState(orgId: string) {
+  if (!client || orgId === 'local') return null
+  const { data, error } = await client.rpc('get_workspace_state', { target_org: orgId })
+  if (error) throw localizedBackendError(error, 'רענון הנתונים נכשל')
+  const row = Array.isArray(data) ? data[0] : data
+  return row?.data ? { workspace: { ...cloneWorkspace(), ...row.data } as Workspace, version: Number(row.version || 0) } : null
+}
+
 export function subscribeWorkspace(orgId: string, onWorkspace: (workspace: Workspace, version: number) => void): RealtimeChannel | null {
   if (!client || orgId === 'local') return null
   return client.channel(`workspace:${orgId}`)
-    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'workspace_state', filter: `org_id=eq.${orgId}` }, (payload) => {
-      const row = payload.new as { data?: Workspace; version?: number }
-      if (row.data) onWorkspace({ ...cloneWorkspace(), ...row.data }, typeof row.version === 'number' ? row.version : -1)
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'workspace_state', filter: `org_id=eq.${orgId}` }, () => {
+      // Always read the permission-filtered RPC rather than a raw realtime row.
+      void readWorkspaceState(orgId).then((row) => { if (row) onWorkspace(row.workspace, row.version) }).catch(() => undefined)
     })
     .subscribe()
 }

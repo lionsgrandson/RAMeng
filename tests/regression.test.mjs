@@ -10,6 +10,35 @@ const { cloneWorkspace } = await server.ssrLoadModule('/src/seed.ts')
 const backend = await server.ssrLoadModule('/src/lib/backend.ts')
 const { readImportRows } = await server.ssrLoadModule('/src/lib/imports.ts')
 const options = { canManageUsers: false, isDeveloper: false }
+const { deleteProject, deleteContact } = await server.ssrLoadModule('/src/lib/records.ts')
+
+test('project deletion preserves dependent business records and removes their project links', () => {
+  const workspace = cloneWorkspace()
+  workspace.projects = [{ id: 'p' }, { id: 'keep' }]
+  for (const key of ['tasks', 'events', 'files', 'quotes', 'clientNotes', 'reports']) workspace[key] = [{ id: key, projectId: 'p' }]
+  const next = deleteProject(workspace, 'p')
+  assert.deepEqual(next.projects, [{ id: 'keep' }])
+  for (const key of ['tasks', 'events', 'files', 'quotes', 'clientNotes', 'reports']) {
+    assert.equal(next[key].length, 1)
+    assert.notEqual(next[key][0].projectId, 'p')
+  }
+  assert.equal(workspace.tasks[0].projectId, 'p')
+})
+
+test('contact deletion preserves projects and financial records without dangling client links', () => {
+  const workspace = cloneWorkspace()
+  workspace.contacts = [{ id: 'c' }, { id: 'keep' }]
+  workspace.projects = [{ id: 'p', clientIds: ['c', 'keep'] }]
+  workspace.deals = [{ id: 'd', contactId: 'c' }]
+  workspace.quotes = [{ id: 'q', contactId: 'c' }]
+  workspace.clientNotes = [{ id: 'n', contactId: 'c' }]
+  const next = deleteContact(workspace, 'c')
+  assert.deepEqual(next.projects[0].clientIds, ['keep'])
+  assert.equal(next.quotes.length, 1)
+  assert.equal(next.quotes[0].contactId, undefined)
+  assert.equal(next.deals[0].contactId, undefined)
+  assert.deepEqual(next.clientNotes, [])
+})
 
 test('UTF-8 Hebrew CSV without a BOM imports and normalizes Israeli dates', async () => {
   const buffer = new TextEncoder().encode('משימה,תאריך התחלה,תאריך סיום,מועד מעקב\nבדיקה,04/10/2026,2026-10-10,08.10.2026').buffer
@@ -141,4 +170,50 @@ test('calendar API rejects malformed, equal and reversed end times before Google
     assert.match((await result.json()).error, /מועד הסיום/)
   }
   assert.equal(calls.some((url) => url.includes('googleapis.com')), false)
+})
+
+test('personal Gmail links are keyed by the authenticated owner, ignoring requested owner IDs', async (t) => {
+  let currentUser = 'one'
+  const kv = new Map([
+    ['gmail-task-links:one', { task: { threadId: 'private-one', to: 'one@example.test' } }],
+    ['gmail-task-links:two', { task: { threadId: 'private-two', to: 'two@example.test' } }],
+  ])
+  const privateEnv = { CONFIG: { get: async (key) => key === 'rameng:admin-config:v1' ? config : kv.get(key) || null } }
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    if (String(url).endsWith('/auth/v1/user')) return Response.json({ id: currentUser, email: `${currentUser}@example.test` })
+    if (String(url).includes('/rest/v1/memberships')) return Response.json([{ role: 'admin', permissions: null }])
+    throw new Error('Unexpected Google access')
+  })
+  const one = await worker.fetch(request('/api/google/gmail/links?userId=two'), privateEnv)
+  assert.equal(one.headers.get('cache-control'), 'no-store')
+  assert.equal((await one.json()).links.task.threadId, 'private-one')
+  currentUser = 'two'
+  assert.equal((await (await worker.fetch(request('/api/google/gmail/links?userId=one'), privateEnv)).json()).links.task.threadId, 'private-two')
+})
+
+test('read-only users cannot write personal Gmail links', async (t) => {
+  mockAuth(t)
+  const req = new Request('https://qa.example.test/api/google/gmail/links', { method: 'PUT', headers: { authorization: 'Bearer qa-token', 'content-type': 'application/json' }, body: JSON.stringify({ taskId: 'task', threadId: 'thread' }) })
+  assert.equal((await worker.fetch(req, env)).status, 403)
+})
+
+test('linking an existing Drive folder validates and saves an owner-scoped reference without creating a folder', async (t) => {
+  const writes = []
+  const calls = []
+  const privateEnv = { CONFIG: {
+    get: async (key) => key === 'rameng:admin-config:v1' ? config : key === 'rameng:google-tokens:v2:qa' ? { access_token: 'fixture-token', expires_at: Date.now() + 3600000 } : null,
+    put: async (key, value) => writes.push([key, JSON.parse(value)]),
+  } }
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    calls.push([String(url), init?.method || 'GET'])
+    if (String(url).endsWith('/auth/v1/user')) return Response.json({ id: 'qa', email: 'qa@example.test' })
+    if (String(url).includes('/rest/v1/memberships')) return Response.json([{ role: 'admin', permissions: null }])
+    if (String(url).includes('/drive/v3/files/existing-folder')) return Response.json({ id: 'existing-folder', mimeType: 'application/vnd.google-apps.folder', webViewLink: 'https://drive.google.com/drive/folders/existing-folder' })
+    throw new Error('Unexpected outbound request')
+  })
+  const result = await worker.fetch(request('/api/google/drive/project-folder', { projectId: 'project', folderId: 'existing-folder', name: 'QA' }), privateEnv)
+  assert.equal(result.status, 200)
+  assert.equal((await result.json()).id, 'existing-folder')
+  assert.equal(writes[0][0], 'drive-project-folder:qa:project')
+  assert.equal(calls.some(([url, method]) => url.includes('googleapis.com') && method !== 'GET'), false)
 })

@@ -18,7 +18,7 @@ const corsHeaders = (request) => ({
   'access-control-max-age': '86400',
   vary: 'Origin',
 })
-const apiJson = (request, data, status = 200) => json(data, status, corsHeaders(request))
+const apiJson = (request, data, status = 200) => json(data, status, { ...corsHeaders(request), 'cache-control': 'no-store' })
 
 async function readConfig(env) {
   const stored = (await env.CONFIG.get(CONFIG_KEY, 'json')) || {}
@@ -424,6 +424,27 @@ async function handleGmailThread(request, env, config) {
   return apiJson(request, { messages: (body.messages || []).map(normalizeGmailMessage) })
 }
 
+async function handleGmailLinks(request, env, config) {
+  const writing = request.method !== 'GET'
+  const user = await requireGoogleAreaAction(request, env, config, 'communication', request.method === 'DELETE' ? 'delete' : writing ? 'edit' : 'view')
+  // Never accept an owner ID from the browser. Links belong to the authenticated mailbox.
+  const key = `gmail-task-links:${user.id}`
+  const links = await env.CONFIG.get(key, 'json') || {}
+  if (writing) {
+    const body = await parseBody(request)
+    const taskId = cleanString(body.taskId)
+    const threadId = cleanString(body.threadId)
+    if (!taskId || !/^[a-zA-Z0-9_-]{1,160}$/.test(taskId) || (request.method !== 'DELETE' && !/^[a-zA-Z0-9_-]{1,160}$/.test(threadId))) throw Object.assign(new Error('שיוך מייל לא תקין'), { status: 400 })
+    if (request.method === 'DELETE') { delete links[taskId]; await env.CONFIG.put(key, JSON.stringify(links)); return apiJson(request, { links }) }
+    // Validate the thread against this user's Google account before storing its reference.
+    const response = await googleFetch(env, config, user.id, `https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(threadId)}?format=minimal`)
+    if (!response.ok) throw Object.assign(new Error('ההתכתבות אינה זמינה בחשבון Google שלך'), { status: response.status })
+    links[taskId] = { threadId, to: cleanString(body.to) }
+    await env.CONFIG.put(key, JSON.stringify(links))
+  }
+  return apiJson(request, { links })
+}
+
 async function handleGmailSearch(request, env, config) {
   const user = await requireGoogleAreaAction(request, env, config, 'communication', 'view')
   const query = new URL(request.url).searchParams.get('q') || ''
@@ -533,7 +554,21 @@ async function handleDriveProjectFolder(request, env, config) {
   const projectId = cleanString(body.projectId)
   const name = cleanString(body.name)
   const parentId = cleanString(body.parentId) || 'root'
-  if (!projectId || !name) throw Object.assign(new Error('חסרים מזהה פרויקט או שם פרויקט'), { status: 400 })
+  if (!projectId) throw Object.assign(new Error('חסר מזהה פרויקט'), { status: 400 })
+  const key = `drive-project-folder:${user.id}:${projectId}`
+  const stored = await env.CONFIG.get(key, 'json')
+  const requestedId = cleanString(body.folderId)
+  const folderId = requestedId || stored?.id
+  if (folderId) {
+    if (!/^[a-zA-Z0-9_-]+$/.test(folderId)) throw Object.assign(new Error('מזהה תיקייה לא תקין'), { status: 400 })
+    const folderResponse = await googleFetch(env, config, user.id, `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(folderId)}?fields=id,name,mimeType,trashed,webViewLink&supportsAllDrives=true`)
+    const folder = await folderResponse.json()
+    if (!folderResponse.ok || folder.trashed || folder.mimeType !== 'application/vnd.google-apps.folder') throw Object.assign(new Error('התיקייה אינה זמינה בחשבון שלך. בדקו הרשאות או קשרו תיקייה אחרת.'), { status: folderResponse.ok ? 400 : folderResponse.status })
+    const result = { id: folder.id, webViewLink: folder.webViewLink || `https://drive.google.com/drive/folders/${folder.id}` }
+    await env.CONFIG.put(key, JSON.stringify(result))
+    return apiJson(request, result)
+  }
+  if (!name) throw Object.assign(new Error('חסר שם פרויקט'), { status: 400 })
 
   const search = new URL('https://www.googleapis.com/drive/v3/files')
   search.searchParams.set('q', `'${escapeDriveQuery(parentId)}' in parents and name='${escapeDriveQuery(name)}' and mimeType='application/vnd.google-apps.folder' and trashed=false`)
@@ -542,7 +577,7 @@ async function handleDriveProjectFolder(request, env, config) {
   const searchResponse = await googleFetch(env, config, user.id, search.toString())
   const searchBody = await searchResponse.json()
   if (!searchResponse.ok) throw Object.assign(new Error(localizedExternalError(searchBody.error?.message, 'חיפוש התיקייה ב-Drive נכשל')), { status: searchResponse.status })
-  if (searchBody.files?.[0]) return apiJson(request, { id: searchBody.files[0].id, webViewLink: searchBody.files[0].webViewLink || `https://drive.google.com/drive/folders/${searchBody.files[0].id}` })
+  if (searchBody.files?.[0]) { const folder = { id: searchBody.files[0].id, webViewLink: searchBody.files[0].webViewLink || `https://drive.google.com/drive/folders/${searchBody.files[0].id}` }; await env.CONFIG.put(key, JSON.stringify(folder)); return apiJson(request, folder) }
 
   const response = await googleFetch(env, config, user.id, 'https://www.googleapis.com/drive/v3/files?fields=id,name,webViewLink', {
     method: 'POST',
@@ -556,7 +591,14 @@ async function handleDriveProjectFolder(request, env, config) {
   })
   const result = await response.json()
   if (!response.ok) throw Object.assign(new Error(localizedExternalError(result.error?.message, 'יצירת התיקייה ב-Drive נכשלה')), { status: response.status })
-  return apiJson(request, { id: result.id, webViewLink: result.webViewLink || `https://drive.google.com/drive/folders/${result.id}` })
+  const folder = { id: result.id, webViewLink: result.webViewLink || `https://drive.google.com/drive/folders/${result.id}` }; await env.CONFIG.put(key, JSON.stringify(folder)); return apiJson(request, folder)
+}
+
+async function handleDriveProjectFolderRead(request, env, config) {
+  const user = await requireGoogleAreaAction(request, env, config, 'files', request.method === 'DELETE' ? 'delete' : 'view')
+  const projectId = new URL(request.url).searchParams.get('projectId') || ''
+  if (request.method === 'DELETE') { await env.CONFIG.delete(`drive-project-folder:${user.id}:${projectId}`); return apiJson(request, { folder: null }) }
+  return apiJson(request, { folder: await env.CONFIG.get(`drive-project-folder:${user.id}:${projectId}`, 'json') || null })
 }
 
 async function handleDriveFiles(request, env, config) {
@@ -901,10 +943,12 @@ async function routeApi(request, env) {
   if (path === '/api/google/config' && ['GET', 'PUT'].includes(request.method)) return handleGoogleConfig(request, env, config)
   if (path === '/api/google/auth-url' && request.method === 'GET') return handleGoogleAuthUrl(request, env, config)
   if (path === '/api/google/gmail/thread' && request.method === 'GET') return handleGmailThread(request, env, config)
+  if (path === '/api/google/gmail/links' && ['GET', 'PUT', 'DELETE'].includes(request.method)) return handleGmailLinks(request, env, config)
   if (path === '/api/google/gmail/search' && request.method === 'GET') return handleGmailSearch(request, env, config)
   if (path === '/api/google/gmail/send' && request.method === 'POST') return handleGmailSend(request, env, config)
   if (path === '/api/google/calendar/events' && request.method === 'GET') return handleCalendarList(request, env, config)
   if (path === '/api/google/calendar/events' && request.method === 'POST') return handleCalendarCreate(request, env, config)
+  if (path === '/api/google/drive/project-folder' && ['GET', 'DELETE'].includes(request.method)) return handleDriveProjectFolderRead(request, env, config)
   if (path === '/api/google/drive/project-folder' && request.method === 'POST') return handleDriveProjectFolder(request, env, config)
   if (path === '/api/google/drive/files' && request.method === 'GET') return handleDriveFiles(request, env, config)
   if (path === '/api/address/suggest' && request.method === 'GET') return handleAddressSuggest(request, env, config)

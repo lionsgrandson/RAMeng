@@ -97,3 +97,68 @@ query flags: `qaRole=viewer`, `qaRole=status`, `qaRole=restricted`, `qaSave=erro
   hashes. Public configuration remained configured without private credential
   fields; unauthenticated admin/Google-config/integration-status requests returned
   HTTP 401. The live login screen rendered successfully in the browser.
+
+
+## Follow-up — 5 October 2026
+
+Added explicit Hebrew save controls in the shared header and project/report editors.
+Save flushes the existing queue immediately; success follows the server response.
+Autosave remains enabled. Deletions flush immediately and retain error/conflict
+recovery. Project/client/report/task confirmations use the CRM modal.
+
+Added project, whole-report, client, CRM file, CRM calendar-event and client
+financial-record deletion controls. Project deletion preserves dependent business
+records without their project relationship. Client deletion preserves projects and
+financial documents, and explicitly confirms removal of internal client notes.
+File removal removes the CRM listing and retains the underlying storage object.
+Existing task deletion includes descendants. All changes still go through the
+existing frontend validator and database save RPC.
+
+Personal Gmail task links now live in authenticated-user-scoped Worker KV rather
+than shared tasks. Google thread ownership is checked before linking. Gmail links
+and Drive folder links can be removed without deleting external Google resources.
+Private API responses use Cache-Control: no-store. Mail switching clears old
+messages and ignores stale fetch results; recipient details are shown.
+
+Google calendar imports stay in the current user's component state instead of
+being uploaded as shared workspace data. CRM-created calendar records remain
+shared; personal Google identifiers/links are kept out of shared records.
+
+The production migration `20261005074201_isolate_personal_google_data.sql` was
+validated with a rollback, then applied through Udi's signed-in Supabase editor.
+It preserved the original workspace in a private, non-API schema with RLS and
+revoked access. Verification: 3 projects and 2 reports preserved; all 250 old Google
+calendar copies retained in the private backup; 0 personal copies in the shared
+calendar; authenticated users lack schema access. A write trigger prevents old
+clients or direct writes from reintroducing shared Gmail/Google references.
+
+Drive can now link an existing folder URL/ID, validates that it is an accessible
+folder, and saves the relationship separately for each authenticated user. Opening
+a project retrieves its saved relationship. Refresh does not create a replacement
+for a missing linked folder. Existing create-folder behavior is retained.
+
+Workspace reads use the permission-filtered RPC, including realtime refreshes.
+A five-second refresh and focus/visibility/online recovery also update users whose
+RLS prevents receiving the raw workspace realtime row. Unsaved concurrent edits
+still trigger conflict recovery instead of overwriting another person's changes.
+
+Verification before publication:
+- 20 regression tests pass, including dependency preservation, owner-scoped mail
+  links, read-only rejection, and linking Drive without creating a folder.
+- Type checking, production build and git diff whitespace checks pass.
+- Udi's Chrome profile used for the signed-in app and Supabase checks.
+- Local UI: explicit project save, reload persistence, project/report/task deletion,
+  report deletion persistence, and deletion propagation between two open tabs.
+- Read-only UI has no save/delete/project-edit controls. Production save RPC
+  rejects an actual membership temporarily set to read-only inside a transaction;
+  the transaction was rolled back, restoring the membership. Production currently
+  has two admins and one developer; no permanent read-only account was created.
+- 390px project controls and deletion modal have no document overflow. Browser
+  viewport was restored afterward.
+
+Limits: these changes address the follow-up save/delete/privacy/sync requests and
+existing Drive-folder linking. The complete pasted pilot checklist has not been
+re-audited end-to-end in this follow-up. No test emails/invitations were sent, no
+passwords were changed, and no customer records or Google resources were deleted.
+Legacy Gmail links have no reliable owner; users should find/relink their threads
+from their own Google account rather than assigning those links to another person.
