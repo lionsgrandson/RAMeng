@@ -338,3 +338,9 @@ test('Drive folder connection rejects a read-only folder before saving the assoc
   const response = await worker.fetch(request('/api/google/drive/project-folder', { projectId: 'project', folderId: 'folder' }), privateEnv)
   assert.equal(response.status, 403); assert.equal(kv.has('drive-project-folder:qa:project'), false)
 })
+
+test('reading an attachment-only email does not render binary data as the message body', async (t) => {
+  const { privateEnv } = googleFixture(t, async () => Response.json({ messages: [{ id: 'attachment-only', payload: { mimeType: 'application/pdf', filename: 'document.pdf', body: { data: Buffer.from('%PDF-binary').toString('base64url') } }, snippet: 'document' }] }))
+  const response = await worker.fetch(request('/api/google/gmail/thread?threadId=thread'), privateEnv)
+  assert.equal(response.status, 200); assert.equal((await response.json()).messages[0].body, '')
+})

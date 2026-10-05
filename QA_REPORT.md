@@ -230,3 +230,14 @@ Verification before deployment:
 - Native file-picker automation is limited by the Chrome extension's file URL
   permission. Stored-file attachment UI and binary upload behavior are verified;
   no browser extension permissions were changed.
+
+Live production verification (2026-10-05):
+- Udi's Chrome profile loaded two client Gmail conversations and the full
+  five-message thread; matching client calendar events loaded successfully.
+- Project mail is available with zero tasks and queries its linked client emails.
+- Google Picker opened successfully and displayed Udi's existing Drive folders.
+  No production folder was chosen or granted as part of QA.
+- Production HTML and referenced assets matched the build; private APIs reject
+  anonymous access with 401. No actual client email was sent.
+- Final regression total: 31 passing, including attachment-only email reading:
+  binary payloads are not rendered as message text.

@@ -330,7 +330,8 @@ function mimeBody(payload) {
   for (const part of parts) {
     if (part.mimeType === 'text/html' && part.body?.data) return stripHtml(decodeBase64UrlUtf8(part.body.data))
   }
-  return payload.body?.data ? decodeBase64UrlUtf8(payload.body.data) : ''
+  // Binary MIME parts are attachments, never message text.
+  return payload.mimeType?.startsWith('text/') && payload.body?.data ? decodeBase64UrlUtf8(payload.body.data) : ''
 }
 
 function normalizeGmailMessage(message) {
