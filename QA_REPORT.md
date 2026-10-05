@@ -162,3 +162,15 @@ re-audited end-to-end in this follow-up. No test emails/invitations were sent, n
 passwords were changed, and no customer records or Google resources were deleted.
 Legacy Gmail links have no reliable owner; users should find/relink their threads
 from their own Google account rather than assigning those links to another person.
+
+Publication verification:
+- Code commit `de9b23430239262355f789d68440894cb6a020b4` pushed to main.
+- Cloudflare production deployment succeeded, version
+  `8cc46f72-fe5d-47be-8352-139b97e1b1b2`.
+- Live HTML and all four referenced JS/CSS assets match the local production build.
+  Private Gmail/Drive/status endpoints reject unauthenticated requests with 401;
+  public configuration does not expose private credentials.
+- Udi's live session displays project Save/Delete and report Delete controls.
+  The unchanged project editor Save action displays `נשמר`. His Google calendar
+  sync loads personal events successfully. Browser warnings observed belong to
+  the installed wallet extension, with no CRM application errors observed.
