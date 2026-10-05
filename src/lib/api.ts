@@ -23,24 +23,27 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 export const integrationsApi = {
+  mailImages: (messageId: string) => request<{ images: Record<string, string> }>(`/api/google/gmail/images?messageId=${encodeURIComponent(messageId)}`),
+  mailSignature: () => request<{ html: string; enabled: boolean }>('/api/profile/signature'),
+  saveMailSignature: (signature: { html: string; enabled: boolean }) => request<{ html: string; enabled: boolean }>('/api/profile/signature', { method: 'PUT', body: JSON.stringify(signature) }),
   status: () => request<IntegrationStatus>('/api/integrations/status'),
   googleConfig: () => request<GoogleIntegrationConfig>('/api/google/config'),
   saveGoogleConfig: (config: { clientId: string; clientSecret?: string }) => request<{ ok: true; configured: boolean }>('/api/google/config', { method: 'PUT', body: JSON.stringify(config) }),
-  googleAuthUrl: () => request<{ url: string }>('/api/google/auth-url'),
+  googleAuthUrl: (driveRead = false) => request<{ url: string }>(`/api/google/auth-url?driveRead=${driveRead}`),
   gmailLinks: () => request<{ links: Record<string, { threadId: string; to: string }> }>('/api/google/gmail/links'),
   linkGmailTask: (taskId: string, threadId: string, to = '') => request<{ links: Record<string, { threadId: string; to: string }> }>('/api/google/gmail/links', { method: 'PUT', body: JSON.stringify({ taskId, threadId, to }) }),
   unlinkGmailTask: (taskId: string) => request<{ links: Record<string, { threadId: string; to: string }> }>('/api/google/gmail/links', { method: 'DELETE', body: JSON.stringify({ taskId }) }),
   gmailThread: (threadId: string) => request<{ messages: GmailApiMessage[] }>(`/api/google/gmail/thread?threadId=${encodeURIComponent(threadId)}`),
   gmailSearch: (query: string) => request<{ threads: { id: string; snippet: string; subject?: string; from?: string }[] }>(`/api/google/gmail/search?q=${encodeURIComponent(query)}`),
-  sendMail: (payload: { to: string; subject: string; body: string; threadId?: string; attachments?: MailAttachment[] }) => request<{ id: string; threadId: string }>('/api/google/gmail/send', { method: 'POST', body: JSON.stringify(payload) }),
+  sendMail: (payload: { to: string; subject: string; body: string; html?: string; threadId?: string; attachments?: MailAttachment[] }) => request<{ id: string; threadId: string }>('/api/google/gmail/send', { method: 'POST', body: JSON.stringify(payload) }),
   contactMail: (emails: string[], pageToken = '') => request<{ threads: GmailThreadSummary[]; nextPageToken: string }>(`/api/google/gmail/contacts?emails=${encodeURIComponent(emails.join(','))}&pageToken=${encodeURIComponent(pageToken)}`),
   contactCalendar: (emails: string[], from: string, to: string) => request<{ items: GoogleCalendarEvent[] }>(`/api/google/calendar/contacts?emails=${encodeURIComponent(emails.join(','))}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
   calendarEvents: (from?: string, to?: string) => request<{ items: GoogleCalendarEvent[] }>(`/api/google/calendar/events?from=${encodeURIComponent(from || '')}&to=${encodeURIComponent(to || '')}`),
   createCalendarEvent: (payload: { summary: string; start: string; end?: string; description?: string; location?: string }) => request<{ id: string; htmlLink?: string }>('/api/google/calendar/events', { method: 'POST', body: JSON.stringify(payload) }),
-  ensureProjectFolder: (payload: { projectId: string; name: string; parentId?: string; folderId?: string }) => request<{ id: string; webViewLink: string }>('/api/google/drive/project-folder', { method: 'POST', body: JSON.stringify(payload) }),
-  projectDriveFolder: (projectId: string) => request<{ folder: { id: string; webViewLink: string } | null }>(`/api/google/drive/project-folder?projectId=${encodeURIComponent(projectId)}`),
+  ensureProjectFolder: (payload: { projectId: string; name: string; parentId?: string; folderId?: string; readOnly?: boolean }) => request<{ id: string; name?: string; readOnly?: boolean; webViewLink: string }>('/api/google/drive/project-folder', { method: 'POST', body: JSON.stringify(payload) }),
+  projectDriveFolder: (projectId: string) => request<{ folder: { id: string; name?: string; readOnly?: boolean; webViewLink: string } | null }>(`/api/google/drive/project-folder?projectId=${encodeURIComponent(projectId)}`),
   unlinkProjectDriveFolder: (projectId: string) => request<{ folder: null }>(`/api/google/drive/project-folder?projectId=${encodeURIComponent(projectId)}`, { method: 'DELETE' }),
-  driveFiles: (folderId: string) => request<{ files: GoogleDriveFile[] }>(`/api/google/drive/files?folderId=${encodeURIComponent(folderId)}`),
+  driveFiles: (folderId: string, pageToken = '') => request<{ files: GoogleDriveFile[]; nextPageToken: string; completeAccess: boolean }>(`/api/google/drive/files?folderId=${encodeURIComponent(folderId)}&pageToken=${encodeURIComponent(pageToken)}`),
   driveFolders: (query = '', pageToken = '') => request<{ folders: GoogleDriveFile[]; nextPageToken: string }>(`/api/google/drive/folders?q=${encodeURIComponent(query)}&pageToken=${encodeURIComponent(pageToken)}`),
   drivePicker: () => request<{ token: string; apiKey: string; appId: string; email: string }>('/api/google/drive/picker'),
   driveSettings: () => request<DriveSettings>('/api/google/drive/settings'),
@@ -55,7 +58,7 @@ export const integrationsApi = {
   saveAdminConfig: (config: AdminConfig) => request<{ ok: true }>('/api/admin/config', { method: 'PUT', body: JSON.stringify(config) }),
 }
 
-export interface GmailApiMessage { id: string; threadId: string; from: string; to: string; subject: string; date: string; body: string; snippet: string }
+export interface GmailApiMessage { id: string; threadId: string; from: string; to: string; subject: string; date: string; body: string; htmlBody?: string; snippet: string }
 export interface MailAttachment { name: string; type: string; data: string }
 export interface GmailThreadSummary { id: string; subject: string; from: string; to: string; date: string; snippet: string }
 export interface DriveSettings { autoFiles: boolean; autoReports: boolean }

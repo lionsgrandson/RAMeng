@@ -19,7 +19,7 @@ export default function DriveAutoSync({ workspace, enabled, reportsAllowed, read
         if (!(await integrationsApi.status()).google.connected) return
         const settings = await integrationsApi.driveSettings()
         const linked = new Set<string>()
-        for (const project of data.projects) if ((await integrationsApi.projectDriveFolder(project.id)).folder) linked.add(project.id)
+        for (const project of data.projects) { const folder = (await integrationsApi.projectDriveFolder(project.id)).folder; if (folder && !folder.readOnly) linked.add(project.id) }
         const errors: string[] = []
         if (settings.autoFiles) for (const file of data.files) {
           if (!file.projectId || !linked.has(file.projectId)) continue

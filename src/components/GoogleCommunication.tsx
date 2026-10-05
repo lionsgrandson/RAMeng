@@ -1,11 +1,15 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Mail, Paperclip, RefreshCw, Send, X } from 'lucide-react'
 import { integrationsApi, type GmailApiMessage, type GmailThreadSummary, type GoogleCalendarEvent, type MailAttachment } from '../lib/api'
 import { fileAttachment, MAX_ATTACHMENT_BYTES, storedAttachment } from '../lib/googleFiles'
 import type { Contact, FileRecord } from '../types'
+const RichTextEditor = lazy(() => import('./RichTextEditor'))
+import EmailMessage, { emailAddressLabel, emailText } from './EmailMessage'
 import { dateTimeLabel, EmptyState } from './common'
 
 export function MailComposer({ to = '', subject = '', threadId, files = [], onSent }: { to?: string; subject?: string; threadId?: string; files?: FileRecord[]; onSent?: (result: { id: string; threadId: string }, to: string) => Promise<void> | void }) {
+  const [html, setHtml] = useState('<p></p>'); const [text, setText] = useState(''); const [signatureLoaded, setSignatureLoaded] = useState(false)
+  useEffect(() => { let active = true; void integrationsApi.mailSignature().then((signature) => { if (active && signature.enabled && signature.html) { setHtml('<p></p><p>—</p>' + signature.html); setText(new DOMParser().parseFromString(signature.html, 'text/html').body.textContent || '') } }).catch(() => { if (active) setError('לא ניתן לטעון את החתימה. ניתן לכתוב ולשלוח ללא חתימה.') }).finally(() => { if (active) setSignatureLoaded(true) }); return () => { active = false } }, [])
   const [attachments, setAttachments] = useState<MailAttachment[]>([])
   const [busy, setBusy] = useState(false); const [error, setError] = useState(''); const [sent, setSent] = useState(false)
   const add = async (getFiles: () => Promise<MailAttachment[]>) => {
@@ -17,9 +21,9 @@ export function MailComposer({ to = '', subject = '', threadId, files = [], onSe
     const form = event.currentTarget; const data = new FormData(form); const recipient = String(data.get('to') || '')
     setBusy(true); setError(''); setSent(false)
     try {
-      const result = await integrationsApi.sendMail({ to: recipient, subject: String(data.get('subject') || ''), body: String(data.get('body') || ''), threadId, attachments })
+      const result = await integrationsApi.sendMail({ to: recipient, subject: String(data.get('subject') || ''), body: text || (html.includes('<img') ? 'תמונה' : ''), html, threadId, attachments })
       // Sending succeeded even if refreshing the view fails. Never offer a resend for a refresh failure.
-      form.reset(); setAttachments([]); setSent(true)
+      form.reset(); setAttachments([]); setHtml('<p></p>'); setText(''); setSent(true)
       try { await onSent?.(result, recipient) } catch { setError('המייל נשלח. רענון ההתכתבות נכשל; לחצו על סנכרון.') }
     } catch (e) { setError(e instanceof Error ? e.message : 'שליחת המייל נכשלה') } finally { setBusy(false) }
   }
@@ -27,11 +31,11 @@ export function MailComposer({ to = '', subject = '', threadId, files = [], onSe
     {error && <div className="error-banner" role="alert">{error}</div>}{sent && <div className="success-banner" role="status">המייל נשלח בהצלחה</div>}
     <label className="inline-control-label"><span>נמען</span><input name="to" type="email" required defaultValue={to} /></label>
     <label className="inline-control-label"><span>נושא</span><input name="subject" required defaultValue={subject} /></label>
-    <label className="inline-control-label mail-body-label"><span>תוכן ההודעה</span><textarea name="body" required rows={5} /></label>
+    <div className="mail-body-label"><strong>תוכן ההודעה</strong><Suspense fallback={<p>טוען עורך...</p>}><RichTextEditor label="תוכן ההודעה" value={html} disabled={busy || !signatureLoaded} onChange={(html, text) => { setHtml(html); setText(text) }} /></Suspense></div>
     <div className="attachment-controls"><label className="secondary file-label"><Paperclip /> צירוף קבצים<input aria-label="צירוף קבצים למייל" type="file" multiple disabled={busy} onChange={(event) => { const selected = Array.from(event.target.files || []); event.target.value = ''; void add(() => Promise.all(selected.map((file) => fileAttachment(file, file.name)))) }} /></label>
     {files.length > 0 && <label className="inline-control-label"><span>קובץ מהמערכת</span><select disabled={busy} defaultValue="" onChange={(event) => { const file = files.find((item) => item.id === event.target.value); event.target.value = ''; if (file) void add(async () => [await storedAttachment(file)]) }}><option value="">בחירת קובץ לצירוף</option>{files.map((file) => <option key={file.id} value={file.id}>{file.name}</option>)}</select></label>}<small>עד 10 קבצים, 18 MB בסך הכול</small></div>
     <div className="attachment-list">{attachments.map((file, index) => <span key={`${index}-${file.name}`}>{file.name}<button type="button" className="icon-btn" aria-label={`הסרת קובץ מצורף ${file.name}`} disabled={busy} onClick={() => setAttachments((current) => current.filter((_, i) => i !== index))}><X /></button></span>)}</div>
-    <button className="primary" disabled={busy}><Send /> {busy ? 'מעבד...' : threadId ? 'שליחה באותה התכתבות' : 'שליחת מייל'}</button>
+    <button className="primary" disabled={busy || !signatureLoaded || (!text.trim() && !html.includes('<img'))}><Send /> {busy ? 'מעבד...' : threadId ? 'שליחה באותה התכתבות' : 'שליחת מייל'}</button>
   </form>
 }
 
@@ -52,8 +56,8 @@ export default function ContactMail({ contacts, canSend, files = [], subject = '
     <div className="card-head"><div><h2>{contacts.length > 1 ? 'מיילים של הלקוחות' : 'מיילים של הלקוח'}</h2><small>Gmail מהחשבון שלך בלבד · {emailsKey || 'אין כתובת מייל ללקוח'}</small></div><div>{emailsKey && <button className="secondary" disabled={busy} onClick={() => void sync()}><RefreshCw /> {busy ? 'מסנכרן...' : 'סנכרון מיילים'}</button>}{canSend && <button className="primary" onClick={() => { setSent(false); setSelected(''); setComposing(true) }}><Mail /> מייל חדש</button>}</div></div>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {sent && <div className="success-banner" role="status">המייל נשלח בהצלחה</div>}
-    <div className="contact-mail-layout"><div className="contact-thread-list">{threads.map((thread) => <button type="button" key={thread.id} className={selected === thread.id ? 'active' : ''} onClick={() => { setSelected(thread.id); setComposing(false) }}><strong>{thread.subject || 'ללא נושא'}</strong><small>{thread.from} · {dateTimeLabel(thread.date)}</small><p>{thread.snippet}</p></button>)}{!threads.length && !busy && <EmptyState title="אין מיילים להצגה" text={emailsKey ? 'לא נמצאו התכתבויות עם הלקוחות בחשבון Google שלך.' : 'הוסיפו כתובת מייל בכרטיס הלקוח כדי לסנכרן.'} />}{pageToken && <button type="button" className="secondary" disabled={busy} onClick={() => void sync(true)}>מיילים נוספים</button>}</div>
-    <div className="contact-thread-body">{messages.map((message) => <article key={message.id}><header><strong>{message.from}</strong><small>אל: {message.to} · {dateTimeLabel(message.date)}</small></header><h3>{message.subject}</h3><p>{message.body || message.snippet}</p></article>)}
+    <div className="contact-mail-layout"><div className="contact-thread-list">{threads.map((thread) => <button type="button" key={thread.id} className={selected === thread.id ? 'active' : ''} onClick={() => { setSelected(thread.id); setComposing(false) }}><strong>{thread.subject || 'ללא נושא'}</strong><small>{emailAddressLabel(thread.from)} · {dateTimeLabel(thread.date)}</small><p>{emailText(thread.snippet)}</p></button>)}{!threads.length && !busy && <EmptyState title="אין מיילים להצגה" text={emailsKey ? 'לא נמצאו התכתבויות עם הלקוחות בחשבון Google שלך.' : 'הוסיפו כתובת מייל בכרטיס הלקוח כדי לסנכרן.'} />}{pageToken && <button type="button" className="secondary" disabled={busy} onClick={() => void sync(true)}>מיילים נוספים</button>}</div>
+    <div className="contact-thread-body">{messages.map((message) => <EmailMessage key={message.id} message={message} />)}
       {(composing || selected) && canSend && <MailComposer key={`${emailsKey}:${selected}:${composing}`} to={selected ? (() => { const sender = messages.at(-1)?.from.match(/<([^>]+)>/)?.[1] || messages.at(-1)?.from; return contacts.find((contact) => contact.email?.toLowerCase() === sender?.toLowerCase())?.email || emailsKey.split(',')[0] || '' })() : emailsKey.split(',')[0] || ''} subject={selected ? threads.find((thread) => thread.id === selected)?.subject || subject : subject} threadId={selected || undefined} files={files} onSent={async (result) => { setSent(true); setSelected(result.threadId); setComposing(false); const thread = await integrationsApi.gmailThread(result.threadId); setMessages(thread.messages); await sync() }} />}
     </div></div>
   </section>

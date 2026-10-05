@@ -241,3 +241,53 @@ Live production verification (2026-10-05):
   anonymous access with 401. No actual client email was sent.
 - Final regression total: 31 passing, including attachment-only email reading:
   binary payloads are not rendered as message text.
+
+## Rich email, signatures and existing Drive contents (2026-10-05)
+
+Received emails preserve sanitized HTML paragraphs, tables, emphasis and links.
+Named Gmail/Outlook quote blocks and plain-text reply markers are collapsed behind
+an expandable history control. Escaped snippet entities are decoded, header names
+are cleaned and recipient lists are expandable. Remote/inline images are shown
+only on request; CID images load from the authenticated mailbox with size limits
+and executable formats excluded. Message contents remain outside shared CRM data.
+
+Profile settings include an owner-scoped rich signature stored in Worker KV.
+Composers insert the personal signature and support bold/italic/underline,
+font/size/color, alignment, lists, links, image uploads and direct image pasting,
+undo/redo and clearing formatting. Rich messages include a plain-text fallback;
+pasted images become MIME CID parts, with standard file attachments retained.
+HTML is sanitized both in the reader and outgoing server payload. Editing libraries
+load on demand. Images are limited to 2 MB each; message attachments/inline images
+remain limited to 18 MB combined. Signatures have a 3 MB encoded storage limit.
+
+Drive listings now include pagination and navigation through existing subfolders.
+An explicit Google reconnection adds only drive.metadata.readonly, allowing names,
+metadata and links for existing contents without new write or content-download
+permission. Existing folder connections default to read-only; other project folders
+can opt into uploads from settings. The user's connected נכסים folder is protected
+in production KV and the upload endpoint, including manual upload attempts. Its
+Google files/folders were not edited or deleted during this request. A direct,
+read-only Drive browser inspection confirmed six existing subfolders and nine files.
+
+Verification:
+- 36 regression tests, type checking, production build and whitespace checks pass.
+- Disposable UI: signature formatting/link saving, signature insertion, pasting a
+  real clipboard PNG, sending with that image and a CRM attachment, sanitized HTML
+  display with collapsed quote history, and Drive subfolder/back navigation pass.
+- 390 px rich mail view: document/content width both 390; editor 344 px; emulation
+  cleared. No real email sent and no invented signature saved to Udi's account.
+- Live profile editor and read-only folder protection visible in Udi's profile.
+- Google identity verification / added metadata permission is pending user action;
+  complete existing-content listing must be verified after consent completes.
+- Deployment uses the existing Worker setup. An unintended root Wrangler setup
+  was stopped; generated root configuration/plugin changes were removed before
+  the successful deployment.
+
+Final live email check: the reported two-message conversation now renders HTML
+with line breaks/paragraphs and separate sender/date/expandable recipients. Quoted
+history is collapsed, escaped entities are absent, and the rich reply editor loads
+without alerts. A production-only editor lifecycle error observed while switching
+views was fixed by stable extension instances and guarding destroyed editor access;
+the profile-to-mail transition was retested. Final deployed Worker version:
+d61302eb-1d86-4d9a-94b9-e786d6d43f19. Production HTML, four referenced assets and the
+lazy editor asset match the local build; new private endpoints return 401 anonymously.

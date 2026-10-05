@@ -335,7 +335,7 @@ test('client calendar combines visible calendars and deduplicates the same meeti
 
 test('Drive folder connection rejects a read-only folder before saving the association', async (t) => {
   const { privateEnv, kv } = googleFixture(t, async () => Response.json({ id: 'folder', mimeType: 'application/vnd.google-apps.folder', capabilities: { canAddChildren: false } }))
-  const response = await worker.fetch(request('/api/google/drive/project-folder', { projectId: 'project', folderId: 'folder' }), privateEnv)
+  const response = await worker.fetch(request('/api/google/drive/project-folder', { projectId: 'project', folderId: 'folder', readOnly: false }), privateEnv)
   assert.equal(response.status, 403); assert.equal(kv.has('drive-project-folder:qa:project'), false)
 })
 
@@ -343,4 +343,56 @@ test('reading an attachment-only email does not render binary data as the messag
   const { privateEnv } = googleFixture(t, async () => Response.json({ messages: [{ id: 'attachment-only', payload: { mimeType: 'application/pdf', filename: 'document.pdf', body: { data: Buffer.from('%PDF-binary').toString('base64url') } }, snippet: 'document' }] }))
   const response = await worker.fetch(request('/api/google/gmail/thread?threadId=thread'), privateEnv)
   assert.equal(response.status, 200); assert.equal((await response.json()).messages[0].body, '')
+})
+
+test('Gmail rich messages include plain fallback, sanitized HTML and CID inline images', async (t) => {
+  let raw = ''
+  const { privateEnv } = googleFixture(t, async (_url, init) => { raw = Buffer.from(JSON.parse(init.body).raw, 'base64url').toString('utf8'); return Response.json({ id: 'sent', threadId: 'thread' }) })
+  const response = await worker.fetch(request('/api/google/gmail/send', { to: 'client@example.test', subject: 'Rich', body: 'Hello', html: '<p><b>Hello</b> <a href="https://example.test">link</a><img src="data:image/png;base64,AQIDBA==" onerror="alert(1)"></p><script>alert(1)</script>' }), privateEnv)
+  assert.equal(response.status, 200)
+  assert.match(raw, /multipart\/alternative/); assert.match(raw, /multipart\/related/)
+  assert.match(raw, /Content-ID: <[^>]+@rameng>/); assert.match(raw, /AQIDBA==/)
+  const html = Buffer.from(raw.match(/Content-Type: text\/html; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n([A-Za-z0-9+/=\r\n]+)\r\n--/)[1], 'base64').toString('utf8')
+  assert.match(html, /<b>Hello<\/b>/); assert.match(html, /href="https:\/\/example.test"/); assert.match(html, /src="cid:/)
+  assert.doesNotMatch(html, /script|onerror|data:image/)
+})
+
+test('signature storage is owner scoped and sanitizes scripts and malicious links', async (t) => {
+  const { privateEnv, kv } = googleFixture(t, async () => { throw Error('No Google request needed') })
+  const response = await worker.fetch(new Request('https://qa.example.test/api/profile/signature', { method: 'PUT', headers: { authorization: 'Bearer qa-token', 'content-type': 'application/json' }, body: JSON.stringify({ html: '<p>Personal</p><a href="javascript:alert(1)">link</a><script>bad()</script>', enabled: true, userId: 'someone-else' }) }), privateEnv)
+  assert.equal(response.status, 200); const saved = await response.json()
+  assert.match(saved.html, /Personal/); assert.doesNotMatch(saved.html, /script|javascript|bad/)
+  assert.deepEqual(kv.get('mail-signature:qa'), saved); assert.equal(kv.has('mail-signature:someone-else'), false)
+})
+
+test('Drive listing returns pagination and is strictly read only', async (t) => {
+  const { privateEnv, kv } = googleFixture(t, async (url, init) => { assert.equal(init.method || 'GET', 'GET'); assert.equal(url.searchParams.get('pageToken'), 'page-two'); assert.match(url.searchParams.get('fields'), /nextPageToken/); return Response.json({ files: [{ id: 'folder', name: 'Existing', mimeType: 'application/vnd.google-apps.folder' }], nextPageToken: 'page-three' }) })
+  kv.get('rameng:google-tokens:v2:qa').scope = 'https://www.googleapis.com/auth/drive.metadata.readonly'
+  const response = await worker.fetch(request('/api/google/drive/files?folderId=folder&pageToken=page-two'), privateEnv)
+  assert.equal(response.status, 200); const data = await response.json(); assert.equal(data.completeAccess, true); assert.equal(data.nextPageToken, 'page-three'); assert.equal(data.files[0].name, 'Existing')
+})
+
+test('protected existing Drive folder blocks manual and automatic uploads without Google mutations', async (t) => {
+  const { privateEnv, kv } = googleFixture(t, async () => { throw Error('Protected folder must not be contacted for upload') })
+  kv.set('drive-project-folder:qa:project', { id: 'protected-existing-folder' })
+  kv.set('drive-protected-folder:protected-existing-folder', true)
+  for (const automatic of [true, false]) {
+    const response = await worker.fetch(request('/api/google/drive/upload', { projectId: 'project', recordId: 'record', automatic, file: { name: 'test', type: 'text/plain', data: 'AQID' } }), privateEnv)
+    assert.equal(response.status, 200); assert.equal((await response.json()).reason, 'read-only-folder')
+  }
+  const data = await (await worker.fetch(request('/api/google/drive/project-folder?projectId=project'), privateEnv)).json()
+  assert.equal(data.folder.readOnly, true)
+})
+
+test('inline Gmail image loading stays in the authenticated mailbox and excludes executable image formats', async (t) => {
+  const { privateEnv } = googleFixture(t, async (url) => {
+    assert.match(url.pathname, /\/users\/me\/messages\/message/)
+    if (url.pathname.endsWith('/attachments/image')) return Response.json({ data: 'AQIDBA==' })
+    return Response.json({ payload: { mimeType: 'multipart/related', parts: [
+      { mimeType: 'image/png', headers: [{ name: 'Content-ID', value: '<logo>' }], body: { size: 4, attachmentId: 'image' } },
+      { mimeType: 'image/svg+xml', headers: [{ name: 'Content-ID', value: '<script>' }], body: { size: 4, attachmentId: 'never-fetch' } },
+    ] } })
+  })
+  const response = await worker.fetch(request('/api/google/gmail/images?messageId=message&userId=other'), privateEnv)
+  assert.equal(response.status, 200); assert.deepEqual((await response.json()).images, { logo: 'data:image/png;base64,AQIDBA==' })
 })

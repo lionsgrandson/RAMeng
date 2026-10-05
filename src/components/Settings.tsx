@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+const RichTextEditor = lazy(() => import('./RichTextEditor'))
+import { lazy, Suspense, useEffect, useState } from 'react'
 import type { User } from '@supabase/supabase-js'
 import { Cloud, RefreshCw, Save, UserRound } from 'lucide-react'
 import { integrationsApi, type AdminConfig, type GoogleIntegrationConfig, type IntegrationStatus } from '../lib/api'
@@ -53,6 +54,8 @@ export default function SettingsPage({
 
 function PersonalSettings({ user, onUserUpdated }: { user: User; onUserUpdated: (user: User) => void }) {
   const currentName = String(user.user_metadata?.full_name || user.user_metadata?.name || '').trim()
+  const [signature, setSignature] = useState({ html: '', enabled: true }); const [signatureReady, setSignatureReady] = useState(false); const [signatureBusy, setSignatureBusy] = useState(false); const [signatureError, setSignatureError] = useState(''); const [signatureSaved, setSignatureSaved] = useState(false)
+  useEffect(() => { let active = true; void integrationsApi.mailSignature().then((value) => { if (active) { setSignature(value); setSignatureReady(true) } }).catch((e) => { if (active) setSignatureError(e.message) }); return () => { active = false } }, [user.id])
   const [name, setName] = useState(currentName)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
@@ -88,6 +91,12 @@ function PersonalSettings({ user, onUserUpdated }: { user: User; onUserUpdated: 
     <div className="settings-form">
       <Field label="שם מלא"><input value={name} maxLength={100} autoComplete="name" onChange={(event) => setName(event.target.value)} /></Field>
       <Field label="כתובת מייל"><input type="email" value={user.email || ''} readOnly /></Field>
+      <section className="signature-settings"><h3>החתימה שלי למייל</h3><p>החתימה אישית לחשבון שלך ומתווספת להודעות חדשות ולתשובות. אפשר לערוך או להסיר אותה לפני שליחה.</p>
+      {signatureError && <div className="error-banner" role="alert">{signatureError}</div>}
+      {signatureReady && <><Suspense fallback={<p>טוען עורך...</p>}><RichTextEditor label="חתימה למייל" value={signature.html} disabled={signatureBusy} onChange={(html) => { setSignatureSaved(false); setSignature({ ...signature, html }) }} /></Suspense>
+      <label><input type="checkbox" checked={signature.enabled} disabled={signatureBusy} onChange={(e) => { setSignatureSaved(false); setSignature({ ...signature, enabled: e.target.checked }) }} /> הוספת החתימה אוטומטית</label>
+      <button type="button" className="primary" disabled={signatureBusy} onClick={() => { setSignatureBusy(true); setSignatureError(''); void integrationsApi.saveMailSignature(signature).then((result) => { setSignature(result); setSignatureSaved(true) }).catch((e) => setSignatureError(e.message)).finally(() => setSignatureBusy(false)) }}>{signatureBusy ? 'שומר...' : 'שמירת החתימה'}</button>{signatureSaved && <p className="success-banner" role="status">החתימה נשמרה</p>}</>}
+      </section>
       <div className="form-actions"><button type="button" className="primary" disabled={saving || !name.trim() || name.trim() === currentName} onClick={() => void save()}><Save /> {saving ? 'שומר...' : 'שמירת השם'}</button></div>
     </div>
   </section>

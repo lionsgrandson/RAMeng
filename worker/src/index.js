@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
+import { cleanMailHtml, mailContent } from './mailHtml.js'
 
 const CONFIG_KEY = 'rameng:admin-config:v1'
 const GOOGLE_TOKENS_PREFIX = 'rameng:google-tokens:v2:'
@@ -334,6 +335,22 @@ function mimeBody(payload) {
   return payload.mimeType?.startsWith('text/') && payload.body?.data ? decodeBase64UrlUtf8(payload.body.data) : ''
 }
 
+function mimeHtml(payload) {
+  if (!payload || payload.filename) return ''
+  if (payload.mimeType === 'text/html' && payload.body?.data) return decodeBase64UrlUtf8(payload.body.data)
+  for (const part of payload.parts || []) { const html = mimeHtml(part); if (html) return html }
+  return ''
+}
+async function handleMailSignature(request, env, config) {
+  const user = await requireUser(request, env, config)
+  const key = `mail-signature:${user.id}`
+  if (request.method === 'PUT') {
+    const body = await parseBody(request)
+    if (typeof body.html !== 'string' || body.html.length > 3 * 1024 * 1024) throw Object.assign(new Error('החתימה גדולה מדי. השתמשו בתמונות קטנות יותר.'), { status: 413 })
+    await env.CONFIG.put(key, JSON.stringify({ html: cleanMailHtml(body.html), enabled: body.enabled !== false }))
+  }
+  return apiJson(request, await env.CONFIG.get(key, 'json') || { html: '', enabled: true })
+}
 function normalizeGmailMessage(message) {
   const headers = message.payload?.headers || []
   return {
@@ -344,6 +361,7 @@ function normalizeGmailMessage(message) {
     subject: headerValue(headers, 'Subject'),
     date: headerValue(headers, 'Date') || (message.internalDate ? new Date(Number(message.internalDate)).toISOString() : ''),
     body: mimeBody(message.payload),
+    htmlBody: mimeHtml(message.payload),
     snippet: message.snippet || '',
   }
 }
@@ -351,6 +369,7 @@ function normalizeGmailMessage(message) {
 async function handleGoogleAuthUrl(request, env, config) {
   const user = await requireUser(request, env, config)
   if (!config.googleClientId || !config.googleClientSecret) throw Object.assign(new Error('החיבור ל-Google עדיין לא זמין.'), { status: 503 })
+  const driveRead = new URL(request.url).searchParams.get('driveRead') === 'true'
   const state = crypto.randomUUID()
   await env.CONFIG.put(`${OAUTH_STATE_PREFIX}${state}`, JSON.stringify({ userId: user.id, email: user.email || '', createdAt: Date.now() }), { expirationTtl: 600 })
   const params = new URLSearchParams({
@@ -367,6 +386,7 @@ async function handleGoogleAuthUrl(request, env, config) {
       'https://www.googleapis.com/auth/gmail.modify',
       'https://www.googleapis.com/auth/calendar',
       'https://www.googleapis.com/auth/drive.file',
+      ...(driveRead ? ['https://www.googleapis.com/auth/drive.metadata.readonly'] : []),
     ].join(' '),
   })
   return apiJson(request, { url: `https://accounts.google.com/o/oauth2/v2/auth?${params}` })
@@ -425,6 +445,31 @@ async function handleGmailThread(request, env, config) {
   return apiJson(request, { messages: (body.messages || []).map(normalizeGmailMessage) })
 }
 
+async function handleGmailImages(request, env, config) {
+  const user = await requireGoogleAreaAction(request, env, config, 'communication', 'view')
+  const id = new URL(request.url).searchParams.get('messageId') || ''
+  if (!/^[a-zA-Z0-9_-]{1,160}$/.test(id)) throw Object.assign(new Error('מזהה הודעה לא תקין'), { status: 400 })
+  const response = await googleFetch(env, config, user.id, `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=full`)
+  if (!response.ok) throw Object.assign(new Error('טעינת תמונות ההודעה נכשלה'), { status: response.status })
+  const payload = (await response.json()).payload
+  const parts = []; const collect = (part) => { if (!part) return; parts.push(part); for (const child of part.parts || []) collect(child) }; collect(payload)
+  const images = {}; let total = 0
+  for (const part of parts) {
+    const cid = headerValue(part.headers, 'Content-ID').replace(/^<|>$/g, '')
+    if (!cid || !/^image\/(png|jpeg|gif|webp)$/.test(part.mimeType) || part.body?.size > 2 * 1024 * 1024 || Object.keys(images).length >= 10) continue
+    let data = part.body?.data
+    if (!data && part.body?.attachmentId) {
+      const attachment = await googleFetch(env, config, user.id, `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}/attachments/${encodeURIComponent(part.body.attachmentId)}`)
+      if (!attachment.ok) throw Object.assign(new Error('טעינת תמונה מצורפת נכשלה'), { status: attachment.status })
+      data = (await attachment.json()).data
+    }
+    if (!data || data.length > 3 * 1024 * 1024) continue
+    total += data.length * 3 / 4; if (total > 8 * 1024 * 1024) break
+    images[cid] = `data:${part.mimeType};base64,${data.replace(/-/g, '+').replace(/_/g, '/')}`
+  }
+  return apiJson(request, { images })
+}
+
 async function handleGmailLinks(request, env, config) {
   const writing = request.method !== 'GET'
   const user = await requireGoogleAreaAction(request, env, config, 'communication', request.method === 'DELETE' ? 'delete' : writing ? 'edit' : 'view')
@@ -477,6 +522,8 @@ async function handleGmailSend(request, env, config) {
   if (!validEmail(to) || !subject || !text || /[\r\n]/.test(to)) throw Object.assign(new Error('יש להזין נמען תקין, נושא ותוכן'), { status: 400 })
   const attachments = validatedAttachments(body.attachments)
   const encodedSubject = `=?UTF-8?B?${utf8ToBase64(subject)}?=`
+  const rich = mailContent(body.html || '')
+  if (rich.inline.reduce((sum, file) => sum + file.data.length * 3 / 4, 0) + attachments.reduce((sum, file) => sum + file.data.length * 3 / 4, 0) > 18 * 1024 * 1024) throw Object.assign(new Error('Message exceeds 18 MB'), { status: 413 })
   const encodedBody = utf8ToBase64(text)
   const replyHeaders = []
   if (threadId) {
@@ -489,13 +536,22 @@ async function handleGmailSend(request, env, config) {
   }
   const boundary = `rameng_${crypto.randomUUID()}`
   const textPart = ['Content-Type: text/plain; charset=UTF-8', 'Content-Transfer-Encoding: base64', '', wrapBase64(encodedBody)].join('\r\n')
+  let contentPart = textPart
+  if (rich.html) {
+    const alternative = `alternative_${crypto.randomUUID()}`
+    contentPart = [`Content-Type: multipart/alternative; boundary="${alternative}"`, '', `--${alternative}`, textPart, `--${alternative}`, 'Content-Type: text/html; charset=UTF-8', 'Content-Transfer-Encoding: base64', '', wrapBase64(utf8ToBase64(rich.html)), `--${alternative}--`].join('\r\n')
+    if (rich.inline.length) {
+      const related = `related_${crypto.randomUUID()}`
+      contentPart = [`Content-Type: multipart/related; boundary="${related}"`, '', `--${related}`, contentPart, ...rich.inline.flatMap((image) => [`--${related}`, `Content-Type: ${image.type}`, `Content-ID: <${image.id}>`, 'Content-Disposition: inline', 'Content-Transfer-Encoding: base64', '', wrapBase64(image.data)]), `--${related}--`].join('\r\n')
+    }
+  }
   const rfc822 = [
     `To: ${to}`,
     `Subject: ${encodedSubject}`,
     ...replyHeaders,
     'MIME-Version: 1.0',
-    ...(attachments.length ? [`Content-Type: multipart/mixed; boundary="${boundary}"`, '', `--${boundary}`, textPart,
-      ...attachments.flatMap((file) => [`--${boundary}`, `Content-Type: ${file.type}`, `Content-Disposition: attachment; filename="attachment"; filename*=UTF-8''${encodeURIComponent(file.name)}`, 'Content-Transfer-Encoding: base64', '', wrapBase64(file.data)]), `--${boundary}--`, ''] : [textPart]),
+    ...(attachments.length ? [`Content-Type: multipart/mixed; boundary="${boundary}"`, '', `--${boundary}`, contentPart,
+      ...attachments.flatMap((file) => [`--${boundary}`, `Content-Type: ${file.type}`, `Content-Disposition: attachment; filename="attachment"; filename*=UTF-8''${encodeURIComponent(file.name)}`, 'Content-Transfer-Encoding: base64', '', wrapBase64(file.data)]), `--${boundary}--`, ''] : [contentPart]),
   ].join('\r\n')
   const payload = { raw: utf8ToBase64Url(rfc822), ...(threadId ? { threadId } : {}) }
   const response = await googleFetch(env, config, user.id, 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
@@ -652,8 +708,9 @@ async function handleDriveProjectFolder(request, env, config) {
     const folderResponse = await googleFetch(env, config, user.id, `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(folderId)}?fields=id,name,mimeType,trashed,webViewLink,capabilities(canAddChildren)&supportsAllDrives=true`)
     const folder = await folderResponse.json()
     if (!folderResponse.ok || folder.trashed || folder.mimeType !== 'application/vnd.google-apps.folder') throw Object.assign(new Error('בחרו את התיקייה דרך בוחר Google כדי להעניק גישה. אם עדיין אינה זמינה, בדקו שהיא משותפת עם החשבון המחובר.'), { status: folderResponse.ok ? 400 : folderResponse.status })
-    if (folder.capabilities?.canAddChildren === false) throw Object.assign(new Error('יש לכם הרשאת צפייה בלבד בתיקייה. להעלאה נדרשת הרשאת עריכה.'), { status: 403 })
-    const result = { id: folder.id, webViewLink: folder.webViewLink || `https://drive.google.com/drive/folders/${folder.id}` }
+    if (body.readOnly === false && folder.capabilities?.canAddChildren === false) throw Object.assign(new Error('יש לכם הרשאת צפייה בלבד בתיקייה. להעלאה נדרשת הרשאת עריכה.'), { status: 403 })
+    const protectedFolder = Boolean(await env.CONFIG.get(`drive-protected-folder:${folder.id}`, 'json'))
+    const result = { id: folder.id, name: folder.name, readOnly: protectedFolder || body.readOnly !== false, protected: protectedFolder, webViewLink: folder.webViewLink || `https://drive.google.com/drive/folders/${folder.id}` }
     await env.CONFIG.put(key, JSON.stringify(result))
     return apiJson(request, result)
   }
@@ -687,7 +744,9 @@ async function handleDriveProjectFolderRead(request, env, config) {
   const user = await requireGoogleAreaAction(request, env, config, 'files', request.method === 'DELETE' ? 'delete' : 'view')
   const projectId = new URL(request.url).searchParams.get('projectId') || ''
   if (request.method === 'DELETE') { await env.CONFIG.delete(`drive-project-folder:${user.id}:${projectId}`); return apiJson(request, { folder: null }) }
-  return apiJson(request, { folder: await env.CONFIG.get(`drive-project-folder:${user.id}:${projectId}`, 'json') || null })
+  const folder = await env.CONFIG.get(`drive-project-folder:${user.id}:${projectId}`, 'json') || null
+  if (folder && await env.CONFIG.get(`drive-protected-folder:${folder.id}`, 'json')) { folder.readOnly = true; folder.protected = true }
+  return apiJson(request, { folder })
 }
 
 async function handleDriveFiles(request, env, config) {
@@ -700,11 +759,13 @@ async function handleDriveFiles(request, env, config) {
   url.searchParams.set('pageSize', '100')
   url.searchParams.set('supportsAllDrives', 'true')
   url.searchParams.set('includeItemsFromAllDrives', 'true')
-  url.searchParams.set('fields', 'files(id,name,mimeType,modifiedTime,webViewLink,size)')
+  url.searchParams.set('fields', 'files(id,name,mimeType,modifiedTime,webViewLink,size),nextPageToken')
+  const source = new URL(request.url)
+  if (source.searchParams.get('pageToken')) url.searchParams.set('pageToken', source.searchParams.get('pageToken'))
   const response = await googleFetch(env, config, user.id, url.toString())
   const body = await response.json()
   if (!response.ok) throw Object.assign(new Error(localizedExternalError(body.error?.message, 'טעינת הקבצים מ-Drive נכשלה')), { status: response.status })
-  return apiJson(request, { files: body.files || [] })
+  return apiJson(request, { files: body.files || [], nextPageToken: body.nextPageToken || '', completeAccess: Boolean((await googleTokens(env, user.id))?.scope?.split(' ').some((scope) => ['https://www.googleapis.com/auth/drive.metadata.readonly', 'https://www.googleapis.com/auth/drive.readonly', 'https://www.googleapis.com/auth/drive'].includes(scope))) })
 }
 
 async function handleDriveFolders(request, env, config) {
@@ -746,6 +807,7 @@ async function handleDriveUpload(request, env, config) {
   if (body.automatic !== false && !(kind === 'report' ? settings.autoReports : settings.autoFiles)) return apiJson(request, { skipped: true, reason: 'disabled' })
   const folder = await env.CONFIG.get(`drive-project-folder:${user.id}:${projectId}`, 'json')
   if (!folder) return apiJson(request, { skipped: true, reason: 'unlinked' })
+  if (folder.readOnly || await env.CONFIG.get(`drive-protected-folder:${folder.id}`, 'json')) return apiJson(request, { skipped: true, reason: 'read-only-folder' })
   const [file] = validatedAttachments([body.file])
   const binary = atob(file.data); const bytes = new Uint8Array(binary.length)
   for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index)
@@ -1105,6 +1167,8 @@ async function routeApi(request, env) {
   if (path === '/api/integrations/status' && request.method === 'GET') return handleStatus(request, env, config)
   if (path === '/api/google/config' && ['GET', 'PUT'].includes(request.method)) return handleGoogleConfig(request, env, config)
   if (path === '/api/google/auth-url' && request.method === 'GET') return handleGoogleAuthUrl(request, env, config)
+  if (path === '/api/profile/signature' && ['GET', 'PUT'].includes(request.method)) return handleMailSignature(request, env, config)
+  if (path === '/api/google/gmail/images' && request.method === 'GET') return handleGmailImages(request, env, config)
   if (path === '/api/google/gmail/thread' && request.method === 'GET') return handleGmailThread(request, env, config)
   if (path === '/api/google/gmail/links' && ['GET', 'PUT', 'DELETE'].includes(request.method)) return handleGmailLinks(request, env, config)
   if (path === '/api/google/gmail/search' && request.method === 'GET') return handleGmailSearch(request, env, config)
