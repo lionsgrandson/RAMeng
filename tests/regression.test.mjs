@@ -217,3 +217,124 @@ test('linking an existing Drive folder validates and saves an owner-scoped refer
   assert.equal(writes[0][0], 'drive-project-folder:qa:project')
   assert.equal(calls.some(([url, method]) => url.includes('googleapis.com') && method !== 'GET'), false)
 })
+
+function googleFixture(t, handler, role = 'admin') {
+  const kv = new Map([['rameng:admin-config:v1', config], ['rameng:google-tokens:v2:qa', { access_token: 'qa-google-token', expires_at: Date.now() + 3600000 }]])
+  const privateEnv = { CONFIG: { get: async (key) => kv.get(key) || null, put: async (key, value) => kv.set(key, JSON.parse(value)) } }
+  t.mock.method(globalThis, 'fetch', async (url, init = {}) => {
+    if (String(url).endsWith('/auth/v1/user')) return Response.json({ id: 'qa', email: 'qa@example.test' })
+    if (String(url).includes('/rest/v1/memberships')) return Response.json([{ role, permissions: null }])
+    assert.equal(init.headers.authorization, 'Bearer qa-google-token')
+    return handler(new URL(url), init)
+  })
+  t.mock.method(console, 'error', () => undefined)
+  return { privateEnv, kv }
+}
+
+test('Gmail sends multipart attachments with Hebrew filenames and exact binary bytes', async (t) => {
+  let raw = ''
+  const { privateEnv } = googleFixture(t, async (url, init) => {
+    assert.equal(url.pathname, '/gmail/v1/users/me/messages/send')
+    const payload = JSON.parse(init.body); raw = Buffer.from(payload.raw, 'base64url').toString('utf8')
+    return Response.json({ id: 'sent', threadId: 'thread' })
+  })
+  const binary = Buffer.from([0, 255, 128, 10, 13])
+  const response = await worker.fetch(request('/api/google/gmail/send', { to: 'client@example.test', subject: 'נושא', body: 'תוכן', attachments: [{ name: 'תכנית.pdf', type: 'application/pdf', data: binary.toString('base64') }] }), privateEnv)
+  assert.equal(response.status, 200)
+  assert.match(raw, /Content-Type: multipart\/mixed/)
+  assert.ok(raw.includes("filename*=UTF-8''" + encodeURIComponent('תכנית.pdf')))
+  assert.ok(raw.includes(binary.toString('base64')))
+  assert.ok(raw.includes(Buffer.from('תוכן').toString('base64')))
+})
+
+test('Gmail rejects recipient header injection and malformed attachments before contacting Google', async (t) => {
+  mockAuth(t, 'admin')
+  for (const payload of [{ to: 'a@example.test\r\nBcc: other@example.test' }, { attachments: [{ name: 'x', type: 'text/plain', data: '%%%' }] }]) {
+    const response = await worker.fetch(request('/api/google/gmail/send', { to: 'a@example.test', subject: 'QA', body: 'QA', ...payload }), env)
+    assert.equal(response.status, 400)
+  }
+})
+
+test('client Gmail sync uses exact address query, follows mailbox pagination and authenticates its owner', async (t) => {
+  const { privateEnv } = googleFixture(t, async (url) => {
+    if (url.pathname.endsWith('/threads')) { assert.equal(url.searchParams.get('q'), '{from:client@example.test to:client@example.test}'); assert.equal(url.searchParams.get('pageToken'), 'next'); return Response.json({ threads: [{ id: 'thread' }], nextPageToken: 'more' }) }
+    return Response.json({ messages: [{ internalDate: '1791187200000', payload: { headers: [{ name: 'Subject', value: 'hello' }] }, snippet: 'private' }] })
+  })
+  const result = await worker.fetch(request('/api/google/gmail/contacts?emails=client%40example.test&pageToken=next&userId=other'), privateEnv)
+  assert.equal(result.status, 200); assert.equal(result.headers.get('cache-control'), 'no-store')
+  const body = await result.json(); assert.equal(body.nextPageToken, 'more'); assert.equal(body.threads[0].subject, 'hello')
+})
+
+test('client calendar matches attendees/organizer exactly across Google pages and excludes unrelated events', async (t) => {
+  const { privateEnv } = googleFixture(t, async (url) => {
+    if (url.pathname.endsWith('/calendarList')) return Response.json({ items: [{ id: 'primary', primary: true }] })
+    if (!url.searchParams.get('pageToken')) return Response.json({ items: [{ id: 'unrelated', attendees: [{ email: 'notclient@example.test' }] }, { id: 'related', attendees: [{ email: 'CLIENT@example.test' }], start: { date: '2026-10-05' } }], nextPageToken: 'next' })
+    return Response.json({ items: [{ id: 'organizer', organizer: { email: 'client@example.test' }, start: { dateTime: '2026-10-06T09:00:00Z' } }] })
+  })
+  const result = await worker.fetch(request('/api/google/calendar/contacts?emails=client%40example.test'), privateEnv)
+  assert.equal(result.status, 200); assert.deepEqual((await result.json()).items.map((item) => item.id), ['primary:organizer', 'primary:related'])
+})
+
+test('Drive upload uses personal project folder, preserves file bytes and avoids a duplicate unchanged upload', async (t) => {
+  let uploads = 0
+  const { privateEnv, kv } = googleFixture(t, async (url, init) => {
+    if (url.hostname === 'www.googleapis.com' && url.pathname === '/drive/v3/files') return Response.json({ files: [] })
+    if (url.pathname === '/drive/v3/files/drive-file') return Response.json({ id: 'drive-file', parents: ['private-folder'] })
+    assert.equal(init.method, 'POST'); assert.equal(url.searchParams.get('supportsAllDrives'), 'true')
+    const body = await init.body.text(); assert.ok(body.includes('private-folder')); assert.ok(body.includes('file-content'))
+    uploads++; return Response.json({ id: 'drive-file', webViewLink: 'https://drive.google.com/file/d/drive-file/view' })
+  })
+  kv.set('drive-project-folder:qa:project', { id: 'private-folder' })
+  kv.set('drive-project-folder:other:project', { id: 'someone-elses-folder' })
+  const payload = { projectId: 'project', recordId: 'record', kind: 'file', file: { name: 'QA.txt', type: 'text/plain', data: Buffer.from('file-content').toString('base64') } }
+  assert.equal((await worker.fetch(request('/api/google/drive/upload', payload), privateEnv)).status, 200)
+  assert.equal((await (await worker.fetch(request('/api/google/drive/upload', payload), privateEnv)).json()).unchanged, true)
+  assert.equal(uploads, 1)
+})
+
+test('Drive report update replaces an existing CRM export instead of creating duplicates; automatic settings are respected', async (t) => {
+  let updates = 0
+  const { privateEnv, kv } = googleFixture(t, async (url, init) => {
+    if (url.pathname === '/drive/v3/files') return Response.json({ files: [{ id: 'existing-report' }] })
+    assert.equal(url.pathname, '/upload/drive/v3/files/existing-report'); assert.equal(init.method, 'PATCH'); updates++
+    return Response.json({ id: 'existing-report' })
+  })
+  kv.set('drive-project-folder:qa:project', { id: 'private-folder' })
+  const payload = { projectId: 'project', recordId: 'report', kind: 'report', file: { name: 'report.html', type: 'text/html', data: Buffer.from('<h1>report</h1>').toString('base64') } }
+  assert.equal((await worker.fetch(request('/api/google/drive/upload', payload), privateEnv)).status, 200)
+  kv.set('drive-settings:qa', { autoFiles: true, autoReports: false })
+  assert.equal((await (await worker.fetch(request('/api/google/drive/upload', payload), privateEnv)).json()).reason, 'disabled'); assert.equal(updates, 1)
+})
+
+test('read-only accounts cannot upload Drive files or obtain a Google Picker token', async (t) => {
+  mockAuth(t)
+  assert.equal((await worker.fetch(request('/api/google/drive/upload', { projectId: 'p' }), env)).status, 403)
+  assert.equal((await worker.fetch(request('/api/google/drive/picker'), env)).status, 403)
+})
+
+test('Gmail replies validate the thread in the caller mailbox and include RFC reply headers', async (t) => {
+  let sent = ''
+  const { privateEnv } = googleFixture(t, async (url, init) => {
+    if (url.pathname.endsWith('/threads/thread')) return Response.json({ messages: [{ payload: { headers: [{ name: 'Message-ID', value: '<original@example.test>' }, { name: 'References', value: '<older@example.test>' }] } }] })
+    sent = Buffer.from(JSON.parse(init.body).raw, 'base64url').toString('utf8')
+    return Response.json({ id: 'sent', threadId: 'thread' })
+  })
+  const response = await worker.fetch(request('/api/google/gmail/send', { to: 'client@example.test', subject: 'QA', body: 'QA reply', threadId: 'thread' }), privateEnv)
+  assert.equal(response.status, 200); assert.match(sent, /In-Reply-To: <original@example.test>/); assert.match(sent, /References: <older@example.test> <original@example.test>/)
+})
+
+test('client calendar combines visible calendars and deduplicates the same meeting across calendars', async (t) => {
+  const { privateEnv } = googleFixture(t, async (url) => {
+    if (url.pathname.endsWith('/calendarList')) return Response.json({ items: [{ id: 'primary', primary: true }, { id: 'team', selected: true }, { id: 'hidden', selected: false }] })
+    assert.ok(!url.pathname.includes('/hidden/'))
+    return Response.json({ items: [{ id: url.pathname.includes('/team/') ? 'copy' : 'meeting', iCalUID: 'meeting-uid', attendees: [{ email: 'client@example.test' }], start: { date: '2026-10-05' } }, ...(url.pathname.includes('/team/') ? [{ id: 'team-only', organizer: { email: 'client@example.test' }, start: { date: '2026-10-06' } }] : [])] })
+  })
+  const response = await worker.fetch(request('/api/google/calendar/contacts?emails=client%40example.test'), privateEnv)
+  assert.equal(response.status, 200); assert.deepEqual((await response.json()).items.map((event) => event.id), ['team:team-only', 'primary:meeting'])
+})
+
+test('Drive folder connection rejects a read-only folder before saving the association', async (t) => {
+  const { privateEnv, kv } = googleFixture(t, async () => Response.json({ id: 'folder', mimeType: 'application/vnd.google-apps.folder', capabilities: { canAddChildren: false } }))
+  const response = await worker.fetch(request('/api/google/drive/project-folder', { projectId: 'project', folderId: 'folder' }), privateEnv)
+  assert.equal(response.status, 403); assert.equal(kv.has('drive-project-folder:qa:project'), false)
+})

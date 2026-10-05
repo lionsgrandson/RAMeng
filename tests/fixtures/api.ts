@@ -1,7 +1,7 @@
 const delay = async () => new Promise((resolve) => setTimeout(resolve, 250))
 export const integrationsApi = {
   adminConfig: async () => { if ((new URLSearchParams(location.search).get('qaRole') || 'developer') !== 'developer') throw new Error('Forbidden in QA'); return { supabaseUrl: '', supabaseAnonKey: '', adminEmails: [] } },
-  status: async () => ({ configured: true, google: { configured: true, connected: false }, openai: { configured: false } }),
+  status: async () => ({ configured: true, google: { configured: true, connected: true, email: 'qa@example.test' }, openai: { configured: false } }),
   googleConfig: async () => ({ clientId: '', secretConfigured: false, redirectUri: 'http://127.0.0.1:4175/' }),
   addressSuggestions: async (query: string) => ({ suggestions: [{ label: `${query}, ירושלים`, value: `${query}, ירושלים` }] }),
   calendarEvents: async () => ({ items: [] }),
@@ -11,10 +11,17 @@ export const integrationsApi = {
   unlinkGmailTask: async () => ({ links: {} }),
   gmailThread: async () => ({ messages: [{ id: 'qa-mail', subject: 'מייל בדיקה', from: 'qa@example.test', to: 'client@example.test', date: '2026-10-04', body: 'תוכן בדיקה' }] }),
   gmailSearch: async () => ({ threads: [] }),
+  contactMail: async () => ({ threads: [{ id: 'qa-thread', subject: 'התכתבות עם הלקוח', from: 'client@example.test', to: 'qa@example.test', date: '2026-10-05T09:00:00Z', snippet: 'מייל בדיקה פרטי בחשבון שלך' }], nextPageToken: '' }),
+  contactCalendar: async () => ({ items: [{ id: 'qa-calendar', summary: 'פגישה עם הלקוח', start: '2026-10-05T09:00:00Z', location: 'ירושלים' }] }),
   sendMail: async () => { await delay(); return { id: 'qa-mail', threadId: 'qa-thread' } },
-  projectDriveFolder: async () => ({ folder: null }),
-  unlinkProjectDriveFolder: async () => ({ folder: null }),
-  driveFiles: async () => ({ files: [] }),
-  ensureProjectFolder: async () => ({ id: 'qa-folder', webViewLink: 'https://example.test' }),
+  projectDriveFolder: async (projectId: string) => ({ folder: JSON.parse(localStorage.getItem(`qa-drive-folder:${projectId}`) || 'null') }),
+  unlinkProjectDriveFolder: async (projectId: string) => { localStorage.removeItem(`qa-drive-folder:${projectId}`); return { folder: null } },
+  driveFiles: async () => ({ files: JSON.parse(localStorage.getItem('qa-drive-files') || '[]') }),
+  ensureProjectFolder: async (payload: { projectId: string }) => { const folder = { id: 'qa-folder', webViewLink: 'https://example.test' }; localStorage.setItem(`qa-drive-folder:${payload.projectId}`, JSON.stringify(folder)); return folder },
+  driveFolders: async () => ({ folders: [{ id: 'qa-folder', name: 'תיקיית בדיקה', mimeType: 'application/vnd.google-apps.folder' }], nextPageToken: '' }),
+  drivePicker: async () => ({ token: '', apiKey: '', appId: '', email: 'qa@example.test' }),
+  driveSettings: async () => JSON.parse(localStorage.getItem('qa-drive-settings') || '{"autoFiles":true,"autoReports":true}'),
+  saveDriveSettings: async (settings: unknown) => { localStorage.setItem('qa-drive-settings', JSON.stringify(settings)); return settings },
+  uploadDrive: async (payload: { recordId: string; file: { name: string; type: string } }) => { const files = JSON.parse(localStorage.getItem('qa-drive-files') || '[]'); const next = [{ id: payload.recordId, name: payload.file.name, mimeType: payload.file.type, webViewLink: 'https://example.test' }, ...files.filter((file: { id: string }) => file.id !== payload.recordId)]; localStorage.setItem('qa-drive-files', JSON.stringify(next)); return { id: payload.recordId, webViewLink: 'https://example.test' } },
 }
 export const bootstrapServer = async () => ({ ok: true })

@@ -2,3 +2,29 @@
 .permission-editor{display:grid;gap:14px}.permission-presets{display:flex;gap:7px;flex-wrap:wrap}.permission-table-wrap{border:1px solid var(--line);border-radius:11px}.permission-table{min-width:690px}.permission-table th:not(:first-child),.permission-table td:not(:first-child){width:88px;text-align:center}.permission-table td:first-child{min-width:190px}.permission-toggle{display:inline-flex;align-items:center;justify-content:center;cursor:pointer}.permission-toggle input{position:absolute;opacity:0;pointer-events:none}.permission-toggle span{position:relative;width:36px;height:21px;border-radius:999px;background:#dfe5df;box-shadow:inset 0 0 0 1px #d1dad2;transition:.16s}.permission-toggle span:after{content:"";position:absolute;top:3px;right:3px;width:15px;height:15px;border-radius:50%;background:#fff;box-shadow:0 1px 4px rgba(35,55,41,.18);transition:.16s}.permission-toggle input:checked+span{background:var(--brand)}.permission-toggle input:checked+span:after{transform:translateX(-15px)}.permission-toggle input:focus-visible+span{outline:3px solid rgba(117,146,124,.2);outline-offset:2px}.permission-hint,.muted-text{color:var(--muted);font-size:11px}.permission-hint{margin:0}.permission-notice{margin:0 0 14px}.card-head .page-action-row{margin-bottom:0}
 .user-actions{display:flex;gap:6px;flex-wrap:wrap}.user-actions .secondary{min-height:32px;padding:0 9px;font-size:11px}.user-actions .danger{color:var(--bad);border-color:#efd6d6;background:#fffafa}.user-actions .danger:hover{background:var(--bad-soft)}
 @media(max-width:720px){.permission-presets{display:grid;grid-template-columns:1fr 1fr}.permission-presets button{width:100%}.permission-table{min-width:620px}.permission-table th:not(:first-child),.permission-table td:not(:first-child){width:78px}.permission-table td:first-child{min-width:170px}}
+/* Google communication and Drive controls */
+.google-communication-stack { display: grid; gap: 20px; min-width: 0; }
+.contact-mail .card-head, .contact-calendar .card-head { align-items: flex-start; flex-wrap: wrap; gap: 12px; }
+.contact-mail .card-head > div:last-child, .drive-toolbar, .attachment-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.contact-mail small, .contact-calendar small { display: block; overflow-wrap: anywhere; }
+.contact-mail-layout { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr); gap: 20px; padding: 18px; }
+.contact-thread-list { display: grid; align-content: start; gap: 8px; min-width: 0; }
+.contact-thread-list > button { text-align: right; display: grid; gap: 5px; padding: 12px; background: #f7faf8; border: 1px solid #dce6df; border-radius: 10px; overflow-wrap: anywhere; }
+.contact-thread-list > button.active { border-color: #31825b; background: #eaf5ee; }
+.contact-thread-list p { margin: 0; font-size: 13px; }
+.contact-thread-body { min-width: 0; }
+.contact-thread-body article { border-bottom: 1px solid #dce6df; padding: 12px; }
+.contact-thread-body article p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.contact-thread-body .mail-compose { padding: 16px 0; }
+.attachment-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.attachment-list > span { display: flex; align-items: center; border: 1px solid #dce6df; border-radius: 8px; padding-inline: 8px; overflow-wrap: anywhere; max-width: 100%; }
+.drive-folder-choices, .drive-settings { display: grid; gap: 12px; margin: 16px 0; }
+.drive-folder-choices { max-height: 350px; overflow: auto; }
+.drive-folder-choices button { text-align: right; }
+.drive-settings label { display: flex; gap: 10px; align-items: center; }
+.drive-settings input[type=checkbox] { width: auto; }
+.drive-settings p, .drive-settings small { overflow-wrap: anywhere; }
+.contact-calendar .inline-create { padding: 12px 18px; }
+.picker-dialog { z-index: 10000 !important; }
+.picker-dialog-bg { z-index: 9999 !important; }
+@media (max-width: 700px) { .contact-mail-layout { grid-template-columns: minmax(0, 1fr); padding: 12px; } .drive-toolbar { width: 100%; } .drive-toolbar > * { max-width: 100%; } .contact-mail .mail-compose { display: flex; flex-direction: column; } .attachment-controls > * { max-width: 100%; } }

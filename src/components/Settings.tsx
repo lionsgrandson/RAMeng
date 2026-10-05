@@ -6,6 +6,8 @@ import { updateCurrentUserName } from '../lib/backend'
 import type { Workspace } from '../types'
 import { Chip, Field } from './common'
 
+import { DriveSettingsPanel } from './DriveConnection'
+
 type SettingsTab = 'profile' | 'google' | 'organization' | 'system'
 
 export default function SettingsPage({
@@ -14,6 +16,8 @@ export default function SettingsPage({
   workspace,
   setWorkspace,
   canConfigureGoogle,
+  canViewDrive,
+  canManageDrive,
   canViewOrganization,
   canEditOrganization,
   isDeveloper,
@@ -23,6 +27,8 @@ export default function SettingsPage({
   workspace: Workspace
   setWorkspace: React.Dispatch<React.SetStateAction<Workspace>>
   canConfigureGoogle: boolean
+  canViewDrive: boolean
+  canManageDrive: boolean
   canViewOrganization: boolean
   canEditOrganization: boolean
   isDeveloper: boolean
@@ -38,7 +44,7 @@ export default function SettingsPage({
     </aside>
     <main>
       {tab === 'profile' && <PersonalSettings user={user} onUserUpdated={onUserUpdated} />}
-      {tab === 'google' && <GoogleWorkspaceSettings canConfigure={canConfigureGoogle} />}
+      {tab === 'google' && <><GoogleWorkspaceSettings canConfigure={canConfigureGoogle} />{canViewDrive && <section className="card settings-card"><DriveSettingsPanel canEdit={canManageDrive} /></section>}</>}
       {tab === 'organization' && canViewOrganization && <OrganizationSettings workspace={workspace} setWorkspace={setWorkspace} canEdit={canEditOrganization} />}
       {tab === 'system' && isDeveloper && <SystemSettings />}
     </main>
@@ -241,6 +247,7 @@ function SystemSettings() {
       <Field label="מייל מנהל"><input value={(config.adminEmails || []).join(', ')} onChange={(e) => setConfig({ ...config, adminEmails: e.target.value.split(',').map((value) => value.trim()).filter(Boolean) })} /></Field>
       <Field label="מזהה Google"><input value={config.googleClientId || ''} onChange={(e) => setConfig({ ...config, googleClientId: e.target.value })} /></Field>
       <Field label="מפתח Google"><input type="password" autoComplete="off" value={config.googleClientSecret || ''} onChange={(e) => setConfig({ ...config, googleClientSecret: e.target.value })} placeholder="השאירו ריק אם אין שינוי" /></Field>
+      <Field label="מפתח Google Picker" hint="הפעילו Google Picker API באותו פרויקט של OAuth והגבילו את המפתח לדומיין CRM"><input type="password" autoComplete="off" value={config.googlePickerApiKey || ''} onChange={(e) => setConfig({ ...config, googlePickerApiKey: e.target.value })} placeholder="השאירו ריק אם אין שינוי" /></Field>
       <Field label="מפתח Google Maps" hint="אופציונלי"><input type="password" autoComplete="off" value={config.googleMapsApiKey || ''} onChange={(e) => setConfig({ ...config, googleMapsApiKey: e.target.value })} placeholder="השאירו ריק אם אין שינוי" /></Field>
       <div className="form-actions"><button type="button" className="primary" disabled={saving} onClick={() => void save()}><Save /> {saving ? 'שומר...' : 'שמירת הגדרות מערכת'}</button></div>
     </div>

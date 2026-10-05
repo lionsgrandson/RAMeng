@@ -174,3 +174,59 @@ Publication verification:
   The unchanged project editor Save action displays `נשמר`. His Google calendar
   sync loads personal events successfully. Browser warnings observed belong to
   the installed wallet extension, with no CRM application errors observed.
+
+## Client email and project Drive follow-up — 5 October 2026
+
+Client cards now automatically load recent Gmail conversations matching the client
+email address and support refresh, pagination, reading a full thread, composing,
+and replying. Project mail loads conversations for every associated client, even
+when the project has no tasks; existing personal task-thread associations remain
+available. These views only query the current authenticated user's Google account
+and keep mail contents in component state, outside the shared CRM workspace.
+
+The reusable composer accepts local attachments and CRM files, with remove controls
+and a limit of ten attachments / 18 MB combined. The Worker builds multipart MIME,
+supports Hebrew filenames, rejects malformed headers/attachments, validates reply
+threads against the caller's mailbox, and emits In-Reply-To / References headers.
+Sending success is kept separate from a failed refresh so users are not encouraged
+to send a duplicate message.
+
+Client timelines and project calendars load Google events whose attendees,
+organizer or creator match an associated client email. All visible Google calendars
+are scanned with pagination, duplicate meetings are collapsed, and the date range
+can be changed (default: one year back and one year ahead). Results remain private.
+
+The prominent project Drive toolbar now offers an existing-folder popup, new-folder
+creation and settings. Google Picker grants per-file/folder access under the existing
+drive.file scope; a pasted URL previously could not grant that access. Picker API
+was enabled in RAM's Google Cloud project after the user's confirmation. Its new
+API key is restricted to Google Picker API and the production CRM website; stored
+only in Worker configuration, with temporary transfer files removed. The chooser
+also lists already authorized folders and supports searching/pagination. Shared
+drives are supported; folders with no upload permission are rejected clearly.
+
+Personal Drive settings control automatic project-file and report uploads. The
+background sync waits for CRM saving and updates the chosen project folder; retry
+controls and manual sync are available. Exports use stable CRM record identifiers
+and a content fingerprint to update the existing Drive file rather than create a
+new version as another file. A missing/moved export is checked before skipping it.
+Drive upload failures do not remove the CRM's stored source.
+
+Reports are self-contained HTML exports with escaped text and embedded photos,
+readable in a browser and printable to PDF. They update after report edits. This
+iteration does not generate a PDF automatically. Google originals are preserved
+when CRM listings or folder associations are removed. Settings/associations/export
+tracking remain per authenticated user, not shared workspace fields.
+
+Verification before deployment:
+- 30 regression tests pass; type checking, production build and whitespace checks
+  pass. Tests cover binary attachment MIME, Hebrew filenames, injection rejection,
+  reply headers, private Gmail pagination, multi-calendar matching/deduplication,
+  owner-scoped Drive destinations, stable update behavior and read-only rejection.
+- Disposable local UI: client mail/thread loading, attaching a stored CRM file,
+  mock sending, client Google timeline, project folder popup, settings saving and
+  automatic file/report exports verified. No real client email was sent.
+- 390px project mail view has no horizontal overflow; emulation restored.
+- Native file-picker automation is limited by the Chrome extension's file URL
+  permission. Stored-file attachment UI and binary upload behavior are verified;
+  no browser extension permissions were changed.

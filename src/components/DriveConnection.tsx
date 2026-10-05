@@ -1,0 +1,53 @@
+import { useEffect, useState } from 'react'
+import { FolderOpen, HardDrive, RefreshCw, Settings2 } from 'lucide-react'
+import { integrationsApi, type DriveSettings, type GoogleDriveFile } from '../lib/api'
+import { reportAttachment, syncProjectFile } from '../lib/googleFiles'
+import type { Project, Workspace } from '../types'
+import { EmptyState, Modal } from './common'
+import DeleteButton from './RecordDelete'
+
+type PickerData = { action: string; docs?: { id: string; name: string }[] }
+type PickerView = { setIncludeFolders(value: boolean): PickerView; setSelectFolderEnabled(value: boolean): PickerView; setMimeTypes(value: string): PickerView }
+type PickerBuilder = { setOAuthToken(value: string): PickerBuilder; setDeveloperKey(value: string): PickerBuilder; setAppId(value: string): PickerBuilder; setOrigin(value: string): PickerBuilder; setLocale(value: string): PickerBuilder; addView(value: PickerView): PickerBuilder; setCallback(callback: (data: PickerData) => void): PickerBuilder; build(): { setVisible(value: boolean): void } }
+declare global { interface Window { gapi?: { load(name: string, options: { callback: () => void; onerror: () => void; timeout: number; ontimeout: () => void }): void }; google?: { picker: { DocsView: new () => PickerView; PickerBuilder: new () => PickerBuilder } } } }
+let pickerScript: Promise<void> | null = null
+async function loadPicker() {
+  if (window.google?.picker) return
+  if (!pickerScript) pickerScript = new Promise<void>((resolve, reject) => {
+    const load = () => window.gapi!.load('picker', { callback: resolve, onerror: () => reject(new Error('טעינת בוחר Google נכשלה')), timeout: 15000, ontimeout: () => reject(new Error('טעינת בוחר Google נכשלה')) })
+    if (window.gapi) load()
+    else { const script = document.createElement('script'); script.src = 'https://apis.google.com/js/api.js'; script.onload = load; script.onerror = () => reject(new Error('לא ניתן לטעון את בוחר Google')); document.head.append(script) }
+  }).catch((error) => { pickerScript = null; throw error })
+  await pickerScript
+}
+async function googleFolderPicker(onPick: (id: string) => void) {
+  const config = await integrationsApi.drivePicker()
+  if (!config.apiKey) throw new Error('יש להגדיר מפתח Google Picker בהגדרות המערכת. אפשר לבחור בינתיים תיקייה שכבר מורשית למערכת מהרשימה.')
+  await loadPicker()
+  const picker = window.google!.picker
+  const view = new picker.DocsView().setIncludeFolders(true).setSelectFolderEnabled(true).setMimeTypes('application/vnd.google-apps.folder')
+  new picker.PickerBuilder().setOAuthToken(config.token).setDeveloperKey(config.apiKey).setAppId(config.appId).setOrigin(window.location.origin).setLocale('he').addView(view).setCallback((result) => { if (result.action === 'picked' && result.docs?.[0]) onPick(result.docs[0].id) }).build().setVisible(true)
+}
+export function DriveSettingsPanel({ canEdit = true }: { canEdit?: boolean }) {
+  const [settings, setSettings] = useState<DriveSettings | null>(null); const [error, setError] = useState(''); const [busy, setBusy] = useState(false); const [saved, setSaved] = useState(false)
+  useEffect(() => { let active = true; void integrationsApi.driveSettings().then((result) => { if (active) setSettings(result) }).catch((e) => { if (active) setError(e.message) }); return () => { active = false } }, [])
+  const save = async () => { if (!settings) return; setBusy(true); setError(''); try { setSettings(await integrationsApi.saveDriveSettings(settings)); setSaved(true); window.dispatchEvent(new Event('rameng-drive-changed')) } catch (e) { setError(e instanceof Error ? e.message : 'שמירת הגדרות נכשלה') } finally { setBusy(false) } }
+  return <section className="drive-settings"><h3>העלאה ל-Google Drive</h3><p>ההגדרות חלות על החשבון שלך. בחרו תיקייה בכל פרויקט; הקבצים והדוחות שלו יישלחו אליה.</p>{error && <div className="error-banner" role="alert">{error}</div>}{settings && <><label><input type="checkbox" disabled={!canEdit} checked={settings.autoFiles} onChange={(event) => { setSaved(false); setSettings({ ...settings, autoFiles: event.target.checked }) }} /> העלאת קבצי פרויקט אוטומטית</label><label><input type="checkbox" disabled={!canEdit} checked={settings.autoReports} onChange={(event) => { setSaved(false); setSettings({ ...settings, autoReports: event.target.checked }) }} /> העלאת דוחות אוטומטית לאחר שינוי</label><small>הדוחות נשמרים כקובצי HTML עם תמונות, לצפייה ולהדפסה / שמירה כ-PDF.</small>{canEdit && <button className="primary" disabled={busy} onClick={() => void save()}>{busy ? 'שומר...' : saved ? 'נשמר' : 'שמירת הגדרות Drive'}</button>}</>}</section>
+}
+export default function DriveConnection({ project, canCreateFolder, canUnlinkFolder, workspace }: { project: Project; canCreateFolder: boolean; canUnlinkFolder: boolean; workspace?: Workspace }) {
+  const [folder, setFolder] = useState<{ id: string; webViewLink: string } | null>(null); const [files, setFiles] = useState<GoogleDriveFile[]>([])
+  const [folders, setFolders] = useState<GoogleDriveFile[]>([]); const [query, setQuery] = useState(''); const [nextPageToken, setNextPageToken] = useState('')
+  const [choosing, setChoosing] = useState(false); const [settings, setSettings] = useState(false); const [busy, setBusy] = useState(false); const [error, setError] = useState(''); const [message, setMessage] = useState('')
+  const refresh = async (id = folder?.id) => { if (!id) return; setFiles((await integrationsApi.driveFiles(id)).files) }
+  useEffect(() => { let active = true; setFolder(null); setFiles([]); void integrationsApi.projectDriveFolder(project.id).then(async (result) => { if (!active) return; setFolder(result.folder); if (result.folder) { const list = await integrationsApi.driveFiles(result.folder.id); if (active) setFiles(list.files) } }).catch((e) => { if (active) setError(e.message) }); return () => { active = false } }, [project.id])
+  const connect = async (id?: string) => { setBusy(true); setError(''); try { const result = await integrationsApi.ensureProjectFolder({ projectId: project.id, name: `${project.name} - ${project.address || 'פרויקט'}`, folderId: id }); setFolder(result); setChoosing(false); await refresh(result.id); setMessage('התיקייה מחוברת. קבצי ודוחות הפרויקט יסונכרנו אליה.'); window.dispatchEvent(new Event('rameng-drive-changed')) } catch (e) { setError(e instanceof Error ? e.message : 'חיבור Drive נכשל') } finally { setBusy(false) } }
+  const listFolders = async (more = false) => { setBusy(true); setError(''); try { const result = await integrationsApi.driveFolders(query, more ? nextPageToken : ''); setFolders((current) => more ? [...current, ...result.folders] : result.folders); setNextPageToken(result.nextPageToken) } catch (e) { setError(e instanceof Error ? e.message : 'טעינת תיקיות נכשלה') } finally { setBusy(false) } }
+  const run = async (action: () => Promise<unknown>) => { setBusy(true); setError(''); try { await action() } catch (e) { setError(e instanceof Error ? e.message : 'פעולת Drive נכשלה') } finally { setBusy(false) } }
+  const syncAll = async () => { if (!workspace) return; setMessage(''); await run(async () => { for (const file of workspace.files.filter((file) => file.projectId === project.id)) await syncProjectFile(file); for (const report of workspace.reports.filter((report) => report.projectId === project.id)) await integrationsApi.uploadDrive({ projectId: project.id, recordId: report.id, kind: 'report', file: await reportAttachment(report, workspace) }); await refresh(); setMessage('סנכרון הפרויקט הסתיים בהתאם להגדרות ההעלאה.') }) }
+  return <section className="card project-module-card project-drive-card"><div className="card-head"><h2>Google Drive</h2><div className="drive-toolbar">{canCreateFolder && <><button className="primary" disabled={busy} onClick={() => { setChoosing(true); void listFolders() }}><FolderOpen /> בחירת תיקייה קיימת</button><button className="secondary" disabled={busy || !!folder} onClick={() => void connect()}><HardDrive /> יצירת תיקייה חדשה</button><button className="secondary" onClick={() => setSettings(true)}><Settings2 /> הגדרות Drive</button></>}{folder && <><a className="secondary link-button" href={folder.webViewLink} target="_blank" rel="noreferrer">פתיחת התיקייה</a><button className="secondary" disabled={busy} onClick={() => void run(() => refresh())}><RefreshCw /> רענון</button>{canCreateFolder && workspace && <button className="secondary" disabled={busy} onClick={() => void syncAll()}>סנכרון קבצים ודוחות</button>}{canUnlinkFolder && <DeleteButton label="ביטול קישור תיקייה" message="לבטל את קישור התיקייה לחשבון שלך? הקבצים המקוריים ב-Drive יישמרו." onConfirm={() => { void run(async () => { await integrationsApi.unlinkProjectDriveFolder(project.id); setFolder(null); setFiles([]); window.dispatchEvent(new Event('rameng-drive-changed')) }) }} />}</>}</div></div>
+    {error && !choosing && <div className="error-banner" role="alert">{error}</div>}{message && <div className="success-banner" role="status">{message}</div>}
+    <div className="drive-list">{files.map((file) => <a key={file.id} href={file.webViewLink || `https://drive.google.com/file/d/${file.id}/view`} target="_blank" rel="noreferrer"><strong>{file.name}</strong><small>{file.mimeType}</small></a>)}{!folder && <EmptyState title="Drive עדיין לא מחובר" text="בחרו תיקייה קיימת או צרו תיקייה חדשה באמצעות הכפתורים למעלה." />}{folder && !files.length && <div className="table-empty">אין קבצים בתיקייה.</div>}</div>
+    {choosing && <Modal title="בחירת תיקיית Google Drive" onClose={() => setChoosing(false)}><p>לבחירה מכל התיקיות בחשבון שלכם, פתחו את בוחר Google. הבחירה מעניקה למערכת גישה לתיקייה שנבחרה.</p><button className="primary" disabled={busy} onClick={() => void run(() => googleFolderPicker((id) => { void connect(id) }))}><FolderOpen /> בחירה מתוך Google Drive</button>{error && <div className="error-banner" role="alert">{error}</div>}<form className="inline-create" onSubmit={(event) => { event.preventDefault(); void listFolders() }}><label>תיקיות שכבר מחוברות למערכת<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="חיפוש שם תיקייה" /></label><button className="secondary" disabled={busy}>חיפוש</button></form><div className="drive-folder-choices">{folders.map((item) => <button className="secondary" disabled={busy} key={item.id} onClick={() => void connect(item.id)}><FolderOpen /> {item.name}</button>)}{!folders.length && <p>לגישה לתיקייה קיימת שטרם נבחרה, השתמשו בבוחר Google למעלה.</p>}{nextPageToken && <button disabled={busy} onClick={() => void listFolders(true)}>תיקיות נוספות</button>}</div></Modal>}
+    {settings && <Modal title="הגדרות Drive" onClose={() => setSettings(false)}><DriveSettingsPanel /></Modal>}
+  </section>
+}

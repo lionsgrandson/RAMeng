@@ -473,17 +473,28 @@ async function handleGmailSend(request, env, config) {
   const subject = cleanString(body.subject)
   const text = cleanString(body.body)
   const threadId = cleanString(body.threadId)
-  if (!to || !subject || !text) throw Object.assign(new Error('יש להזין נמען, נושא ותוכן'), { status: 400 })
+  if (!validEmail(to) || !subject || !text || /[\r\n]/.test(to)) throw Object.assign(new Error('יש להזין נמען תקין, נושא ותוכן'), { status: 400 })
+  const attachments = validatedAttachments(body.attachments)
   const encodedSubject = `=?UTF-8?B?${utf8ToBase64(subject)}?=`
   const encodedBody = utf8ToBase64(text)
+  const replyHeaders = []
+  if (threadId) {
+    const thread = await googleFetch(env, config, user.id, `https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(threadId)}?format=metadata&metadataHeaders=Message-ID&metadataHeaders=References`)
+    if (!thread.ok) throw Object.assign(new Error('ההתכתבות אינה זמינה בחשבון שלך'), { status: thread.status })
+    const headers = (await thread.json()).messages?.at(-1)?.payload?.headers || []
+    const messageId = headerValue(headers, 'Message-ID').replace(/[\r\n]/g, '').slice(0, 1000)
+    const references = headerValue(headers, 'References').replace(/[\r\n]/g, '').slice(-3000)
+    if (messageId) replyHeaders.push(`In-Reply-To: ${messageId}`, `References: ${references ? `${references} ` : ''}${messageId}`)
+  }
+  const boundary = `rameng_${crypto.randomUUID()}`
+  const textPart = ['Content-Type: text/plain; charset=UTF-8', 'Content-Transfer-Encoding: base64', '', wrapBase64(encodedBody)].join('\r\n')
   const rfc822 = [
     `To: ${to}`,
     `Subject: ${encodedSubject}`,
+    ...replyHeaders,
     'MIME-Version: 1.0',
-    'Content-Type: text/plain; charset=UTF-8',
-    'Content-Transfer-Encoding: base64',
-    '',
-    encodedBody,
+    ...(attachments.length ? [`Content-Type: multipart/mixed; boundary="${boundary}"`, '', `--${boundary}`, textPart,
+      ...attachments.flatMap((file) => [`--${boundary}`, `Content-Type: ${file.type}`, `Content-Disposition: attachment; filename="attachment"; filename*=UTF-8''${encodeURIComponent(file.name)}`, 'Content-Transfer-Encoding: base64', '', wrapBase64(file.data)]), `--${boundary}--`, ''] : [textPart]),
   ].join('\r\n')
   const payload = { raw: utf8ToBase64Url(rfc822), ...(threadId ? { threadId } : {}) }
   const response = await googleFetch(env, config, user.id, 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
@@ -511,6 +522,82 @@ async function handleCalendarList(request, env, config) {
   const body = await response.json()
   if (!response.ok) throw Object.assign(new Error(localizedExternalError(body.error?.message, 'טעינת יומן Google נכשלה')), { status: response.status })
   return apiJson(request, { items: (body.items || []).map((item) => ({ id: item.id, summary: item.summary || '(ללא כותרת)', start: item.start?.dateTime || item.start?.date || '', end: item.end?.dateTime || item.end?.date || '', htmlLink: item.htmlLink || '', location: item.location || '' })) })
+}
+
+function validEmail(value) { return typeof value === 'string' && /^[^\s<>@,;"()]+@[^\s<>@,;"()]+\.[^\s<>@,;"()]+$/.test(value) }
+function contactEmails(url) {
+  const emails = [...new Set((url.searchParams.get('emails') || '').split(',').map((email) => email.trim().toLowerCase()).filter(Boolean))]
+  if (!emails.length || emails.length > 20 || emails.some((email) => !validEmail(email))) throw Object.assign(new Error('נדרשת כתובת מייל תקינה של לקוח'), { status: 400 })
+  return emails
+}
+function wrapBase64(value) { return value.match(/.{1,76}/g)?.join('\r\n') || '' }
+function validatedAttachments(value) {
+  if (value === undefined) return []
+  if (!Array.isArray(value) || value.length > 10) throw Object.assign(new Error('ניתן לצרף עד 10 קבצים'), { status: 400 })
+  let total = 0
+  return value.map((file) => {
+    const name = cleanString(file?.name); const data = cleanString(file?.data); const type = cleanString(file?.type) || 'application/octet-stream'
+    if (!name || name.length > 250 || /[\r\n]/.test(name) || !/^[\w.+-]+\/[\w.+-]+$/.test(type) || data.length % 4 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(data)) throw Object.assign(new Error('קובץ מצורף לא תקין'), { status: 400 })
+    total += data.length * 3 / 4
+    if (total > 18 * 1024 * 1024) throw Object.assign(new Error('הקבצים חורגים ממגבלת 18 MB'), { status: 413 })
+    return { name, data, type }
+  })
+}
+async function handleContactMail(request, env, config) {
+  const user = await requireGoogleAreaAction(request, env, config, 'communication', 'view')
+  const url = new URL(request.url); const emails = contactEmails(url)
+  const api = new URL('https://gmail.googleapis.com/gmail/v1/users/me/threads')
+  api.searchParams.set('q', `{${emails.map((email) => `from:${email} to:${email}`).join(' ')}}`)
+  api.searchParams.set('maxResults', '20')
+  if (url.searchParams.get('pageToken')) api.searchParams.set('pageToken', url.searchParams.get('pageToken'))
+  const response = await googleFetch(env, config, user.id, api.toString()); const body = await response.json()
+  if (!response.ok) throw Object.assign(new Error(localizedExternalError(body.error?.message, 'סנכרון מיילים של הלקוח נכשל')), { status: response.status })
+  const threads = await Promise.all((body.threads || []).map(async (thread) => {
+    const detail = await googleFetch(env, config, user.id, `https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(thread.id)}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Date`)
+    if (!detail.ok) throw Object.assign(new Error('טעינת התכתבות נכשלה. נסו שוב.'), { status: 502 })
+    const result = await detail.json(); const last = result.messages?.at(-1) || {}; const headers = last.payload?.headers || []
+    return { id: thread.id, subject: headerValue(headers, 'Subject'), from: headerValue(headers, 'From'), to: headerValue(headers, 'To'), date: last.internalDate ? new Date(Number(last.internalDate)).toISOString() : headerValue(headers, 'Date'), snippet: last.snippet || thread.snippet || '' }
+  }))
+  return apiJson(request, { threads, nextPageToken: body.nextPageToken || '' })
+}
+async function handleContactCalendar(request, env, config) {
+  const user = await requireGoogleAreaAction(request, env, config, 'calendar', 'view')
+  const url = new URL(request.url); const emails = new Set(contactEmails(url))
+  const from = url.searchParams.get('from') || new Date(Date.now() - 365 * 86400000).toISOString()
+  const to = url.searchParams.get('to') || new Date(Date.now() + 365 * 86400000).toISOString()
+  if (Number.isNaN(Date.parse(from)) || Number.isNaN(Date.parse(to)) || Date.parse(to) <= Date.parse(from)) throw Object.assign(new Error('טווח תאריכים לא תקין'), { status: 400 })
+  const calendarList = new URL('https://www.googleapis.com/calendar/v3/users/me/calendarList'); calendarList.searchParams.set('maxResults', '250'); calendarList.searchParams.set('minAccessRole', 'reader')
+  const calendars = []; let calendarPage = ''; let calendarPages = 0
+  do {
+    if (calendarPage) calendarList.searchParams.set('pageToken', calendarPage)
+    const response = await googleFetch(env, config, user.id, calendarList.toString()); const body = await response.json()
+    if (!response.ok) throw Object.assign(new Error('טעינת רשימת יומני Google נכשלה'), { status: response.status })
+    calendars.push(...(body.items || []).filter((calendar) => calendar.primary || calendar.selected !== false))
+    calendarPage = body.nextPageToken || ''; calendarPages++
+  } while (calendarPage && calendarPages < 10)
+  if (calendarPage || calendars.length > 50) throw Object.assign(new Error('לא ניתן לסנכרן את כל היומנים כרגע'), { status: 413 })
+  const items = []; const seen = new Set()
+  for (const calendar of calendars.length ? calendars : [{ id: 'primary', summary: 'Google' }]) {
+  const api = new URL(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendar.id)}/events`)
+  for (const [key, value] of Object.entries({ singleEvents: 'true', orderBy: 'startTime', maxResults: '250', timeMin: new Date(from).toISOString(), timeMax: new Date(to).toISOString() })) api.searchParams.set(key, value)
+  let pageToken = ''; let pages = 0
+  do {
+    if (pageToken) api.searchParams.set('pageToken', pageToken)
+    const response = await googleFetch(env, config, user.id, api.toString()); const body = await response.json()
+    if (!response.ok) throw Object.assign(new Error(localizedExternalError(body.error?.message, 'סנכרון אירועי הלקוח נכשל')), { status: response.status })
+    for (const item of body.items || []) {
+      if (item.status === 'cancelled' || ![item.organizer?.email, item.creator?.email, ...(item.attendees || []).map((attendee) => attendee.email)].some((email) => emails.has(String(email || '').toLowerCase()))) continue
+      const start = item.start?.dateTime || item.start?.date || ''; const unique = `${item.iCalUID || `${calendar.id}:${item.id}`}:${start}`
+      if (seen.has(unique)) continue
+      seen.add(unique)
+      items.push({ id: `${calendar.id}:${item.id}`, summary: item.summary || '(ללא כותרת)', start, end: item.end?.dateTime || item.end?.date || '', htmlLink: item.htmlLink || '', location: item.location || '', calendarName: calendar.summary || '' })
+    }
+    pageToken = body.nextPageToken || ''; pages++
+  } while (pageToken && pages < 20)
+  if (pageToken) throw Object.assign(new Error('טווח היומן גדול מדי. צמצמו את התאריכים ונסו שוב.'), { status: 413 })
+  }
+  items.sort((a, b) => b.start.localeCompare(a.start))
+  return apiJson(request, { items })
 }
 
 function isoWithDefaultEnd(start, end) {
@@ -561,9 +648,10 @@ async function handleDriveProjectFolder(request, env, config) {
   const folderId = requestedId || stored?.id
   if (folderId) {
     if (!/^[a-zA-Z0-9_-]+$/.test(folderId)) throw Object.assign(new Error('מזהה תיקייה לא תקין'), { status: 400 })
-    const folderResponse = await googleFetch(env, config, user.id, `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(folderId)}?fields=id,name,mimeType,trashed,webViewLink&supportsAllDrives=true`)
+    const folderResponse = await googleFetch(env, config, user.id, `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(folderId)}?fields=id,name,mimeType,trashed,webViewLink,capabilities(canAddChildren)&supportsAllDrives=true`)
     const folder = await folderResponse.json()
-    if (!folderResponse.ok || folder.trashed || folder.mimeType !== 'application/vnd.google-apps.folder') throw Object.assign(new Error('התיקייה אינה זמינה בחשבון שלך. בדקו הרשאות או קשרו תיקייה אחרת.'), { status: folderResponse.ok ? 400 : folderResponse.status })
+    if (!folderResponse.ok || folder.trashed || folder.mimeType !== 'application/vnd.google-apps.folder') throw Object.assign(new Error('בחרו את התיקייה דרך בוחר Google כדי להעניק גישה. אם עדיין אינה זמינה, בדקו שהיא משותפת עם החשבון המחובר.'), { status: folderResponse.ok ? 400 : folderResponse.status })
+    if (folder.capabilities?.canAddChildren === false) throw Object.assign(new Error('יש לכם הרשאת צפייה בלבד בתיקייה. להעלאה נדרשת הרשאת עריכה.'), { status: 403 })
     const result = { id: folder.id, webViewLink: folder.webViewLink || `https://drive.google.com/drive/folders/${folder.id}` }
     await env.CONFIG.put(key, JSON.stringify(result))
     return apiJson(request, result)
@@ -609,11 +697,83 @@ async function handleDriveFiles(request, env, config) {
   url.searchParams.set('q', `'${escapeDriveQuery(folderId)}' in parents and trashed=false`)
   url.searchParams.set('orderBy', 'modifiedTime desc')
   url.searchParams.set('pageSize', '100')
+  url.searchParams.set('supportsAllDrives', 'true')
+  url.searchParams.set('includeItemsFromAllDrives', 'true')
   url.searchParams.set('fields', 'files(id,name,mimeType,modifiedTime,webViewLink,size)')
   const response = await googleFetch(env, config, user.id, url.toString())
   const body = await response.json()
   if (!response.ok) throw Object.assign(new Error(localizedExternalError(body.error?.message, 'טעינת הקבצים מ-Drive נכשלה')), { status: response.status })
   return apiJson(request, { files: body.files || [] })
+}
+
+async function handleDriveFolders(request, env, config) {
+  const user = await requireGoogleAreaAction(request, env, config, 'files', 'view')
+  const source = new URL(request.url); const api = new URL('https://www.googleapis.com/drive/v3/files')
+  const query = cleanString(source.searchParams.get('q'))
+  api.searchParams.set('q', `mimeType='application/vnd.google-apps.folder' and trashed=false${query ? ` and name contains '${escapeDriveQuery(query)}'` : ''}`)
+  api.searchParams.set('pageSize', '100'); api.searchParams.set('fields', 'files(id,name,webViewLink),nextPageToken'); api.searchParams.set('orderBy', 'name')
+  api.searchParams.set('supportsAllDrives', 'true'); api.searchParams.set('includeItemsFromAllDrives', 'true')
+  if (source.searchParams.get('pageToken')) api.searchParams.set('pageToken', source.searchParams.get('pageToken'))
+  const response = await googleFetch(env, config, user.id, api.toString()); const body = await response.json()
+  if (!response.ok) throw Object.assign(new Error(localizedExternalError(body.error?.message, 'טעינת תיקיות Drive נכשלה')), { status: response.status })
+  return apiJson(request, { folders: body.files || [], nextPageToken: body.nextPageToken || '' })
+}
+async function handleDrivePicker(request, env, config) {
+  const user = await requireGoogleAreaAction(request, env, config, 'files', 'create')
+  const token = await validGoogleAccessToken(env, config, user.id)
+  const tokens = await googleTokens(env, user.id)
+  return apiJson(request, { token, apiKey: config.googlePickerApiKey || '', appId: String(config.googleClientId || '').split('-')[0], email: tokens?.email || '' })
+}
+async function handleDriveSettings(request, env, config) {
+  const user = await requireGoogleAreaAction(request, env, config, 'files', request.method === 'PUT' ? 'create' : 'view')
+  const key = `drive-settings:${user.id}`
+  const current = { autoFiles: true, autoReports: true, ...(await env.CONFIG.get(key, 'json') || {}) }
+  if (request.method === 'PUT') {
+    const body = await parseBody(request)
+    for (const field of ['autoFiles', 'autoReports']) if (typeof body[field] === 'boolean') current[field] = body[field]
+    await env.CONFIG.put(key, JSON.stringify(current))
+  }
+  return apiJson(request, current)
+}
+async function handleDriveUpload(request, env, config) {
+  const body = await parseBody(request); const kind = body.kind === 'report' ? 'report' : 'file'
+  const user = await requireGoogleAreaAction(request, env, config, 'files', 'create')
+  if (kind === 'report') await requireAreaAction(request, env, config, 'reports', 'view')
+  const projectId = cleanString(body.projectId); const recordId = cleanString(body.recordId)
+  if (!/^[a-zA-Z0-9_-]{1,160}$/.test(projectId) || !/^[a-zA-Z0-9_-]{1,160}$/.test(recordId)) throw Object.assign(new Error('חסר שיוך לפרויקט או לקובץ'), { status: 400 })
+  const settings = { autoFiles: true, autoReports: true, ...(await env.CONFIG.get(`drive-settings:${user.id}`, 'json') || {}) }
+  if (body.automatic !== false && !(kind === 'report' ? settings.autoReports : settings.autoFiles)) return apiJson(request, { skipped: true, reason: 'disabled' })
+  const folder = await env.CONFIG.get(`drive-project-folder:${user.id}:${projectId}`, 'json')
+  if (!folder) return apiJson(request, { skipped: true, reason: 'unlinked' })
+  const [file] = validatedAttachments([body.file])
+  const binary = atob(file.data); const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index)
+  const contentHash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), (byte) => byte.toString(16).padStart(2, '0')).join('')
+  const fingerprint = `${file.name}:${file.type}:${contentHash}`
+  const stateKey = `drive-upload:${user.id}:${projectId}:${kind}:${recordId}`
+  const previous = await env.CONFIG.get(stateKey, 'json')
+  if (previous?.fingerprint === fingerprint && previous?.folderId === folder.id) {
+    const check = await googleFetch(env, config, user.id, `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(previous.id)}?fields=id,trashed,parents&supportsAllDrives=true`)
+    const checked = await check.json()
+    if (check.ok && !checked.trashed && checked.parents?.includes(folder.id)) return apiJson(request, { id: previous.id, webViewLink: previous.webViewLink, unchanged: true })
+    if (!check.ok && check.status !== 404) throw Object.assign(new Error('בדיקת קובץ Drive נכשלה. נסו שוב.'), { status: check.status })
+  }
+  const lookup = new URL('https://www.googleapis.com/drive/v3/files')
+  lookup.searchParams.set('q', `'${escapeDriveQuery(folder.id)}' in parents and trashed=false and appProperties has { key='ramengRecordId' and value='${escapeDriveQuery(recordId)}' } and appProperties has { key='ramengKind' and value='${kind}' }`)
+  lookup.searchParams.set('fields', 'files(id,webViewLink)'); lookup.searchParams.set('supportsAllDrives', 'true'); lookup.searchParams.set('includeItemsFromAllDrives', 'true')
+  const found = await googleFetch(env, config, user.id, lookup.toString()); const foundBody = await found.json()
+  if (!found.ok) throw Object.assign(new Error('לא ניתן לבדוק את תיקיית Drive. הקובץ נשמר במערכת; נסו שוב.'), { status: found.status })
+  const existing = foundBody.files?.[0]
+  const boundary = `rameng_${crypto.randomUUID()}`
+  const metadata = { name: file.name, mimeType: file.type, ...(existing ? {} : { parents: [folder.id], appProperties: { ramengProjectId: projectId, ramengRecordId: recordId, ramengKind: kind } }) }
+  const multipart = new Blob([`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--${boundary}\r\nContent-Type: ${file.type}\r\n\r\n`, bytes, `\r\n--${boundary}--\r\n`])
+  const endpoint = `https://www.googleapis.com/upload/drive/v3/files${existing ? `/${encodeURIComponent(existing.id)}` : ''}?uploadType=multipart&supportsAllDrives=true&fields=id,name,webViewLink`
+  const response = await googleFetch(env, config, user.id, endpoint, { method: existing ? 'PATCH' : 'POST', headers: { 'content-type': `multipart/related; boundary=${boundary}` }, body: multipart })
+  const result = await response.json()
+  if (!response.ok) throw Object.assign(new Error(localizedExternalError(result.error?.message, 'העלאה ל-Drive נכשלה. הקובץ נשמר במערכת; נסו שוב.')), { status: response.status })
+  const webViewLink = result.webViewLink || `https://drive.google.com/file/d/${result.id}/view`
+  await env.CONFIG.put(stateKey, JSON.stringify({ id: result.id, webViewLink, folderId: folder.id, fingerprint }))
+  return apiJson(request, { id: result.id, webViewLink })
 }
 
 function photonAddressLabel(feature) {
@@ -864,6 +1024,7 @@ async function handleAdminConfig(request, env, config) {
       googleClientId: config.googleClientId || '',
       googleClientSecret: '',
       googleMapsApiKey: '',
+      googlePickerApiKey: '',
       openaiApiKey: '',
       openaiModel: config.openaiModel || 'gpt-5.6-terra',
       driveRootFolderId: config.driveRootFolderId || '',
@@ -878,6 +1039,7 @@ async function handleAdminConfig(request, env, config) {
   if (body.adminEmails !== undefined) next.adminEmails = cleanEmails(body.adminEmails)
   if (cleanString(body.googleClientSecret)) next.googleClientSecret = cleanString(body.googleClientSecret)
   if (cleanString(body.googleMapsApiKey)) next.googleMapsApiKey = cleanString(body.googleMapsApiKey)
+  if (cleanString(body.googlePickerApiKey)) next.googlePickerApiKey = cleanString(body.googlePickerApiKey)
   if (cleanString(body.openaiApiKey)) next.openaiApiKey = cleanString(body.openaiApiKey)
   next.updatedAt = new Date().toISOString()
   await saveConfig(env, next)
@@ -945,12 +1107,18 @@ async function routeApi(request, env) {
   if (path === '/api/google/gmail/thread' && request.method === 'GET') return handleGmailThread(request, env, config)
   if (path === '/api/google/gmail/links' && ['GET', 'PUT', 'DELETE'].includes(request.method)) return handleGmailLinks(request, env, config)
   if (path === '/api/google/gmail/search' && request.method === 'GET') return handleGmailSearch(request, env, config)
+  if (path === '/api/google/gmail/contacts' && request.method === 'GET') return handleContactMail(request, env, config)
+  if (path === '/api/google/calendar/contacts' && request.method === 'GET') return handleContactCalendar(request, env, config)
   if (path === '/api/google/gmail/send' && request.method === 'POST') return handleGmailSend(request, env, config)
   if (path === '/api/google/calendar/events' && request.method === 'GET') return handleCalendarList(request, env, config)
   if (path === '/api/google/calendar/events' && request.method === 'POST') return handleCalendarCreate(request, env, config)
   if (path === '/api/google/drive/project-folder' && ['GET', 'DELETE'].includes(request.method)) return handleDriveProjectFolderRead(request, env, config)
   if (path === '/api/google/drive/project-folder' && request.method === 'POST') return handleDriveProjectFolder(request, env, config)
   if (path === '/api/google/drive/files' && request.method === 'GET') return handleDriveFiles(request, env, config)
+  if (path === '/api/google/drive/folders' && request.method === 'GET') return handleDriveFolders(request, env, config)
+  if (path === '/api/google/drive/picker' && request.method === 'GET') return handleDrivePicker(request, env, config)
+  if (path === '/api/google/drive/settings' && ['GET', 'PUT'].includes(request.method)) return handleDriveSettings(request, env, config)
+  if (path === '/api/google/drive/upload' && request.method === 'POST') return handleDriveUpload(request, env, config)
   if (path === '/api/address/suggest' && request.method === 'GET') return handleAddressSuggest(request, env, config)
   if (path === '/api/ai/rewrite' && request.method === 'POST') return handleAiRewrite(request, env, config)
   return apiJson(request, { error: 'כתובת השירות לא נמצאה' }, 404)
