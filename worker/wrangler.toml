@@ -3,6 +3,10 @@ main = "src/index.js"
 compatibility_date = "2026-09-01"
 workers_dev = true
 
+# Check registered read feeds in small batches; each feed refreshes at most once per 24 hours.
+[triggers]
+crons = ["*/5 * * * *"]
+
 [[kv_namespaces]]
 binding = "CONFIG"
 id = "7676674ec22a440d8d946a8fe393775b"

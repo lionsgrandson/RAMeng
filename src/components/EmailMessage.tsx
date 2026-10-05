@@ -6,7 +6,8 @@ import { safeMailHtml } from '../lib/mailHtml'
 export function emailText(value: string) { const doc = new DOMParser().parseFromString(value.replace(/</g, '&lt;').replace(/>/g, '&gt;'), 'text/html'); return doc.body.textContent || '' }
 export function emailAddressLabel(value: string) { return emailText(value).replace(/["']/g, '').replace(/[\u200e\u200f]/g, '').replace(/<([^>]+)>/g, ' ($1)').replace(/^\s*\(([^)]+)\)\s*$/, '$1').trim() }
 
-export default function EmailMessage({ message }: { message: GmailApiMessage }) {
+export default function EmailMessage({ message, initiallyCollapsed = false }: { message: GmailApiMessage; initiallyCollapsed?: boolean }) {
+  const [collapsed, setCollapsed] = useState(initiallyCollapsed)
   const [images, setImages] = useState(false)
   const [inlineImages, setInlineImages] = useState<Record<string, string>>({}); const [imageError, setImageError] = useState(''); const [imageBusy, setImageBusy] = useState(false)
   const content = useMemo(() => {
@@ -22,9 +23,11 @@ export default function EmailMessage({ message }: { message: GmailApiMessage }) 
     return { html: '', quotedHtml: '', text: match ? text.slice(0, match.index).trim() : text, quotedText: match ? text.slice(match.index).trim() : '' }
   }, [message, images, inlineImages])
   return <article className="email-message"><header><strong dir="auto">{emailAddressLabel(message.from)}</strong><time>{dateTimeLabel(message.date)}</time><details className="email-recipients"><summary>נמענים</summary><div dir="auto">אל: {emailAddressLabel(message.to)}</div></details></header><h3 dir="auto">{emailText(message.subject)}</h3>
+    <button type="button" className="secondary" aria-expanded={!collapsed} onClick={() => setCollapsed(!collapsed)}>{collapsed ? 'הצגת המייל' : 'מזעור המייל'}</button><div hidden={collapsed}>
     {content.html ? <div className="email-html" dir="auto" dangerouslySetInnerHTML={{ __html: content.html }} /> : <div className="email-plain" dir="auto">{content.text}</div>}
     {(content.quotedHtml || content.quotedText) && <details><summary>הצגת תוכן מצוטט מהודעות קודמות</summary>{content.quotedHtml ? <div className="email-html" dir="auto" dangerouslySetInnerHTML={{ __html: content.quotedHtml }} /> : <div className="email-plain">{content.quotedText}</div>}</details>}
     {imageError && <div className="error-banner" role="alert">{imageError}</div>}
     {!images && /<img\b/i.test(message.htmlBody || '') && <button type="button" className="secondary" disabled={imageBusy} onClick={() => { setImageBusy(true); setImageError(''); void (async () => { if (/cid:/i.test(message.htmlBody || '')) setInlineImages((await integrationsApi.mailImages(message.id)).images); setImages(true) })().catch((e) => setImageError(e.message)).finally(() => setImageBusy(false)) }}>{imageBusy ? 'טוען תמונות...' : 'הצגת תמונות בהודעה'}</button>}
+    </div>
   </article>
 }

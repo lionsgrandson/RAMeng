@@ -2,6 +2,8 @@ import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'vite'
 import worker from '../worker/src/index.js'
+import { cachedGoogleRead, refreshGoogleReads } from '../worker/src/googleSync.js'
+import { queueDriveUpload, runDriveQueue } from '../worker/src/driveQueue.js'
 
 const server = await createServer({ configFile: false, optimizeDeps: { noDiscovery: true, include: [], entries: [] }, cacheDir: 'node_modules/.vite-regression', server: { middlewareMode: true }, appType: 'custom' })
 after(() => server.close())
@@ -11,6 +13,51 @@ const backend = await server.ssrLoadModule('/src/lib/backend.ts')
 const { readImportRows } = await server.ssrLoadModule('/src/lib/imports.ts')
 const options = { canManageUsers: false, isDeveloper: false }
 const { deleteProject, deleteContact } = await server.ssrLoadModule('/src/lib/records.ts')
+
+test('daily Google cache is private, expires after 24 hours and manual refresh bypasses it', async () => {
+  const kv = new Map(); const env = { CONFIG: { get: async key => kv.get(key) || null, put: async (key, value) => kv.set(key, JSON.parse(value)) } }
+  let calls = 0; const url = 'https://www.googleapis.com/drive/v3/files?q=folder'
+  const execute = async () => Response.json({ version: ++calls })
+  assert.equal((await (await cachedGoogleRead(env, 'a', url, execute)).json()).version, 1)
+  assert.equal((await (await cachedGoogleRead(env, 'a', url, execute)).json()).version, 1)
+  assert.equal((await (await cachedGoogleRead(env, 'b', url, execute)).json()).version, 2)
+  assert.equal((await (await cachedGoogleRead(env, 'a', url, execute, true)).json()).version, 3)
+  for (const [key, value] of kv) if (key.startsWith('google-read:a:')) value.updatedAt -= 86400001
+  assert.equal((await (await cachedGoogleRead(env, 'a', url, execute)).json()).version, 4)
+  kv.set('google-read-epoch:a', 'new-account')
+  assert.equal((await (await cachedGoogleRead(env, 'a', url, execute)).json()).version, 5)
+})
+
+test('background sync refreshes stale registered feeds without issuing Google writes', async () => {
+  const kv = new Map(); const env = { CONFIG: { get: async key => kv.get(key) || null, put: async (key, value) => kv.set(key, value.startsWith('{') ? JSON.parse(value) : value), list: async ({ prefix }) => ({ keys: [...kv.keys()].filter(key => key.startsWith(prefix)).map(name => ({ name })), list_complete: true }) } }
+  const url = 'https://www.googleapis.com/drive/v3/files?q=protected-folder'
+  await cachedGoogleRead(env, 'owner', url, async () => Response.json({ files: [] }))
+  let reads = 0
+  assert.equal((await refreshGoogleReads(env, async () => { reads++; return Response.json({ files: [] }) })).refreshed, 0)
+  for (const [key, value] of kv) if (key.startsWith('google-read:')) value.updatedAt -= 86400001
+  const result = await refreshGoogleReads(env, async (owner, target) => { assert.equal(owner, 'owner'); assert.equal(target, url); reads++; return Response.json({ files: [{ id: 'existing' }] }) })
+  assert.equal(result.refreshed, 1); assert.equal(reads, 1)
+  assert.deepEqual((await (await cachedGoogleRead(env, 'owner', url, () => { throw Error('must use fresh cache') })).json()).files, [{ id: 'existing' }])
+})
+
+test('automatic Drive uploads wait for the daily window, replace queued edits, and manual sync runs immediately', async () => {
+  const kv = new Map(); const env = { CONFIG: { get: async key => kv.get(key) || null, put: async (key, value) => kv.set(key, value.startsWith('{') ? JSON.parse(value) : value), delete: async key => kv.delete(key), list: async ({ prefix }) => ({ keys: [...kv.keys()].filter(key => key.startsWith(prefix)).map(name => ({ name })), list_complete: true }) } }
+  const body = { projectId: 'p', recordId: 'f', kind: 'file', file: { data: 'old' } }
+  await queueDriveUpload(env, 'owner', body, 'owner@example.test')
+  await queueDriveUpload(env, 'owner', { ...body, file: { data: 'latest' } }, 'owner@example.test')
+  assert.equal([...kv.keys()].filter(key => key.startsWith('drive-pending:')).length, 1)
+  let uploads = 0
+  const execute = async job => { uploads++; assert.equal(job.userId, 'owner'); assert.equal(job.body.file.data, 'latest'); return { id: 'uploaded' } }
+  assert.equal((await runDriveQueue(env, execute)).uploaded, 0)
+  assert.equal(uploads, 0)
+  assert.equal((await runDriveQueue(env, execute, { userId: 'owner', force: true })).uploaded, 1)
+  assert.equal(uploads, 1)
+  assert.equal([...kv.keys()].filter(key => key.startsWith('drive-pending:')).length, 0)
+  await queueDriveUpload(env, 'owner', { ...body, file: { data: 'latest' } }, 'owner@example.test')
+  for (const [key, value] of kv) if (key.startsWith('drive-pending:')) value.dueAt = Date.now() - 1
+  assert.equal((await runDriveQueue(env, execute)).uploaded, 1)
+  assert.equal(uploads, 2)
+})
 
 test('project deletion preserves dependent business records and removes their project links', () => {
   const workspace = cloneWorkspace()
@@ -231,6 +278,82 @@ function googleFixture(t, handler, role = 'admin') {
   return { privateEnv, kv }
 }
 
+test('draft creation, restoration, update and send use the owner mailbox and preserve attachments and image size', async (t) => {
+  const actions = []
+  const { privateEnv, kv } = googleFixture(t, async (url, init) => {
+    actions.push(`${init.method} ${url.pathname}`)
+    const payload = JSON.parse(init.body)
+    const raw = Buffer.from(payload.message.raw, 'base64url').toString('utf8')
+    assert.match(raw, /multipart\/mixed/)
+    const html = [...raw.matchAll(/Content-Type: text\/html[^]*?base64\r\n\r\n([A-Za-z0-9+/=\r\n]+)/g)][0]?.[1]
+    assert.match(Buffer.from(html, 'base64').toString('utf8'), /width="200"/)
+    return Response.json(url.pathname.endsWith('/send') ? { id: 'sent', threadId: 'thread' } : { id: 'owner-draft' })
+  })
+  const body = { key: 'project:p:new', to: 'client@example.test', subject: 'Draft', body: 'hello', html: '<p>hello</p><img src="data:image/png;base64,aGVsbG8=" width="200"><script>bad()</script>', attachments: [{ name: 'file.txt', type: 'text/plain', data: 'aGVsbG8=' }] }
+  const put = () => new Request('https://crm.test/api/google/gmail/draft', { method: 'PUT', headers: { authorization: 'Bearer qa-token', 'content-type': 'application/json' }, body: JSON.stringify(body) })
+  assert.equal((await worker.fetch(put(), privateEnv)).status, 200)
+  const restored = await (await worker.fetch(request('/api/google/gmail/draft?key=project%3Ap%3Anew'), privateEnv)).json()
+  assert.equal(restored.draft.draftId, 'owner-draft'); assert.equal(restored.draft.synced, true)
+  assert.equal(restored.draft.attachments[0].data, 'aGVsbG8='); assert.doesNotMatch(restored.draft.html, /script|bad\(\)/)
+  assert.equal((await worker.fetch(put(), privateEnv)).status, 200)
+  assert.equal((await worker.fetch(request('/api/google/gmail/send', { ...body, draftKey: body.key }), privateEnv)).status, 200)
+  assert.deepEqual(actions, ['POST /gmail/v1/users/me/drafts', 'PUT /gmail/v1/users/me/drafts/owner-draft', 'POST /gmail/v1/users/me/drafts/send'])
+  assert.equal((await (await worker.fetch(request('/api/google/gmail/draft?key=project%3Ap%3Anew'), privateEnv)).json()).draft, null)
+  assert.ok([...kv.keys()].some(key => key.startsWith('mail-draft:qa:')))
+  assert.ok(![...kv.keys()].some(key => key.includes('client@example.test')))
+})
+
+test('draft survives a Gmail outage and accepts incomplete recipients without header injection', async (t) => {
+  const { privateEnv } = googleFixture(t, async () => Response.json({ error: { message: 'Unavailable' } }, { status: 503 }))
+  const body = { key: 'new', to: 'partial-address', subject: '', body: '', html: '<p>unfinished</p>', attachments: [] }
+  const put = new Request('https://crm.test/api/google/gmail/draft', { method: 'PUT', headers: { authorization: 'Bearer qa-token', 'content-type': 'application/json' }, body: JSON.stringify(body) })
+  const saved = await (await worker.fetch(put, privateEnv)).json()
+  assert.equal(saved.draft.synced, false)
+  const restored = await (await worker.fetch(request('/api/google/gmail/draft?key=new'), privateEnv)).json()
+  assert.equal(restored.draft.to, 'partial-address'); assert.equal(restored.draft.html, '<p>unfinished</p>')
+})
+
+test('queued drafts and mail cannot cross accounts after a user switch', async (t) => {
+  const { privateEnv } = googleFixture(t, async () => { throw Error('Google must not be contacted') })
+  const body = { key: 'private', ownerId: 'different-user', to: 'client@example.test', subject: 'Private', body: 'private', html: '<p>private</p>', attachments: [] }
+  const put = new Request('https://crm.test/api/google/gmail/draft', { method: 'PUT', headers: { authorization: 'Bearer qa-token', 'content-type': 'application/json' }, body: JSON.stringify(body) })
+  assert.equal((await worker.fetch(put, privateEnv)).status, 409)
+  assert.equal((await worker.fetch(request('/api/google/gmail/send', body), privateEnv)).status, 409)
+})
+
+test('background Drive queue rechecks protected folders before a scheduled upload', async (t) => {
+  const { privateEnv, kv } = googleFixture(t, async () => { throw Error('Protected folder must not be mutated') })
+  kv.get('rameng:google-tokens:v2:qa').email = 'qa@example.test'
+  kv.set('drive-project-folder:qa:project', { id: 'folder', readOnly: false })
+  privateEnv.CONFIG.put = async (key, value) => kv.set(key, value.startsWith('{') ? JSON.parse(value) : value)
+  privateEnv.CONFIG.delete = async key => kv.delete(key)
+  privateEnv.CONFIG.list = async ({ prefix }) => ({ keys: [...kv.keys()].filter(key => key.startsWith(prefix)).map(name => ({ name })), list_complete: true })
+  const result = await worker.fetch(request('/api/google/drive/upload', { projectId: 'project', recordId: 'record', automatic: true, file: { name: 'file.txt', type: 'text/plain', data: 'aGVsbG8=' } }), privateEnv)
+  assert.equal((await result.json()).queued, true)
+  kv.set('drive-protected-folder:folder', true)
+  for (const [key, value] of kv) if (key.startsWith('drive-pending:')) value.dueAt = Date.now() - 1
+  let completed
+  await worker.scheduled({}, privateEnv, { waitUntil: promise => { completed = promise } })
+  await completed
+  assert.equal([...kv.keys()].filter(key => key.startsWith('drive-pending:')).length, 0)
+})
+
+test('a rejected access token refreshes and retries silently with the stored refresh token', async (t) => {
+  const kv = new Map([['rameng:admin-config:v1', config], ['rameng:google-tokens:v2:qa', { access_token: 'old', refresh_token: 'persistent', expires_at: Date.now() + 3600000 }]])
+  const env = { CONFIG: { get: async key => kv.get(key) || null, put: async (key, value) => kv.set(key, JSON.parse(value)) } }
+  let refreshes = 0; let reads = 0
+  t.mock.method(globalThis, 'fetch', async (url, init = {}) => {
+    if (String(url).endsWith('/auth/v1/user')) return Response.json({ id: 'qa', email: 'qa@example.test' })
+    if (String(url).includes('/rest/v1/memberships')) return Response.json([{ role: 'admin', permissions: null }])
+    if (String(url) === 'https://oauth2.googleapis.com/token') { refreshes++; assert.equal(init.body.get('refresh_token'), 'persistent'); return Response.json({ access_token: 'new', expires_in: 3600 }) }
+    reads++
+    return init.headers.authorization === 'Bearer old' ? Response.json({}, { status: 401 }) : Response.json({ messages: [] })
+  })
+  assert.equal((await worker.fetch(request('/api/google/gmail/thread?threadId=thread'), env)).status, 200)
+  assert.equal(refreshes, 1); assert.equal(reads, 2)
+  assert.equal(kv.get('rameng:google-tokens:v2:qa').refresh_token, 'persistent')
+})
+
 test('Gmail sends multipart attachments with Hebrew filenames and exact binary bytes', async (t) => {
   let raw = ''
   const { privateEnv } = googleFixture(t, async (url, init) => {
@@ -286,10 +409,13 @@ test('Drive upload uses personal project folder, preserves file bytes and avoids
   })
   kv.set('drive-project-folder:qa:project', { id: 'private-folder' })
   kv.set('drive-project-folder:other:project', { id: 'someone-elses-folder' })
+  kv.set('drive-pending:qa:project:file:record', { version: 'queued-old-edit' })
+  privateEnv.CONFIG.delete = async key => kv.delete(key)
   const payload = { projectId: 'project', recordId: 'record', kind: 'file', file: { name: 'QA.txt', type: 'text/plain', data: Buffer.from('file-content').toString('base64') } }
   assert.equal((await worker.fetch(request('/api/google/drive/upload', payload), privateEnv)).status, 200)
   assert.equal((await (await worker.fetch(request('/api/google/drive/upload', payload), privateEnv)).json()).unchanged, true)
   assert.equal(uploads, 1)
+  assert.equal(kv.has('drive-pending:qa:project:file:record'), false)
 })
 
 test('Drive report update replaces an existing CRM export instead of creating duplicates; automatic settings are respected', async (t) => {

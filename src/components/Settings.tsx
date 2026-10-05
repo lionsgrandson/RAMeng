@@ -1,4 +1,3 @@
-const RichTextEditor = lazy(() => import('./RichTextEditor'))
 import { lazy, Suspense, useEffect, useState } from 'react'
 import type { User } from '@supabase/supabase-js'
 import { Cloud, RefreshCw, Save, UserRound } from 'lucide-react'
@@ -8,6 +7,7 @@ import type { Workspace } from '../types'
 import { Chip, Field } from './common'
 
 import { DriveSettingsPanel } from './DriveConnection'
+const RichTextEditor = lazy(() => import('./RichTextEditor'))
 
 type SettingsTab = 'profile' | 'google' | 'organization' | 'system'
 
@@ -121,6 +121,11 @@ function OrganizationSettings({ workspace, setWorkspace, canEdit }: { workspace:
 }
 
 function GoogleWorkspaceSettings({ canConfigure }: { canConfigure: boolean }) {
+  const [syncingGoogle, setSyncingGoogle] = useState(false)
+  const syncGoogle = async () => {
+    setSyncingGoogle(true); setError(''); setMessage('')
+    try { let cursor = ''; let driveCursor = ''; let feedsDone = false; let driveDone = false; let failed = 0; do { const result = await integrationsApi.syncGoogle({ cursor, driveCursor, feedsDone, driveDone }); cursor = result.cursor; driveCursor = result.driveCursor; feedsDone = !cursor; driveDone = !driveCursor; failed += result.failed } while (cursor || driveCursor); window.dispatchEvent(new Event('rameng-google-synced')); setMessage(failed ? 'חלק מהנתונים לא הסתנכרנו. נסו שוב או בדקו את חיבור Google.' : 'סנכרון Gmail, היומן ותיקיות Drive המחוברות הסתיים.') } catch (e) { setError(e instanceof Error ? e.message : 'סנכרון Google נכשל') } finally { setSyncingGoogle(false) }
+  }
   const [status, setStatus] = useState<IntegrationStatus | null>(null)
   const [config, setConfig] = useState<GoogleIntegrationConfig | null>(null)
   const [clientSecret, setClientSecret] = useState('')
@@ -191,12 +196,13 @@ function GoogleWorkspaceSettings({ canConfigure }: { canConfigure: boolean }) {
   if (loading) return <section className="card settings-card"><div className="loading-state"><RefreshCw className="spin" /> טוען את חיבור Google שלך...</div></section>
 
   return <section className="card settings-card">
-    <div className="card-head"><div><h2>Google Workspace</h2><p>Gmail, יומן ו-Drive.</p></div><button type="button" className="secondary" onClick={() => void refresh()}><RefreshCw /> רענון</button></div>
+    <div className="card-head"><div><h2>Google Workspace</h2><p>Gmail, יומן ו-Drive · עדכון אוטומטי פעם ביום. ניתן לסנכרן ידנית בכל עת.</p></div><button type="button" className="secondary" onClick={() => void refresh()}><RefreshCw /> רענון</button></div>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {message && <div className="success-banner" role="status">{message}</div>}
     <div className="integration-health">
       <article><span className="google-g">G</span><div><strong>Google Workspace</strong><span>{status?.google.email || 'Gmail · Calendar · Drive'}</span></div><Chip tone={status?.google.connected ? 'good' : 'warn'}>{status?.google.connected ? 'מחובר לחשבון שלך' : 'לא מחובר'}</Chip><button type="button" className="primary" disabled={connecting || !status?.google.configured} onClick={() => void connectGoogle()}>{connecting ? 'מעביר ל-Google...' : status?.google.connected ? 'חיבור חשבון אחר' : 'התחברות עם Google'}</button></article>
     </div>
+    {status?.google.connected && <button type="button" className="secondary" disabled={syncingGoogle} onClick={() => void syncGoogle()}><RefreshCw /> {syncingGoogle ? 'מסנכרן Google...' : 'סנכרון כל נתוני Google'}</button>}
     {!status?.google.configured && <div className="error-banner" role="status">החיבור ל-Google עדיין לא זמין.</div>}
     {canConfigure && config && <div className="integration-form">
       <h3>הגדרת Google</h3>

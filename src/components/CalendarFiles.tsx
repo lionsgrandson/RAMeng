@@ -1,5 +1,5 @@
 import DriveConnection from './DriveConnection'
-import { useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { CalendarPlus, ExternalLink, FileText, RefreshCw, Upload } from 'lucide-react'
 import DeleteButton from './RecordDelete'
 import { integrationsApi } from '../lib/api'
@@ -29,13 +29,13 @@ export function CalendarPage({ workspace, setWorkspace, onProject, onTask, start
   const [calendarItemFilter, setCalendarItemFilter] = useState<'הכל' | 'אירועים' | 'משימות'>('הכל')
   const [calendarSourceFilter, setCalendarSourceFilter] = useState<'הכל' | 'Google' | 'מקומי'>('הכל')
 
-  const sync = async () => {
+  const sync = async (force = false) => {
     setSyncing(true)
     setError('')
     try {
-      const from = new Date(Date.now() - 30 * 86400000).toISOString()
-      const to = new Date(Date.now() + 180 * 86400000).toISOString()
-      const { items } = await integrationsApi.calendarEvents(from, to)
+      const from = new Date(new Date().setUTCHours(0, 0, 0, 0) - 30 * 86400000).toISOString()
+      const to = new Date(new Date().setUTCHours(0, 0, 0, 0) + 180 * 86400000).toISOString()
+      const { items } = await integrationsApi.calendarEvents(from, to, force)
       setPersonalEvents(items.map((item) => ({ id: `google-${item.id}`, title: item.summary, start: item.start, end: item.end, location: item.location, googleEventId: item.id, googleHtmlLink: item.htmlLink })))
     } catch (e) {
       setError(e instanceof Error ? e.message : 'שגיאת סנכרון')
@@ -43,6 +43,8 @@ export function CalendarPage({ workspace, setWorkspace, onProject, onTask, start
       setSyncing(false)
     }
   }
+
+  useEffect(() => { if (canSync) void sync(); const refresh = () => { if (canSync) void sync() }; window.addEventListener('rameng-google-synced', refresh); return () => window.removeEventListener('rameng-google-synced', refresh) }, [canSync])
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -125,7 +127,7 @@ export function CalendarPage({ workspace, setWorkspace, onProject, onTask, start
           <button type="button" className="secondary" onClick={() => { const next = new Date(today.getFullYear(), today.getMonth(), 1); setMonth(next); setSelectedDate(todayKey) }}>היום</button>
           <button type="button" className="icon-btn" aria-label="החודש הקודם" onClick={() => setMonth((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1))}>‹</button>
           <button type="button" className="icon-btn" aria-label="החודש הבא" onClick={() => setMonth((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1))}>›</button>
-          {canSync && <button type="button" className="secondary" onClick={() => void sync()} disabled={syncing}><RefreshCw /> {syncing ? 'מסנכרן...' : 'סנכרון Google'}</button>}
+          {canSync && <button type="button" className="secondary" onClick={() => void sync(true)} disabled={syncing}><RefreshCw /> {syncing ? 'מסנכרן...' : 'סנכרון Google'}</button>}
           {canCreate && <button type="button" className="primary" onClick={() => { setEventProjectId(''); setEventTaskId(''); setAdding(true) }}><CalendarPlus /> אירוע</button>}
         </div>
       </div>

@@ -1,5 +1,8 @@
 const delay = async () => new Promise((resolve) => setTimeout(resolve, 250))
 export const integrationsApi = {
+  syncGoogle: async () => ({ cursor: '', driveCursor: '', refreshed: 3, uploaded: 0, failed: 0 }),
+  mailDraft: async (key: string) => ({ draft: JSON.parse(localStorage.getItem(`qa-draft:${key}`) || 'null') }),
+  saveMailDraft: async (draft: { key: string }) => { const saved = { ...draft, draftId: 'qa-draft', synced: true }; localStorage.setItem(`qa-draft:${draft.key}`, JSON.stringify(saved)); return { draft: saved } },
   mailImages: async () => ({ images: {} }),
   mailSignature: async () => JSON.parse(localStorage.getItem('qa-mail-signature') || '{"html":"","enabled":true}'),
   saveMailSignature: async (signature: unknown) => { localStorage.setItem('qa-mail-signature', JSON.stringify(signature)); return signature },
@@ -14,9 +17,9 @@ export const integrationsApi = {
   unlinkGmailTask: async () => ({ links: {} }),
   gmailThread: async () => ({ messages: [{ id: 'qa-mail', subject: 'מייל בדיקה', from: 'qa@example.test', to: 'client@example.test', date: '2026-10-04', body: 'תוכן בדיקה', htmlBody: '<p>בדיקה &quot;formatted&quot;</p><p><b>שורה חדשה</b></p><blockquote>תוכן מצוטט</blockquote><script>alert(1)</script>' }] }),
   gmailSearch: async () => ({ threads: [] }),
-  contactMail: async () => ({ threads: [{ id: 'qa-thread', subject: 'התכתבות עם הלקוח', from: 'client@example.test', to: 'qa@example.test', date: '2026-10-05T09:00:00Z', snippet: 'מייל בדיקה פרטי בחשבון שלך' }], nextPageToken: '' }),
+  contactMail: async () => ({ threads: Array.from({ length: 8 }, (_, index) => ({ id: `qa-thread-${index}`, subject: 'התכתבות עם הלקוח', from: 'client@example.test', to: 'qa@example.test', date: '2026-10-05T09:00:00Z', snippet: 'מייל בדיקה פרטי בחשבון שלך' })), nextPageToken: '' }),
   contactCalendar: async () => ({ items: [{ id: 'qa-calendar', summary: 'פגישה עם הלקוח', start: '2026-10-05T09:00:00Z', location: 'ירושלים' }] }),
-  sendMail: async () => { await delay(); return { id: 'qa-mail', threadId: 'qa-thread' } },
+  sendMail: async (payload: { draftKey?: string }) => { await delay(); if (payload.draftKey) localStorage.removeItem(`qa-draft:${payload.draftKey}`); return { id: 'qa-mail', threadId: 'qa-thread' } },
   projectDriveFolder: async (projectId: string) => ({ folder: JSON.parse(localStorage.getItem(`qa-drive-folder:${projectId}`) || 'null') }),
   unlinkProjectDriveFolder: async (projectId: string) => { localStorage.removeItem(`qa-drive-folder:${projectId}`); return { folder: null } },
   driveFiles: async () => ({ files: [{ id: 'nested', name: 'Existing subfolder', mimeType: 'application/vnd.google-apps.folder' }, ...JSON.parse(localStorage.getItem('qa-drive-files') || '[]')], nextPageToken: '', completeAccess: true }),

@@ -14,9 +14,9 @@ export async function storedAttachment(file: FileRecord) {
   if (!response.ok) throw new Error(`לא ניתן לטעון את ${file.name}`)
   return fileAttachment(await response.blob(), file.name)
 }
-export async function syncProjectFile(file: FileRecord, original?: File) {
+export async function syncProjectFile(file: FileRecord, original?: File, automatic?: boolean) {
   if (!file.projectId) return { skipped: true, reason: 'unlinked' }
-  return integrationsApi.uploadDrive({ projectId: file.projectId, recordId: file.id, kind: 'file', file: original ? await fileAttachment(original, original.name) : await storedAttachment(file) })
+  return integrationsApi.uploadDrive({ projectId: file.projectId, recordId: file.id, kind: 'file', automatic, file: original ? await fileAttachment(original, original.name) : await storedAttachment(file) })
 }
 const escapeHtml = (value: unknown) => String(value || '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!)
 export async function reportAttachment(report: InspectionReport, workspace: Workspace): Promise<MailAttachment> {

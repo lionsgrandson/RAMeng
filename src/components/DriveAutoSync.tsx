@@ -4,6 +4,7 @@ import { reportAttachment, syncProjectFile } from '../lib/googleFiles'
 import type { Workspace } from '../types'
 
 export default function DriveAutoSync({ workspace, enabled, reportsAllowed, ready }: { workspace: Workspace; enabled: boolean; reportsAllowed: boolean; ready: boolean }) {
+  useEffect(() => { const timer = window.setInterval(() => window.dispatchEvent(new Event('rameng-google-synced')), 24 * 60 * 60 * 1000); return () => window.clearInterval(timer) }, [])
   const [attempt, setAttempt] = useState(0); const [error, setError] = useState(''); const [busy, setBusy] = useState(false)
   const done = useRef(new Map<string, string>()); const snapshot = useRef(workspace); snapshot.current = workspace
   const running = useRef(false); const rerun = useRef(false)
@@ -25,18 +26,18 @@ export default function DriveAutoSync({ workspace, enabled, reportsAllowed, read
           if (!file.projectId || !linked.has(file.projectId)) continue
           const key = `file:${file.id}`; const fingerprint = `${file.storagePath || file.url}:${file.version}`
           if (done.current.get(key) === fingerprint) continue
-          try { const result = await syncProjectFile(file); if (!result.skipped) done.current.set(key, fingerprint) } catch (e) { errors.push(`${file.name}: ${e instanceof Error ? e.message : 'העלאה נכשלה'}`) }
+          try { const result = await syncProjectFile(file, undefined, true); if (!result.skipped) done.current.set(key, fingerprint) } catch (e) { errors.push(`${file.name}: ${e instanceof Error ? e.message : 'העלאה נכשלה'}`) }
         }
         if (settings.autoReports && reportsAllowed) for (const report of data.reports) {
           if (!linked.has(report.projectId)) continue
           const key = `report:${report.id}`; const fingerprint = JSON.stringify([report, data.settings.organizationName, data.projects.find((project) => project.id === report.projectId)?.name])
           if (done.current.get(key) === fingerprint) continue
-          try { const result = await integrationsApi.uploadDrive({ projectId: report.projectId, recordId: report.id, kind: 'report', file: await reportAttachment(report, data) }); if (!result.skipped) done.current.set(key, fingerprint) } catch (e) { errors.push(`${report.title}: ${e instanceof Error ? e.message : 'העלאה נכשלה'}`) }
+          try { const result = await integrationsApi.uploadDrive({ projectId: report.projectId, recordId: report.id, kind: 'report', automatic: true, file: await reportAttachment(report, data) }); if (!result.skipped) done.current.set(key, fingerprint) } catch (e) { errors.push(`${report.title}: ${e instanceof Error ? e.message : 'העלאה נכשלה'}`) }
         }
         if (active && errors.length) setError(errors.join(' · '))
       })().catch((e) => { if (active) setError(e instanceof Error ? e.message : 'סנכרון Drive נכשל') }).finally(() => { running.current = false; if (active) setBusy(false); if (rerun.current) { rerun.current = false; setAttempt((value) => value + 1) } })
     }, 2000)
     return () => { active = false; window.clearTimeout(timer) }
   }, [workspace.files, workspace.reports, workspace.projects, workspace.settings.organizationName, enabled, reportsAllowed, ready, attempt])
-  return error ? <div className="error-banner" role="alert">סנכרון Drive: {error} <button type="button" className="secondary" onClick={() => setAttempt((value) => value + 1)}>ניסיון נוסף</button></div> : busy ? <div className="info-banner" role="status">בודק ומסנכרן קבצי פרויקט ודוחות ל-Drive...</div> : null
+  return error ? <div className="error-banner" role="alert">סנכרון Drive: {error} <button type="button" className="secondary" onClick={() => setAttempt((value) => value + 1)}>ניסיון נוסף</button></div> : busy ? <div className="info-banner" role="status">מכין קבצי פרויקט ודוחות לסנכרון Drive היומי...</div> : null
 }

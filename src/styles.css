@@ -57,3 +57,9 @@
 .drive-breadcrumbs { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
 .drive-folder-row { display: flex; align-items: center; gap: 10px; padding: 14px; background: #f6f9ff; border: 1px solid #dce4f0; border-radius: 8px; text-align: start; }
 .drive-folder-row strong { flex: 1; }
+[hidden] { display: none !important; }
+.rich-editor [data-resize-wrapper] { max-width: 100%; }
+.rich-editor [data-resize-handle] { width: 12px; height: 12px; background: #287e94; border: 2px solid white; border-radius: 3px; opacity: 0; }
+.rich-editor [data-resize-container]:hover [data-resize-handle], .rich-editor .ProseMirror-selectednode [data-resize-handle] { opacity: 1; }
+.rich-editor [data-resize-handle="top-left"], .rich-editor [data-resize-handle="bottom-right"] { cursor: nwse-resize; }
+.rich-editor [data-resize-handle="top-right"], .rich-editor [data-resize-handle="bottom-left"] { cursor: nesw-resize; }

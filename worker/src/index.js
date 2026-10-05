@@ -1,3 +1,5 @@
+import { queueDriveUpload, runDriveQueue } from "./driveQueue.js"
+import { cachedGoogleRead, googleReadHash, refreshGoogleReads } from "./googleSync.js"
 import { createClient } from '@supabase/supabase-js'
 import { cleanMailHtml, mailContent } from './mailHtml.js'
 
@@ -231,18 +233,32 @@ function googleTokensKey(userId) {
   return `${GOOGLE_TOKENS_PREFIX}${userId}`
 }
 
+const freshGoogleTokens = new WeakMap()
+const googleRefreshes = new WeakMap()
 async function googleTokens(env, userId) {
+  const fresh = freshGoogleTokens.get(env)?.get(userId)
+  if (fresh && fresh.until > Date.now()) return fresh.tokens
   return (await env.CONFIG.get(googleTokensKey(userId), 'json')) || null
 }
 
 async function putGoogleTokens(env, userId, tokens) {
   await env.CONFIG.put(googleTokensKey(userId), JSON.stringify(tokens))
+  if (!freshGoogleTokens.has(env)) freshGoogleTokens.set(env, new Map())
+  freshGoogleTokens.get(env).set(userId, { tokens, until: Date.now() + 60000 })
 }
 
-async function validGoogleAccessToken(env, config, userId) {
+async function validGoogleAccessToken(env, config, userId, force = false) {
+  if (!googleRefreshes.has(env)) googleRefreshes.set(env, new Map())
+  const pending = googleRefreshes.get(env)
+  if (pending.has(userId)) return pending.get(userId)
+  const operation = refreshGoogleAccessToken(env, config, userId, force)
+  pending.set(userId, operation)
+  try { return await operation } finally { if (pending.get(userId) === operation) pending.delete(userId) }
+}
+async function refreshGoogleAccessToken(env, config, userId, force = false) {
   const stored = await googleTokens(env, userId)
   if (!stored?.refresh_token && !stored?.access_token) throw Object.assign(new Error('Google Workspace עדיין לא מחובר לחשבון שלך'), { status: 409 })
-  if (stored.access_token && Number(stored.expires_at || 0) > Date.now() + 60_000) return stored.access_token
+  if (!force && stored.access_token && Number(stored.expires_at || 0) > Date.now() + 60_000) return stored.access_token
   if (!stored.refresh_token) throw Object.assign(new Error('חיבור Google שלך פג. יש להתחבר מחדש בהגדרות.'), { status: 409 })
   const response = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
@@ -262,19 +278,17 @@ async function validGoogleAccessToken(env, config, userId) {
 }
 
 async function googleFetch(env, config, userId, url, init = {}) {
-  const token = await validGoogleAccessToken(env, config, userId)
-  const response = await fetch(url, {
-    ...init,
-    headers: { authorization: `Bearer ${token}`, ...(init.headers || {}) },
-  })
-  if (response.status === 401) {
-    const stored = await googleTokens(env, userId)
-    if (stored) {
-      stored.expires_at = 0
-      await putGoogleTokens(env, userId, stored)
+  const execute = async () => {
+    let token = await validGoogleAccessToken(env, config, userId)
+    let response = await fetch(url, { ...init, headers: { authorization: `Bearer ${token}`, ...(init.headers || {}) } })
+    if (response.status === 401) {
+      token = await validGoogleAccessToken(env, config, userId, true)
+      response = await fetch(url, { ...init, headers: { authorization: `Bearer ${token}`, ...(init.headers || {}) } })
     }
+    return response
   }
-  return response
+  if (config.dailyGoogleRead && (!init.method || init.method === 'GET')) return cachedGoogleRead(env, userId, url, execute, config.forceGoogleRead)
+  return execute()
 }
 
 function decodeBase64UrlUtf8(value = '') {
@@ -424,13 +438,14 @@ async function handleGoogleCallback(request, env, config) {
   if (profileResponse.ok) email = String((await profileResponse.json()).emailAddress || '')
   const stored = {
     access_token: tokenBody.access_token,
-    refresh_token: tokenBody.refresh_token || previous?.refresh_token || '',
+    refresh_token: tokenBody.refresh_token || (email && previous?.email === email ? previous.refresh_token : '') || '',
     expires_at: Date.now() + Number(tokenBody.expires_in || 3600) * 1000,
     scope: tokenBody.scope || '',
     email,
     connectedBy: stateData.email || '',
     connectedAt: new Date().toISOString(),
   }
+  await env.CONFIG.put(`google-read-epoch:${stateData.userId}`, crypto.randomUUID())
   await putGoogleTokens(env, stateData.userId, stored)
   return Response.redirect(`${url.origin}/?google=connected#app?page=settings`, 302)
 }
@@ -512,22 +527,20 @@ async function handleGmailSearch(request, env, config) {
   return apiJson(request, { threads: summaries })
 }
 
-async function handleGmailSend(request, env, config) {
-  const user = await requireGoogleAreaAction(request, env, config, 'communication', 'create')
-  const body = await parseBody(request)
+async function buildGmailMessage(body, env, config, userId, draft = false) {
   const to = cleanString(body.to)
   const subject = cleanString(body.subject)
   const text = cleanString(body.body)
   const threadId = cleanString(body.threadId)
-  if (!validEmail(to) || !subject || !text || /[\r\n]/.test(to)) throw Object.assign(new Error('יש להזין נמען תקין, נושא ותוכן'), { status: 400 })
+  if ((!draft && (!validEmail(to) || !subject || !text)) || /[\r\n]/.test(to)) throw Object.assign(new Error('יש להזין נמען תקין, נושא ותוכן'), { status: 400 })
   const attachments = validatedAttachments(body.attachments)
   const encodedSubject = `=?UTF-8?B?${utf8ToBase64(subject)}?=`
   const rich = mailContent(body.html || '')
   if (rich.inline.reduce((sum, file) => sum + file.data.length * 3 / 4, 0) + attachments.reduce((sum, file) => sum + file.data.length * 3 / 4, 0) > 18 * 1024 * 1024) throw Object.assign(new Error('Message exceeds 18 MB'), { status: 413 })
   const encodedBody = utf8ToBase64(text)
   const replyHeaders = []
-  if (threadId) {
-    const thread = await googleFetch(env, config, user.id, `https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(threadId)}?format=metadata&metadataHeaders=Message-ID&metadataHeaders=References`)
+  if (threadId && !draft) {
+    const thread = await googleFetch(env, config, userId, `https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(threadId)}?format=metadata&metadataHeaders=Message-ID&metadataHeaders=References`)
     if (!thread.ok) throw Object.assign(new Error('ההתכתבות אינה זמינה בחשבון שלך'), { status: thread.status })
     const headers = (await thread.json()).messages?.at(-1)?.payload?.headers || []
     const messageId = headerValue(headers, 'Message-ID').replace(/[\r\n]/g, '').slice(0, 1000)
@@ -546,21 +559,75 @@ async function handleGmailSend(request, env, config) {
     }
   }
   const rfc822 = [
-    `To: ${to}`,
+    ...(validEmail(to) ? [`To: ${to}`] : []),
     `Subject: ${encodedSubject}`,
     ...replyHeaders,
     'MIME-Version: 1.0',
     ...(attachments.length ? [`Content-Type: multipart/mixed; boundary="${boundary}"`, '', `--${boundary}`, contentPart,
       ...attachments.flatMap((file) => [`--${boundary}`, `Content-Type: ${file.type}`, `Content-Disposition: attachment; filename="attachment"; filename*=UTF-8''${encodeURIComponent(file.name)}`, 'Content-Transfer-Encoding: base64', '', wrapBase64(file.data)]), `--${boundary}--`, ''] : [contentPart]),
   ].join('\r\n')
-  const payload = { raw: utf8ToBase64Url(rfc822), ...(threadId ? { threadId } : {}) }
-  const response = await googleFetch(env, config, user.id, 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload),
+  return { raw: utf8ToBase64Url(rfc822), ...(threadId ? { threadId } : {}) }
+}
+
+async function draftKey(userId, context) {
+  if (!context || typeof context !== 'string' || context.length > 1000) throw Object.assign(new Error('Invalid draft context'), { status: 400 })
+  return `mail-draft:${userId}:${await googleReadHash(context)}`
+}
+
+const freshMailDrafts = new WeakMap()
+function rememberDraft(env, key, draft) {
+  if (!freshMailDrafts.has(env)) freshMailDrafts.set(env, new Map())
+  freshMailDrafts.get(env).set(key, { draft, until: Date.now() + 60000 })
+}
+async function readMailDraft(env, key) {
+  const fresh = freshMailDrafts.get(env)?.get(key)
+  if (fresh && fresh.until > Date.now()) return fresh.draft
+  const draft = await env.CONFIG.get(key, 'json')
+  if (!draft) return null
+  const sent = await env.CONFIG.get(`${key}:sent`, 'json')
+  if (sent && sent.at >= draft.updatedAt) return null
+  const google = await env.CONFIG.get(`${key}:gmail`, 'json')
+  return { ...draft, draftId: google?.draftId || '', synced: google?.updatedAt === draft.updatedAt }
+}
+
+async function handleGmailDraft(request, env, config) {
+  const user = await requireGoogleAreaAction(request, env, config, 'communication', request.method === 'GET' ? 'view' : 'create')
+  if (request.method === 'GET') return apiJson(request, { draft: await readMailDraft(env, await draftKey(user.id, new URL(request.url).searchParams.get('key'))) })
+  const body = await parseBody(request)
+  if (body.ownerId && body.ownerId !== user.id) throw Object.assign(new Error('Draft owner changed; reopen the composer'), { status: 409 })
+  const key = await draftKey(user.id, body.key)
+  const payload = await buildGmailMessage(body, env, config, user.id, true)
+  const previous = await readMailDraft(env, key)
+  const saved = { ...body, html: cleanMailHtml(body.html || ''), attachments: validatedAttachments(body.attachments), draftId: cleanString(body.draftId) || previous?.draftId || '', updatedAt: new Date().toISOString(), synced: false }
+  if (new TextEncoder().encode(JSON.stringify(saved)).length > 24 * 1024 * 1024) throw Object.assign(new Error('Draft exceeds storage limit'), { status: 413 })
+  await env.CONFIG.put(key, JSON.stringify(saved))
+  rememberDraft(env, key, saved)
+  try {
+    let response = await googleFetch(env, config, user.id, `https://gmail.googleapis.com/gmail/v1/users/me/drafts${saved.draftId ? '/' + encodeURIComponent(saved.draftId) : ''}`, { method: saved.draftId ? 'PUT' : 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: payload }) })
+    if (response.status === 404 && saved.draftId) response = await googleFetch(env, config, user.id, 'https://gmail.googleapis.com/gmail/v1/users/me/drafts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: payload }) })
+    const result = await response.json()
+    if (!response.ok) throw new Error('Gmail draft sync failed')
+    saved.draftId = result.id; saved.synced = true
+    // Separate metadata avoids KV's one-write-per-key-per-second limit.
+    await env.CONFIG.put(`${key}:gmail`, JSON.stringify({ draftId: saved.draftId, updatedAt: saved.updatedAt }))
+    rememberDraft(env, key, saved)
+  } catch { saved.synced = false; rememberDraft(env, key, saved) /* CRM draft remains recoverable during a Google outage. */ }
+  return apiJson(request, { draft: saved })
+}
+
+async function handleGmailSend(request, env, config) {
+  const user = await requireGoogleAreaAction(request, env, config, 'communication', 'create')
+  const body = await parseBody(request)
+  if (body.ownerId && body.ownerId !== user.id) throw Object.assign(new Error('Mail owner changed; reopen the composer'), { status: 409 })
+  const payload = await buildGmailMessage(body, env, config, user.id)
+  const saved = body.draftKey ? await readMailDraft(env, await draftKey(user.id, body.draftKey)) : null
+  const gmailDraftId = cleanString(body.draftId) || saved?.draftId
+  const response = await googleFetch(env, config, user.id, `https://gmail.googleapis.com/gmail/v1/users/me/${gmailDraftId ? 'drafts/send' : 'messages/send'}`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(gmailDraftId ? { id: gmailDraftId, message: payload } : payload),
   })
   const result = await response.json()
   if (!response.ok) throw Object.assign(new Error(localizedExternalError(result.error?.message, 'שליחת Gmail נכשלה')), { status: response.status })
+  if (body.draftKey) { const key = await draftKey(user.id, body.draftKey); rememberDraft(env, key, null); try { await env.CONFIG.put(`${key}:sent`, JSON.stringify({ at: new Date().toISOString() })) } catch { console.error('Sent message draft cleanup pending') } }
   return apiJson(request, { id: result.id, threadId: result.threadId })
 }
 
@@ -801,42 +868,54 @@ async function handleDriveUpload(request, env, config) {
   const body = await parseBody(request); const kind = body.kind === 'report' ? 'report' : 'file'
   const user = await requireGoogleAreaAction(request, env, config, 'files', 'create')
   if (kind === 'report') await requireAreaAction(request, env, config, 'reports', 'view')
+  return apiJson(request, await uploadGoogleDriveFile(env, config, user.id, body))
+}
+
+async function uploadGoogleDriveFile(env, config, userId, body, queued = false) {
+  const kind = body.kind === 'report' ? 'report' : 'file'
   const projectId = cleanString(body.projectId); const recordId = cleanString(body.recordId)
   if (!/^[a-zA-Z0-9_-]{1,160}$/.test(projectId) || !/^[a-zA-Z0-9_-]{1,160}$/.test(recordId)) throw Object.assign(new Error('חסר שיוך לפרויקט או לקובץ'), { status: 400 })
-  const settings = { autoFiles: true, autoReports: true, ...(await env.CONFIG.get(`drive-settings:${user.id}`, 'json') || {}) }
-  if (body.automatic !== false && !(kind === 'report' ? settings.autoReports : settings.autoFiles)) return apiJson(request, { skipped: true, reason: 'disabled' })
-  const folder = await env.CONFIG.get(`drive-project-folder:${user.id}:${projectId}`, 'json')
-  if (!folder) return apiJson(request, { skipped: true, reason: 'unlinked' })
-  if (folder.readOnly || await env.CONFIG.get(`drive-protected-folder:${folder.id}`, 'json')) return apiJson(request, { skipped: true, reason: 'read-only-folder' })
+  const settings = { autoFiles: true, autoReports: true, ...(await env.CONFIG.get(`drive-settings:${userId}`, 'json') || {}) }
+  if (body.automatic !== false && !(kind === 'report' ? settings.autoReports : settings.autoFiles)) return { skipped: true, reason: 'disabled' }
+  const folder = await env.CONFIG.get(`drive-project-folder:${userId}:${projectId}`, 'json')
+  if (!folder) return { skipped: true, reason: 'unlinked' }
+  if (folder.readOnly || await env.CONFIG.get(`drive-protected-folder:${folder.id}`, 'json')) return { skipped: true, reason: 'read-only-folder' }
   const [file] = validatedAttachments([body.file])
+  if (body.automatic === true && !queued) return queueDriveUpload(env, userId, { ...body, projectId, recordId, kind, file }, (await googleTokens(env, userId))?.email || '')
+  const pendingKey = `drive-pending:${userId}:${projectId}:${kind}:${recordId}`
+  const pendingBefore = queued ? null : await env.CONFIG.get(pendingKey, 'json')
+  const finish = async (result) => {
+    if (pendingBefore && (await env.CONFIG.get(pendingKey, 'json'))?.version === pendingBefore.version) await env.CONFIG.delete(pendingKey)
+    return result
+  }
   const binary = atob(file.data); const bytes = new Uint8Array(binary.length)
   for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index)
   const contentHash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), (byte) => byte.toString(16).padStart(2, '0')).join('')
   const fingerprint = `${file.name}:${file.type}:${contentHash}`
-  const stateKey = `drive-upload:${user.id}:${projectId}:${kind}:${recordId}`
+  const stateKey = `drive-upload:${userId}:${projectId}:${kind}:${recordId}`
   const previous = await env.CONFIG.get(stateKey, 'json')
   if (previous?.fingerprint === fingerprint && previous?.folderId === folder.id) {
-    const check = await googleFetch(env, config, user.id, `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(previous.id)}?fields=id,trashed,parents&supportsAllDrives=true`)
+    const check = await googleFetch(env, config, userId, `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(previous.id)}?fields=id,trashed,parents&supportsAllDrives=true`)
     const checked = await check.json()
-    if (check.ok && !checked.trashed && checked.parents?.includes(folder.id)) return apiJson(request, { id: previous.id, webViewLink: previous.webViewLink, unchanged: true })
+    if (check.ok && !checked.trashed && checked.parents?.includes(folder.id)) return finish({ id: previous.id, webViewLink: previous.webViewLink, unchanged: true })
     if (!check.ok && check.status !== 404) throw Object.assign(new Error('בדיקת קובץ Drive נכשלה. נסו שוב.'), { status: check.status })
   }
   const lookup = new URL('https://www.googleapis.com/drive/v3/files')
   lookup.searchParams.set('q', `'${escapeDriveQuery(folder.id)}' in parents and trashed=false and appProperties has { key='ramengRecordId' and value='${escapeDriveQuery(recordId)}' } and appProperties has { key='ramengKind' and value='${kind}' }`)
   lookup.searchParams.set('fields', 'files(id,webViewLink)'); lookup.searchParams.set('supportsAllDrives', 'true'); lookup.searchParams.set('includeItemsFromAllDrives', 'true')
-  const found = await googleFetch(env, config, user.id, lookup.toString()); const foundBody = await found.json()
+  const found = await googleFetch(env, config, userId, lookup.toString()); const foundBody = await found.json()
   if (!found.ok) throw Object.assign(new Error('לא ניתן לבדוק את תיקיית Drive. הקובץ נשמר במערכת; נסו שוב.'), { status: found.status })
   const existing = foundBody.files?.[0]
   const boundary = `rameng_${crypto.randomUUID()}`
   const metadata = { name: file.name, mimeType: file.type, ...(existing ? {} : { parents: [folder.id], appProperties: { ramengProjectId: projectId, ramengRecordId: recordId, ramengKind: kind } }) }
   const multipart = new Blob([`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--${boundary}\r\nContent-Type: ${file.type}\r\n\r\n`, bytes, `\r\n--${boundary}--\r\n`])
   const endpoint = `https://www.googleapis.com/upload/drive/v3/files${existing ? `/${encodeURIComponent(existing.id)}` : ''}?uploadType=multipart&supportsAllDrives=true&fields=id,name,webViewLink`
-  const response = await googleFetch(env, config, user.id, endpoint, { method: existing ? 'PATCH' : 'POST', headers: { 'content-type': `multipart/related; boundary=${boundary}` }, body: multipart })
+  const response = await googleFetch(env, config, userId, endpoint, { method: existing ? 'PATCH' : 'POST', headers: { 'content-type': `multipart/related; boundary=${boundary}` }, body: multipart })
   const result = await response.json()
   if (!response.ok) throw Object.assign(new Error(localizedExternalError(result.error?.message, 'העלאה ל-Drive נכשלה. הקובץ נשמר במערכת; נסו שוב.')), { status: response.status })
   const webViewLink = result.webViewLink || `https://drive.google.com/file/d/${result.id}/view`
   await env.CONFIG.put(stateKey, JSON.stringify({ id: result.id, webViewLink, folderId: folder.id, fingerprint }))
-  return apiJson(request, { id: result.id, webViewLink })
+  return finish({ id: result.id, webViewLink })
 }
 
 function photonAddressLabel(feature) {
@@ -1155,7 +1234,8 @@ async function routeApi(request, env) {
   const url = new URL(request.url)
   const path = url.pathname
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders(request) })
-  const config = await readConfig(env)
+  let config = await readConfig(env)
+  if (request.method === 'GET' && ['/api/google/gmail/thread', '/api/google/gmail/search', '/api/google/gmail/contacts', '/api/google/calendar/contacts', '/api/google/calendar/events', '/api/google/drive/files', '/api/google/drive/folders'].includes(path)) config = { ...config, dailyGoogleRead: true, forceGoogleRead: url.searchParams.get('force') === 'true' }
 
   if (path === '/api/public-config' && request.method === 'GET') return apiJson(request, publicConfig(config))
   if (path === '/api/admin/bootstrap' && request.method === 'POST') return handleAdminBootstrap(request, env)
@@ -1174,6 +1254,18 @@ async function routeApi(request, env) {
   if (path === '/api/google/gmail/search' && request.method === 'GET') return handleGmailSearch(request, env, config)
   if (path === '/api/google/gmail/contacts' && request.method === 'GET') return handleContactMail(request, env, config)
   if (path === '/api/google/calendar/contacts' && request.method === 'GET') return handleContactCalendar(request, env, config)
+  if (path === '/api/google/sync' && request.method === 'POST') {
+    const user = await requireUser(request, env, config); const body = await parseBody(request)
+    const reads = body.feedsDone ? { cursor: '', refreshed: 0, failed: 0 } : await refreshGoogleReads(env, (userId, providerUrl) => googleFetch(env, config, userId, providerUrl), { userId: user.id, cursor: cleanString(body.cursor), force: true })
+    let uploads = { cursor: '', uploaded: 0, failed: 0 }
+    if (!body.driveDone) {
+      let allowed = true
+      try { await requireAreaAction(request, env, config, 'files', 'create') } catch (error) { if (error.status !== 403) throw error; allowed = false }
+      if (allowed) uploads = await runDriveQueue(env, (job) => executeQueuedDriveUpload(env, config, job), { userId: user.id, cursor: cleanString(body.driveCursor), force: true })
+    }
+    return apiJson(request, { ...reads, driveCursor: uploads.cursor, uploaded: uploads.uploaded, failed: reads.failed + uploads.failed })
+  }
+  if (path === '/api/google/gmail/draft' && ['GET', 'PUT'].includes(request.method)) return handleGmailDraft(request, env, config)
   if (path === '/api/google/gmail/send' && request.method === 'POST') return handleGmailSend(request, env, config)
   if (path === '/api/google/calendar/events' && request.method === 'GET') return handleCalendarList(request, env, config)
   if (path === '/api/google/calendar/events' && request.method === 'POST') return handleCalendarCreate(request, env, config)
@@ -1189,7 +1281,16 @@ async function routeApi(request, env) {
   return apiJson(request, { error: 'כתובת השירות לא נמצאה' }, 404)
 }
 
+async function executeQueuedDriveUpload(env, config, job) {
+  const tokens = await googleTokens(env, job.userId)
+  if (!job.email || tokens?.email !== job.email) return { skipped: true, reason: 'account-changed' }
+  return uploadGoogleDriveFile(env, config, job.userId, job.body, true)
+}
+
 export default {
+  async scheduled(_event, env, ctx) {
+    ctx.waitUntil((async () => { const config = await readConfig(env); await refreshGoogleReads(env, (userId, url) => googleFetch(env, config, userId, url)); await runDriveQueue(env, (job) => executeQueuedDriveUpload(env, config, job)) })())
+  },
   async fetch(request, env) {
     try {
       const url = new URL(request.url)
