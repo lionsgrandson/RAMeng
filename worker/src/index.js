@@ -134,6 +134,7 @@ async function requireDeveloper(request, env, config) {
 }
 
 function rolePermissionAllowed(role, permissions, area, action) {
+  if (role === 'external') return (action === 'view' && ['projects', 'tasks'].includes(area)) || (area === 'tasks' && action === 'status')
   if (role === 'developer') return true
   if (area === 'connections' && action === 'view') return true
   if (area !== 'connections' && permissions?.[area]?.view === false) return false
@@ -377,6 +378,8 @@ function normalizeGmailMessage(message) {
     body: mimeBody(message.payload),
     htmlBody: mimeHtml(message.payload),
     snippet: message.snippet || '',
+    unread: (message.labelIds || []).includes('UNREAD'),
+    incoming: !(message.labelIds || []).includes('SENT'),
   }
 }
 
@@ -460,6 +463,29 @@ async function handleGmailThread(request, env, config) {
   return apiJson(request, { messages: (body.messages || []).map(normalizeGmailMessage) })
 }
 
+async function inboxUnread(env, config, userId) {
+  const response = await googleFetch(env, { ...config, dailyGoogleRead: false }, userId, 'https://gmail.googleapis.com/gmail/v1/users/me/labels/INBOX')
+  const body = await response.json()
+  if (!response.ok) throw Object.assign(new Error('טעינת מספר ההודעות שלא נקראו נכשלה'), { status: response.status })
+  return Number(body.messagesUnread || 0)
+}
+
+async function handleGmailState(request, env, config) {
+  const trash = new URL(request.url).pathname.endsWith('/trash')
+  const user = await requireGoogleAreaAction(request, env, config, 'communication', trash ? 'delete' : 'view')
+  if (request.method === 'GET') return apiJson(request, { unreadCount: await inboxUnread(env, config, user.id) })
+  const body = await parseBody(request)
+  if (!/^[a-zA-Z0-9_-]{1,160}$/.test(body.threadId || '')) throw Object.assign(new Error('מזהה התכתבות לא תקין'), { status: 400 })
+  const response = await googleFetch(env, config, user.id, `https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(body.threadId)}/${trash ? 'trash' : 'modify'}`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(trash ? {} : { removeLabelIds: ['UNREAD'] }),
+  })
+  if (!response.ok) throw Object.assign(new Error(trash ? 'העברת המייל לאשפה נכשלה' : 'סנכרון סטטוס הקריאה עם Gmail נכשל'), { status: response.status })
+  await env.CONFIG.put(`google-read-epoch:${user.id}`, crypto.randomUUID())
+  // The mutation has succeeded. A subsequent counter failure must not imply it failed.
+  const unreadCount = await inboxUnread(env, config, user.id).catch(() => null)
+  return apiJson(request, { ok: true, unreadCount })
+}
+
 async function handleGmailImages(request, env, config) {
   const user = await requireGoogleAreaAction(request, env, config, 'communication', 'view')
   const id = new URL(request.url).searchParams.get('messageId') || ''
@@ -504,6 +530,120 @@ async function handleGmailLinks(request, env, config) {
     await env.CONFIG.put(key, JSON.stringify(links))
   }
   return apiJson(request, { links })
+}
+
+// Project references are private to the authenticated mailbox, like existing task links.
+async function mailProjectContext(request, env, config, user, body) {
+  if (!body.projectId || !body.orgId) throw Object.assign(new Error('יש לבחור פרויקט'), { status: 400 })
+  await requireAreaAction(request, env, config, 'projects', 'view')
+  const response = await fetch(`${config.supabaseUrl.replace(/\/$/, '')}/rest/v1/rpc/get_workspace_state`, {
+    method: 'POST', headers: { authorization: request.headers.get('authorization'), apikey: config.supabaseAnonKey, 'content-type': 'application/json' },
+    body: JSON.stringify({ target_org: body.orgId }),
+  })
+  if (!response.ok) throw Object.assign(new Error('לא ניתן לאמת את הפרויקט'), { status: 403 })
+  const rows = await response.json(); const workspace = (Array.isArray(rows) ? rows[0] : rows)?.data
+  if (!workspace?.projects?.some(project => project.id === body.projectId)) throw Object.assign(new Error('הפרויקט אינו זמין בחשבון שלך'), { status: 403 })
+  if (body.taskId && !workspace.tasks?.some(task => task.id === body.taskId && task.projectId === body.projectId)) throw Object.assign(new Error('המשימה אינה שייכת לפרויקט או אינה זמינה'), { status: 400 })
+  const categoryIds = [...new Set(Array.isArray(body.categoryIds) ? body.categoryIds : [])]
+  const project = workspace.projects.find(project => project.id === body.projectId)
+  if (categoryIds.some(id => !project.categoryIds?.includes(id) || !workspace.categories?.some(category => category.id === id))) throw Object.assign(new Error('מקצוע אינו משויך לפרויקט'), { status: 400 })
+  const tokens = await googleTokens(env, user.id)
+  return { categoryIds, orgId: body.orgId, projectId: body.projectId, taskId: body.taskId || null, contactId: null, mailbox: tokens?.email || '', updatedAt: new Date().toISOString() }
+}
+
+async function handleProjectMailLinks(request, env, config) {
+  const user = await requireGoogleAreaAction(request, env, config, 'communication', request.method === 'GET' ? 'view' : request.method === 'DELETE' ? 'delete' : 'edit')
+  const prefix = `gmail-project-mail:${user.id}:`
+  if (request.method === 'GET') {
+    await requireAreaAction(request, env, config, 'projects', 'view')
+    const tokens = await googleTokens(env, user.id)
+    let cursor; const links = []
+    do {
+      const page = await env.CONFIG.list({ prefix, cursor })
+      const records = await Promise.all(page.keys.map(key => env.CONFIG.get(key.name, 'json')))
+      links.push(...records.filter(record => record && record.mailbox === (tokens?.email || '')))
+      cursor = page.list_complete ? undefined : page.cursor
+    } while (cursor)
+    return apiJson(request, { links })
+  }
+  const body = await parseBody(request)
+  if (!/^[a-zA-Z0-9_-]{1,160}$/.test(body.threadId || '')) throw Object.assign(new Error('מזהה התכתבות לא תקין'), { status: 400 })
+  const context = await mailProjectContext(request, env, config, user, body)
+  const key = prefix + body.threadId
+  if (request.method === 'DELETE') {
+    const previous = await env.CONFIG.get(key, 'json')
+    if (previous && (previous.orgId !== context.orgId || previous.projectId !== context.projectId)) throw Object.assign(new Error('שיוך הפרויקט השתנה. רעננו ונסו שוב.'), { status: 409 })
+    await env.CONFIG.delete(key)
+    return apiJson(request, { ok: true })
+  }
+  const response = await googleFetch(env, config, user.id, `https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(body.threadId)}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Date`)
+  if (!response.ok) throw Object.assign(new Error('ההתכתבות אינה זמינה בחשבון Google שלך'), { status: response.status })
+  const last = (await response.json()).messages?.at(-1) || {}
+  const link = { ...context, threadId: body.threadId, ...normalizeGmailMessage(last), id: undefined, body: undefined, htmlBody: undefined }
+  // normalizeGmailMessage may omit threadId in provider metadata; use the verified request ID.
+  link.threadId = body.threadId
+  await env.CONFIG.put(key, JSON.stringify(link))
+  return apiJson(request, { link })
+}
+
+async function handleGmailInbox(request, env, config) {
+  const user = await requireGoogleAreaAction(request, env, config, 'communication', 'view')
+  const url = new URL(request.url)
+  const api = new URL('https://gmail.googleapis.com/gmail/v1/users/me/messages')
+  api.searchParams.set('labelIds', 'INBOX'); api.searchParams.set('maxResults', '20')
+  if (url.searchParams.get('pageToken')) api.searchParams.set('pageToken', url.searchParams.get('pageToken'))
+  const response = await googleFetch(env, config, user.id, api.toString()); const body = await response.json()
+  if (!response.ok) throw Object.assign(new Error(localizedExternalError(body.error?.message, 'טעינת תיבת הדואר נכשלה')), { status: response.status })
+  const messages = await Promise.all((body.messages || []).map(async message => {
+    const detail = await googleFetch(env, config, user.id, `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(message.id)}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Date`)
+    if (!detail.ok) throw Object.assign(new Error('טעינת הודעה נכשלה. נסו לרענן.'), { status: detail.status })
+    return normalizeGmailMessage(await detail.json())
+  }))
+  return apiJson(request, { messages, nextPageToken: body.nextPageToken || '', unreadCount: await inboxUnread(env, config, user.id) })
+}
+
+async function handleTaskNotifications(request, env, config) {
+  const user = await requireAreaAction(request, env, config, 'tasks', 'edit')
+  await requireAreaAction(request, env, config, 'communication', 'create')
+  const { orgId, notificationId } = await parseBody(request)
+  if (!orgId) throw Object.assign(new Error('חסר ארגון'), { status: 400 })
+  const admin = supabaseAdmin(env, config)
+  const membership = await admin.from('memberships').select('role').eq('org_id', orgId).eq('user_id', user.id).maybeSingle()
+  if (!membership.data || membership.error || membership.data.role === 'external') throw Object.assign(new Error('אין גישה לארגון'), { status: 403 })
+  if (notificationId) {
+    // Retry only a confirmed provider rejection, never an ambiguous send.
+    await admin.from('task_notifications').update({ state: 'pending', error: null }).eq('id', notificationId).eq('org_id', orgId).eq('assigned_by', user.id).eq('state', 'failed')
+  }
+  const pending = await admin.from('task_notifications').select('*').eq('org_id', orgId).eq('assigned_by', user.id).eq('state', 'pending').order('created_at').limit(20)
+  if (pending.error) throw Object.assign(new Error('טעינת התראות המשימות נכשלה'), { status: 502 })
+  let sent = 0; let failed = 0
+  for (const notification of pending.data || []) {
+    const workspace = await admin.from('workspace_state').select('data').eq('org_id', orgId).single()
+    const task = workspace.data?.data?.tasks?.find(task => task.id === notification.task_id && task.assigneeId === notification.user_id && task.projectId === notification.project_id)
+    const recipient = await admin.from('memberships').select('role').eq('org_id', orgId).eq('user_id', notification.user_id).maybeSingle()
+    const grant = recipient.data?.role === 'external' ? await admin.from('project_collaborators').select('project_id').eq('org_id', orgId).eq('user_id', notification.user_id).eq('project_id', notification.project_id).maybeSingle() : null
+    if (!task || !recipient.data || (grant && !grant.data)) { await admin.from('task_notifications').update({ state: 'cancelled' }).eq('id', notification.id).eq('state', 'pending'); continue }
+    const claimed = await admin.from('task_notifications').update({ state: 'sending' }).eq('id', notification.id).eq('state', 'pending').select('id')
+    if (claimed.error || !claimed.data?.length) continue
+    let attempted = false
+    try {
+      const link = `${PRODUCTION_APP_URL}/#app?page=tasks&task=${encodeURIComponent(task.id)}`
+      const body = `הוקצתה לך משימה: ${task.title}\nסטטוס: ${task.status}\nתאריך יעד: ${task.dueDate || 'לא נקבע'}\nלצפייה ועדכון במערכת: ${link}`
+      const payload = await buildGmailMessage({ to: notification.email, subject: `משימה לטיפול: ${task.title}`, body }, env, config, user.id)
+      // Check connection before the write; connection failures are safely retryable.
+      await validGoogleAccessToken(env, config, user.id)
+      attempted = true
+      const response = await googleFetch(env, config, user.id, 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) })
+      if (!response.ok) { attempted = false; throw new Error('Google דחה את שליחת התראת המשימה') }
+      const saved = await admin.from('task_notifications').update({ state: 'sent', error: null }).eq('id', notification.id)
+      if (saved.error) throw new Error('המייל נשלח, אך אישור השליחה לא נשמר. אין לנסות לשלוח שוב.')
+      sent++
+    } catch (e) {
+      failed++
+      await admin.from('task_notifications').update({ state: attempted ? 'uncertain' : 'failed', error: String(e.message || 'שליחת ההתראה נכשלה').slice(0, 500) }).eq('id', notification.id)
+    }
+  }
+  return apiJson(request, { sent, failed })
 }
 
 async function handleGmailSearch(request, env, config) {
@@ -619,6 +759,7 @@ async function handleGmailSend(request, env, config) {
   const user = await requireGoogleAreaAction(request, env, config, 'communication', 'create')
   const body = await parseBody(request)
   if (body.ownerId && body.ownerId !== user.id) throw Object.assign(new Error('Mail owner changed; reopen the composer'), { status: 409 })
+  const projectContext = body.projectId ? await mailProjectContext(request, env, config, user, body) : null
   const payload = await buildGmailMessage(body, env, config, user.id)
   const saved = body.draftKey ? await readMailDraft(env, await draftKey(user.id, body.draftKey)) : null
   const gmailDraftId = cleanString(body.draftId) || saved?.draftId
@@ -627,8 +768,15 @@ async function handleGmailSend(request, env, config) {
   })
   const result = await response.json()
   if (!response.ok) throw Object.assign(new Error(localizedExternalError(result.error?.message, 'שליחת Gmail נכשלה')), { status: response.status })
+  let associationSaved = !projectContext
+  if (projectContext) {
+    try {
+      await env.CONFIG.put(`gmail-project-mail:${user.id}:${result.threadId}`, JSON.stringify({ ...projectContext, threadId: result.threadId, subject: cleanString(body.subject), from: projectContext.mailbox, to: cleanString(body.to), date: new Date().toISOString(), snippet: cleanString(body.body).slice(0, 250), incoming: false, unread: false }))
+      associationSaved = true
+    } catch { /* Return delivery success separately from reference persistence; never encourage resending. */ }
+  }
   if (body.draftKey) { const key = await draftKey(user.id, body.draftKey); rememberDraft(env, key, null); try { await env.CONFIG.put(`${key}:sent`, JSON.stringify({ at: new Date().toISOString() })) } catch { console.error('Sent message draft cleanup pending') } }
-  return apiJson(request, { id: result.id, threadId: result.threadId })
+  return apiJson(request, { id: result.id, threadId: result.threadId, associationSaved })
 }
 
 async function handleCalendarList(request, env, config) {
@@ -833,6 +981,80 @@ async function handleDriveFiles(request, env, config) {
   const body = await response.json()
   if (!response.ok) throw Object.assign(new Error(localizedExternalError(body.error?.message, 'טעינת הקבצים מ-Drive נכשלה')), { status: response.status })
   return apiJson(request, { files: body.files || [], nextPageToken: body.nextPageToken || '', completeAccess: Boolean((await googleTokens(env, user.id))?.scope?.split(' ').some((scope) => ['https://www.googleapis.com/auth/drive.metadata.readonly', 'https://www.googleapis.com/auth/drive.readonly', 'https://www.googleapis.com/auth/drive'].includes(scope))) })
+}
+
+async function projectDriveContent(request, env, config, user, projectId, fileId) {
+  const folder = await env.CONFIG.get(`drive-project-folder:${user.id}:${projectId}`, 'json')
+  if (!folder?.id) throw Object.assign(new Error('אין תיקיית Drive מחוברת לפרויקט'), { status: 404 })
+  // Google verifies ownership/access; ancestry restricts operations to this project.
+  let frontier = [fileId]; const seen = new Set()
+  for (let depth = 0; depth < 30 && frontier.length; depth++) {
+    const next = []
+    for (const id of frontier) {
+      if (id === folder.id) return folder
+      if (seen.has(id)) continue
+      seen.add(id)
+      const response = await googleFetch(env, { ...config, dailyGoogleRead: false }, user.id, `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?fields=id,parents,trashed&supportsAllDrives=true`)
+      if (!response.ok) throw Object.assign(new Error('הקובץ אינו זמין בחשבון שלך'), { status: 403 })
+      const file = await response.json()
+      if (!file.trashed) next.push(...(file.parents || []))
+    }
+    frontier = next
+  }
+  throw Object.assign(new Error('הקובץ אינו בתוך תיקיית הפרויקט'), { status: 403 })
+}
+
+async function handleDriveSharing(request, env, config) {
+  const user = await requireGoogleAreaAction(request, env, config, 'files', request.method === 'GET' ? 'view' : 'edit')
+  const url = new URL(request.url)
+  const body = request.method === 'GET' ? Object.fromEntries(url.searchParams) : await parseBody(request)
+  if (!/^[a-zA-Z0-9_-]{1,200}$/.test(body.fileId || '') || !body.projectId) throw Object.assign(new Error('מזהה קובץ לא תקין'), { status: 400 })
+  // Reuse the filtered workspace RPC to verify project scope before touching Drive.
+  await mailProjectContext(request, env, config, user, { orgId: body.orgId, projectId: body.projectId })
+  const folder = await projectDriveContent(request, env, config, user, body.projectId, body.fileId)
+  if (request.method !== 'GET' && (folder.readOnly || await env.CONFIG.get(`drive-protected-folder:${folder.id}`, 'json'))) throw Object.assign(new Error('התיקייה מוגנת משינויים. שיתוף זמין לתיקיות שאושרו לעריכה.'), { status: 403 })
+  const base = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(body.fileId)}/permissions`
+  let response
+  if (request.method === 'POST') {
+    if (!validEmail(body.email) || !['reader', 'commenter'].includes(body.role)) throw Object.assign(new Error('יש לבחור נמען והרשאת צפייה או תגובה'), { status: 400 })
+    response = await googleFetch(env, config, user.id, `${base}?supportsAllDrives=true&sendNotificationEmail=true&fields=id,type,emailAddress,role`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ type: 'user', emailAddress: body.email, role: body.role }) })
+  } else if (request.method === 'DELETE') {
+    const key = `drive-share:${user.id}:${body.fileId}:${body.permissionId}`
+    if (!await env.CONFIG.get(key, 'json')) throw Object.assign(new Error('אפשר לבטל כאן רק הרשאה שנוספה דרך המערכת'), { status: 403 })
+    response = await googleFetch(env, config, user.id, `${base}/${encodeURIComponent(body.permissionId)}?supportsAllDrives=true`, { method: 'DELETE' })
+    if (response.ok) await env.CONFIG.delete(key)
+  } else response = await googleFetch(env, { ...config, dailyGoogleRead: false }, user.id, `${base}?supportsAllDrives=true&fields=permissions(id,type,emailAddress,role,permissionDetails),nextPageToken`)
+  if (!response.ok) throw Object.assign(new Error('פעולת השיתוף נדחתה על ידי Google Drive. בדקו את הרשאות התיקייה.'), { status: response.status })
+  if (request.method === 'DELETE') return apiJson(request, { ok: true })
+  const result = await response.json()
+  if (request.method === 'POST') await env.CONFIG.put(`drive-share:${user.id}:${body.fileId}:${result.id}`, JSON.stringify({ projectId: body.projectId, at: new Date().toISOString() }))
+  if (request.method === 'GET') result.permissions = await Promise.all((result.permissions || []).map(async permission => ({ ...permission, canRevoke: Boolean(await env.CONFIG.get(`drive-share:${user.id}:${body.fileId}:${permission.id}`, 'json')) && !(permission.permissionDetails || []).some(detail => detail.inherited) })))
+  return apiJson(request, result)
+}
+
+async function handleDriveCategory(request, env, config) {
+  const user = await requireGoogleAreaAction(request, env, config, 'files', 'create')
+  const body = await parseBody(request)
+  await mailProjectContext(request, env, config, user, { ...body, categoryIds: [body.categoryId] })
+  const folder = await projectDriveContent(request, env, config, user, body.projectId, body.folderId)
+  if (folder.readOnly || await env.CONFIG.get(`drive-protected-folder:${folder.id}`, 'json')) throw Object.assign(new Error('התיקייה מוגנת משינויים'), { status: 403 })
+  const key = `drive-category:${user.id}:${body.projectId}:${body.categoryId}`
+  const existing = await env.CONFIG.get(key, 'json')
+  if (existing) {
+    try { await projectDriveContent(request, env, config, user, body.projectId, existing.id); return apiJson(request, existing) } catch { /* Folder was moved/deleted or the project was reconnected. */ }
+  }
+  // Recover a previous successful creation even if storing its reference failed.
+  const query = `'${escapeDriveQuery(folder.id)}' in parents and trashed=false and mimeType='application/vnd.google-apps.folder' and appProperties has { key='ramCategory' and value='${escapeDriveQuery(body.categoryId)}' }`
+  const listed = await googleFetch(env, config, user.id, `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,webViewLink)&supportsAllDrives=true&includeItemsFromAllDrives=true`)
+  if (!listed.ok) throw Object.assign(new Error('בדיקת תיקיית המקצוע נכשלה'), { status: 502 })
+  let result = (await listed.json()).files?.[0]
+  if (!result) {
+    const response = await googleFetch(env, config, user.id, 'https://www.googleapis.com/drive/v3/files?fields=id,name,webViewLink&supportsAllDrives=true', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: cleanString(body.name), mimeType: 'application/vnd.google-apps.folder', parents: [folder.id], appProperties: { ramCategory: body.categoryId } }) })
+    if (!response.ok) throw Object.assign(new Error('יצירת תיקיית מקצוע נכשלה'), { status: response.status })
+    result = await response.json()
+  }
+  await env.CONFIG.put(key, JSON.stringify(result)); await env.CONFIG.put(`google-read-epoch:${user.id}`, crypto.randomUUID())
+  return apiJson(request, result)
 }
 
 async function handleDriveFolders(request, env, config) {
@@ -1057,7 +1279,7 @@ async function handleUserInvite(request, env, config) {
   const name = cleanString(body.name)
   const requestedRole = cleanString(body.role) || 'viewer'
   if (!orgId || !email || !email.includes('@')) throw Object.assign(new Error('יש להזין מייל תקין'), { status: 400 })
-  if (!['admin', 'assistant', 'inspector', 'engineer', 'viewer', 'reviewer'].includes(requestedRole)) throw Object.assign(new Error('תפקיד לא תקין'), { status: 400 })
+  if (!['admin', 'assistant', 'inspector', 'engineer', 'viewer', 'reviewer', 'external'].includes(requestedRole)) throw Object.assign(new Error('תפקיד לא תקין'), { status: 400 })
 
   await requireOrgManager(request, env, config, orgId)
   const admin = supabaseAdmin(env, config)
@@ -1081,6 +1303,9 @@ async function handleUserInvite(request, env, config) {
     if (!update.error && update.data.user) targetUser = update.data.user
   }
 
+  const prior = await admin.from('memberships').select('role').eq('org_id', orgId).eq('user_id', targetUser.id).maybeSingle()
+  if (prior.error) throw Object.assign(new Error('לא ניתן לאמת חברות קיימת'), { status: 502 })
+  if (requestedRole === 'external' && prior.data && prior.data.role !== 'external') throw Object.assign(new Error('למשתמש קיים תפקיד פנימי. אין לשנות אותו באמצעות הזמנה חיצונית.'), { status: 409 })
   const role = developerEmails(config).includes(email) ? 'developer' : requestedRole
   const membership = await admin.from('memberships').upsert({ org_id: orgId, user_id: targetUser.id, role }, { onConflict: 'org_id,user_id' })
   if (membership.error) throw Object.assign(new Error('לא ניתן לשייך את המשתמש לארגון'), { status: 502 })
@@ -1249,6 +1474,11 @@ async function routeApi(request, env) {
   if (path === '/api/google/auth-url' && request.method === 'GET') return handleGoogleAuthUrl(request, env, config)
   if (path === '/api/profile/signature' && ['GET', 'PUT'].includes(request.method)) return handleMailSignature(request, env, config)
   if (path === '/api/google/gmail/images' && request.method === 'GET') return handleGmailImages(request, env, config)
+  if (path === '/api/google/gmail/inbox' && request.method === 'GET') return handleGmailInbox(request, env, config)
+  if (path === '/api/task-notifications/send' && request.method === 'POST') return handleTaskNotifications(request, env, config)
+  if (path === '/api/google/gmail/unread' && request.method === 'GET') return handleGmailState(request, env, config)
+  if (['/api/google/gmail/read', '/api/google/gmail/trash'].includes(path) && request.method === 'POST') return handleGmailState(request, env, config)
+  if (path === '/api/google/gmail/project-links' && ['GET', 'PUT', 'DELETE'].includes(request.method)) return handleProjectMailLinks(request, env, config)
   if (path === '/api/google/gmail/thread' && request.method === 'GET') return handleGmailThread(request, env, config)
   if (path === '/api/google/gmail/links' && ['GET', 'PUT', 'DELETE'].includes(request.method)) return handleGmailLinks(request, env, config)
   if (path === '/api/google/gmail/search' && request.method === 'GET') return handleGmailSearch(request, env, config)
@@ -1272,6 +1502,8 @@ async function routeApi(request, env) {
   if (path === '/api/google/drive/project-folder' && ['GET', 'DELETE'].includes(request.method)) return handleDriveProjectFolderRead(request, env, config)
   if (path === '/api/google/drive/project-folder' && request.method === 'POST') return handleDriveProjectFolder(request, env, config)
   if (path === '/api/google/drive/files' && request.method === 'GET') return handleDriveFiles(request, env, config)
+  if (path === '/api/google/drive/sharing' && ['GET','POST','DELETE'].includes(request.method)) return handleDriveSharing(request, env, config)
+  if (path === '/api/google/drive/category' && request.method === 'POST') return handleDriveCategory(request, env, config)
   if (path === '/api/google/drive/folders' && request.method === 'GET') return handleDriveFolders(request, env, config)
   if (path === '/api/google/drive/picker' && request.method === 'GET') return handleDrivePicker(request, env, config)
   if (path === '/api/google/drive/settings' && ['GET', 'PUT'].includes(request.method)) return handleDriveSettings(request, env, config)

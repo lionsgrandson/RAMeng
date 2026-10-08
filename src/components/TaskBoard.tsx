@@ -1,11 +1,15 @@
+import { TaskDeliveryStatus } from './TaskNotifications'
+import { CategoryManager, CategoryPicker } from './Categories'
+import MeetingSummaries from './MeetingSummaries'
 import DeleteButton from './RecordDelete'
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { Fragment, useEffect, useMemo, useState, type FormEvent } from 'react'
 import { ChevronDown, ChevronUp, Columns3, Mail, Plus, Settings2, Trash2 } from 'lucide-react'
 import type { ChecklistTemplateItem, Priority, Task, TaskColumn, TaskColumnType, Workspace } from '../types'
 import type { AreaPermissions } from '../lib/permissions'
 import { Chip, Field, Modal, confirmDelete, dateInput, nowIso, uid } from './common'
 
 type Props = {
+  orgId?: string
   workspace: Workspace
   setWorkspace: React.Dispatch<React.SetStateAction<Workspace>>
   projectId?: string
@@ -15,6 +19,7 @@ type Props = {
   focusTaskId?: string | null
   attentionOnly?: boolean
   onClearAttention?: () => void
+  canEditProject?: boolean
   startCreating?: boolean
   onProject?: (id: string) => void
 }
@@ -40,12 +45,16 @@ const fieldValue = (task: Task, column: TaskColumn) => {
   return String((task as unknown as Record<string, unknown>)[column.key] ?? '')
 }
 
-export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail, onProject, canEdit = true, permissions, focusTaskId, attentionOnly = false, onClearAttention, startCreating = false }: Props) {
+export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail, onProject, canEdit = true, permissions, focusTaskId, attentionOnly = false, onClearAttention, startCreating = false, orgId = 'local', canEditProject = false }: Props) {
   const taskPermissions: AreaPermissions = permissions || { view: true, create: canEdit, edit: canEdit, status: canEdit, delete: canEdit }
   const canCreate = taskPermissions.create
   const canUpdate = taskPermissions.edit
   const canStatus = taskPermissions.status || taskPermissions.edit
   const canDelete = taskPermissions.delete
+  const [categoryFilter, setCategoryFilter] = useState('')
+  const [groupBy, setGroupBy] = useState<'none' | 'assignee' | 'project'>('none')
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [newCategories, setNewCategories] = useState<string[]>([])
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('הכל')
   const [projectFilter, setProjectFilter] = useState('הכל')
@@ -116,6 +125,7 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
 
   const filteredTasks = workspace.tasks.filter((task) => {
     if (projectId && task.projectId !== projectId) return false
+    if (categoryFilter && !task.categoryIds?.includes(categoryFilter)) return false
     if (!projectId && addressFilter.trim()) {
       const projectAddress = workspace.projects.find((project) => project.id === task.projectId)?.address || ''
       if (!projectAddress.toLowerCase().includes(addressFilter.trim().toLowerCase())) return false
@@ -175,8 +185,9 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
       }
     }
     walk('root', 0)
+    if (groupBy !== 'none') result.sort((a, b) => (groupBy === 'assignee' ? a.task.assigneeId || '' : a.task.projectId || '').localeCompare(groupBy === 'assignee' ? b.task.assigneeId || '' : b.task.projectId || ''))
     return result
-  }, [filteredTasks, search, statusFilter, workspace.projects, workspace.team])
+  }, [groupBy, filteredTasks, search, statusFilter, workspace.projects, workspace.team])
 
   useEffect(() => {
     if (!focusTaskId) return
@@ -185,6 +196,7 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
     setSearch('')
     setStatusFilter('הכל')
     setAssigneeFilter('הכל')
+    setCategoryFilter('')
     setColorFilter('הכל')
     setPriorityFilter('הכל')
     setClientFilter('הכל')
@@ -239,7 +251,7 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
         }
       })
     }
-    return { ...current, tasks: current.tasks.map((task) => affected.has(task.id) ? { ...task, projectId: nextProjectId } : task) }
+    return { ...current, tasks: current.tasks.map((task) => affected.has(task.id) ? { ...task, projectId: nextProjectId, categoryIds: task.categoryIds?.filter(id => current.projects.find(project => project.id === nextProjectId)?.categoryIds?.includes(id)) } : task) }
   })
 
   const submitTask = (event: FormEvent<HTMLFormElement>) => {
@@ -254,6 +266,7 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
       id: uid('task'),
       projectId: chosenProjectId,
       parentId,
+      categoryIds: newCategories.filter(id => workspace.projects.find(project => project.id === chosenProjectId)?.categoryIds?.includes(id)),
       title: String(data.get('title') || '').trim(),
       description: String(data.get('description') || '').trim() || undefined,
       assigneeId: String(data.get('assigneeId') || '') || undefined,
@@ -271,7 +284,7 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
     }
     if (!task.title) return
     setWorkspace((current) => ({ ...current, tasks: [...current.tasks, task] }))
-    setCreatingFor(null)
+    setCreatingFor(null); setNewCategories([])
     setView(isCompleted(task) ? 'archive' : 'active')
   }
 
@@ -359,7 +372,13 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
 
     {(canUpdate || canCreate) && <div className="task-edit-banner"><div className="task-edit-banner-copy"><span className="task-edit-icon"><Settings2 /></span><div><strong>עריכת משימות</strong><span>{canUpdate ? 'אפשר ללחוץ ולערוך ישירות שם, סטטוס, אחראי, תאריכים ושאר השדות בטבלה.' : 'ניתן ליצור משימות חדשות.'}</span></div></div>{canCreate && <button type="button" className="primary board-create-button prominent" onClick={() => setCreatingFor({})}><Plus /> משימה חדשה</button>}</div>}
 
+    {canUpdate && <TaskDeliveryStatus orgId={orgId} />}
+    <div className="toolbar task-overview-counts">{(() => { const all = workspace.tasks.filter(task => !projectId || task.projectId === projectId); const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jerusalem', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()); return <><span>סה״כ: {all.length}</span><span>פתוחות: {all.filter(task => !isCompleted(task)).length}</span><span>בטיפול: {all.filter(task => task.status === 'בטיפול').length}</span><span>הושלמו: {all.filter(isCompleted).length}</span><span>באיחור: {all.filter(task => !isCompleted(task) && task.dueDate && task.dueDate < today).length}</span></> })()}</div>
+    {canUpdate && <CategoryManager workspace={workspace} setWorkspace={setWorkspace} projectId={projectId && canEditProject ? projectId : undefined} canEdit={canUpdate} canDelete={canDelete} />}
+    {projectId && <MeetingSummaries workspace={workspace} setWorkspace={setWorkspace} projectId={projectId} selectedTaskIds={selectedIds.filter(id => rows.some(row => row.task.id === id))} canEdit={canCreate && canUpdate} canDelete={canDelete} />}
     <div className="toolbar board-toolbar">
+      <label className="task-filter-field"><span>מקצוע</span><select aria-label="סינון משימות לפי מקצוע" value={categoryFilter} onChange={event => setCategoryFilter(event.target.value)}><option value="">כל המקצועות</option>{workspace.categories.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
+      <label className="task-filter-field"><span>קיבוץ</span><select aria-label="קיבוץ משימות" value={groupBy} onChange={event => setGroupBy(event.target.value as typeof groupBy)}><option value="none">ללא קיבוץ</option><option value="assignee">לפי אחראי</option><option value="project">לפי פרויקט</option></select></label>
       <label className="task-filter-field toolbar-grow"><span>חיפוש</span><input className="search-input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="משימה, פרויקט, כתובת, אחראי או מייל" aria-label="חיפוש משימות" /></label>
       {!projectId && <label className="task-filter-field address-task-filter"><span>כתובת</span><input value={addressFilter} onChange={(e) => setAddressFilter(e.target.value)} placeholder="רחוב, עיר או כתובת" aria-label="סינון משימות לפי כתובת פרויקט" /></label>}
       {!projectId && <label className="task-filter-field"><span>פרויקט</span><select aria-label="סינון לפי פרויקט" value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)}><option value="הכל">כל הפרויקטים</option><option value="__none__">ללא פרויקט</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.name} — {project.address || 'כתובת חסרה'}</option>)}</select></label>}
@@ -392,9 +411,11 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
 
     <div className="table-scroll task-table-wrap">
       <table className="data-table task-table">
-        <thead><tr><th className="complete-col">בוצע</th><th className="color-col">קטלוג</th>{!projectId && <th style={{ minWidth: 180 }}>פרויקט</th>}{visibleColumns.map((column) => <th key={column.id} style={{ minWidth: column.width }}>{column.label}</th>)}<th className="actions-col">פעולות</th></tr></thead>
+        <thead><tr>{projectId && <th><input type="checkbox" aria-label="בחירת כל המשימות המסוננות לסיכום" checked={rows.length > 0 && rows.every(row => selectedIds.includes(row.task.id))} onChange={event => setSelectedIds(event.target.checked ? rows.map(row => row.task.id) : [])} /></th>}<th>מקצועות</th><th className="complete-col">בוצע</th><th className="color-col">קטלוג</th>{!projectId && <th style={{ minWidth: 180 }}>פרויקט</th>}{visibleColumns.map((column) => <th key={column.id} style={{ minWidth: column.width }}>{column.label}</th>)}<th className="actions-col">פעולות</th></tr></thead>
         <tbody>
-          {rows.map(({ task, depth }) => <tr key={task.id} data-task-id={task.id} className={`${task.parentId ? 'subtask-row' : ''} ${isCompleted(task) ? 'completed-row' : ''} ${focusTaskId === task.id ? 'focused-task-row' : ''}`} style={{ borderInlineStartColor: task.colorTag ? taskColor(task.colorTag).hex : 'transparent' }}>
+          {rows.map(({ task, depth }, index) => <Fragment key={task.id}>{groupBy !== 'none' && (index === 0 || (groupBy === 'assignee' ? rows[index - 1].task.assigneeId !== task.assigneeId : rows[index - 1].task.projectId !== task.projectId)) && <tr className="task-group-row"><th colSpan={visibleColumns.length + (projectId ? 5 : 5)}>{groupBy === 'assignee' ? workspace.team.find(member => member.id === task.assigneeId)?.name || 'ללא אחראי' : workspace.projects.find(project => project.id === task.projectId)?.name || 'ללא פרויקט'} · {rows.filter(row => groupBy === 'assignee' ? row.task.assigneeId === task.assigneeId : row.task.projectId === task.projectId).length}</th></tr>}<tr key={task.id} data-task-id={task.id} className={`${task.parentId ? 'subtask-row' : ''} ${isCompleted(task) ? 'completed-row' : ''} ${focusTaskId === task.id ? 'focused-task-row' : ''}`} style={{ borderInlineStartColor: task.colorTag ? taskColor(task.colorTag).hex : 'transparent' }}>
+            {projectId && <td><input type="checkbox" aria-label={`בחירת ${task.title} לסיכום פגישה`} checked={selectedIds.includes(task.id)} onChange={event => setSelectedIds(current => event.target.checked ? [...current, task.id] : current.filter(id => id !== task.id))} /></td>}
+            <td><CategoryPicker workspace={workspace} projectId={task.projectId} value={task.categoryIds || []} disabled={!canUpdate || !task.projectId} onChange={categoryIds => updateTask(task.id, { categoryIds })} /></td>
             <td className="complete-cell"><input type="checkbox" aria-label={isCompleted(task) ? `שחזור ${task.title} לאזור הפעיל` : `סימון ${task.title} כבוצעה`} checked={isCompleted(task)} disabled={!canStatus} onChange={(e) => toggleTaskCompleted(task, e.target.checked)} /></td>
             <td className="color-cell"><label className="task-color-picker"><span className="color-dot" style={{ backgroundColor: taskColor(task.colorTag).hex }} /><select aria-label={`צבע קטלוג עבור ${task.title}`} disabled={!canUpdate} value={task.colorTag || ''} onChange={(e) => updateTask(task.id, { colorTag: e.target.value || undefined })}>{TASK_COLOR_OPTIONS.map((item) => <option key={item.id || 'none'} value={item.id}>{item.label}</option>)}</select></label></td>
             {!projectId && <td><div className="task-project-cell"><select className="cell-input" disabled={!canUpdate} aria-label={`פרויקט עבור ${task.title}`} value={task.projectId || ''} onChange={(e) => changeTaskProject(task.id, e.target.value || undefined)}><option value="">ללא פרויקט</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.name} — {project.address || 'כתובת חסרה'}</option>)}</select>{task.projectId && onProject && <button type="button" className="text-button" onClick={() => onProject(task.projectId!)}>פתיחה</button>}</div></td>}
@@ -408,8 +429,8 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
                 : <input className="cell-input" disabled={!canUpdate} aria-label={`${column.label} עבור ${task.title}`} value={fieldValue(task, column)} onChange={(e) => editCell(task, column, e.target.value)} />}
             </td>)}
             <td className="row-actions">{(canCreate || canDelete) && <div className="task-row-actions">{canCreate && <button type="button" className="secondary task-action-btn" onClick={() => setCreatingFor({ parentId: task.id })}><Plus /> תת-משימה</button>}{canDelete && <DeleteButton message={`למחוק את המשימה "${task.title}" וכל תתי-המשימות שלה?`} onConfirm={() => removeTask(task.id)} />}</div>}</td>
-          </tr>)}
-          {!rows.length && <tr><td colSpan={visibleColumns.length + (projectId ? 3 : 4)}><div className="table-empty">{view === 'archive' ? 'אין משימות שהושלמו.' : 'אין משימות פעילות שמתאימות לסינון.'}</div></td></tr>}
+          </tr></Fragment>)}
+          {!rows.length && <tr><td colSpan={visibleColumns.length + 5}><div className="table-empty">{view === 'archive' ? 'אין משימות שהושלמו.' : 'אין משימות פעילות שמתאימות לסינון.'}</div></td></tr>}
         </tbody>
       </table>
     </div>
@@ -427,6 +448,7 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
         <Field label="תאריך סיום"><input name="dueDate" type="date" /></Field>
         <Field label="מועד מעקב"><input name="followUpDate" type="date" /></Field>
         <Field label="מייל לקוח"><input name="emailTo" type="email" placeholder="name@example.com" /></Field>
+        <div className="field"><span>מקצועות</span><CategoryPicker workspace={workspace} projectId={projectId || selectedParent?.projectId} value={newCategories} onChange={setNewCategories} /></div>
         <Field label="תיאור"><textarea name="description" rows={4} /></Field>
         <div className="form-actions full"><button type="button" className="secondary" onClick={() => setCreatingFor(null)}>ביטול</button><button className="primary"><Plus /> יצירת {creatingFor.parentId ? 'תת-משימה' : 'משימה'}</button></div>
       </form>

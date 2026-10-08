@@ -1,6 +1,8 @@
 import type { Workspace } from './types'
 
 export const emptyWorkspace: Workspace = {
+  categories: [],
+  meetingSummaries: [],
   contacts: [],
   deals: [],
   projects: [],

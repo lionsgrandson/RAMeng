@@ -12,8 +12,13 @@ export function cleanMailHtml(html) {
 
 export function mailContent(html) {
   const inline = []
-  const cleaned = cleanMailHtml(html).replace(/src="data:(image\/(?:png|jpeg|gif|webp));base64,([A-Za-z0-9+/]+=*)"/gi, (_match, type, data) => {
+  const cleaned = cleanMailHtml(html).replace(/<img\b([^>]*)>/gi, (_match, attributes) => {
+    const width = Math.min(600, Math.max(40, Number(attributes.match(/\bwidth="(\d+)"/i)?.[1] || attributes.match(/width:\s*(\d+)px/i)?.[1] || 180)))
+    const remaining = attributes.replace(/\s(?:width|height|style)="[^"]*"/gi, '')
+    return `<img${remaining} width="${width}" style="display:inline-block;vertical-align:middle;width:${width}px;max-width:100%;height:auto;border:0;margin:8px 0;" />`
+  }).replace(/src="data:(image\/(?:png|jpeg|gif|webp));base64,([A-Za-z0-9+/]+=*)"/gi, (_match, type, data) => {
     const id = `${crypto.randomUUID()}@rameng`; inline.push({ id, type, data }); return `src="cid:${id}"`
   })
-  return { html: cleaned, inline }
+  const rtl = /[\u0590-\u05ff]/.test(cleaned.replace(/<[^>]*>/g, ''))
+  return { html: cleaned ? `<div dir="${rtl ? 'rtl' : 'ltr'}" style="direction:${rtl ? 'rtl' : 'ltr'};text-align:${rtl ? 'right' : 'left'};font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.5;max-width:640px;width:100%;">${cleaned}</div>` : '', inline }
 }

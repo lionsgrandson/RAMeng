@@ -1,6 +1,6 @@
 # RAM Engineering CRM production setup
 
-> **Existing installations:** after updating to the usability/concurrency release, run the latest `supabase/setup.sql` once in the client's Supabase SQL Editor. The frontend includes a temporary legacy fallback so an existing CRM does not stop saving before this migration is applied, but optimistic concurrency checks and database-enforced granular workspace permissions become active only after the SQL update.
+> **Existing installations:** apply pending files in `supabase/migrations/` in timestamp order before releasing compatible code. Do not rerun the older `supabase/setup.sql` over a migrated installation: it can replace newer RPCs and role constraints.
 
 Use this checklist when the client sends access to the production accounts.
 
@@ -32,7 +32,7 @@ Open the client Supabase project, go to SQL Editor, and run the entire current f
 
 `supabase/setup.sql`
 
-It is written to be safe to run again when the schema is updated.
+For a fresh installation, follow the baseline with every file in `supabase/migrations/` in timestamp order. Existing installations use only pending migrations.
 
 This creates the organization membership model, roles, RLS rules, shared workspace state, Realtime publication, and the private `crm-files` Storage bucket.
 
@@ -121,4 +121,4 @@ npm run build
 deploy.cmd
 ```
 
-You normally do not need to rerun `supabase/setup.sql` unless the update includes a database/schema change. When it does, run the latest complete file before testing the new functionality.
+For database updates, back up the workspace and apply pending incremental migrations before testing the new functionality. Do not rerun the baseline on an already migrated database.

@@ -10,7 +10,9 @@ after(() => server.close())
 const { normalizePermissions, workspaceMutationError } = await server.ssrLoadModule('/src/lib/permissions.ts')
 const { cloneWorkspace } = await server.ssrLoadModule('/src/seed.ts')
 const backend = await server.ssrLoadModule('/src/lib/backend.ts')
-const { readImportRows } = await server.ssrLoadModule('/src/lib/imports.ts')
+const { readImportRows, mapContactImportRows, appendUniqueContacts } = await server.ssrLoadModule('/src/lib/imports.ts')
+const { normalizeContactCategories } = await server.ssrLoadModule('/src/lib/contactCategories.ts')
+const { mailContent } = await import('../worker/src/mailHtml.js')
 const options = { canManageUsers: false, isDeveloper: false }
 const { deleteProject, deleteContact } = await server.ssrLoadModule('/src/lib/records.ts')
 
@@ -85,6 +87,54 @@ test('contact deletion preserves projects and financial records without dangling
   assert.equal(next.quotes[0].contactId, undefined)
   assert.equal(next.deals[0].contactId, undefined)
   assert.deepEqual(next.clientNotes, [])
+})
+
+test('contact exports detect row-three headers, preserve extra columns and ignore date footers', async () => {
+  const XLSX = await import('@e965/xlsx')
+  const book = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([
+    ['לקוחות'], ['עורכי דין קיימים'],
+    ['Name', 'קשר', 'שם חברה', 'Phone', 'מייל', 'שם פרויקט', 'שם יזם', 'מייל'],
+    ['עו״ד בדיקה', 'other@example.test', 'משרד', 505582838, 'test@example.test\u200f', 'פרויקט א', 'יזם', 'פעילות מייל'],
+    ['שם בלבד'], ['2025-03-25'],
+  ]), 'לקוחות')
+  const rows = await readImportRows(XLSX.write(book, { type: 'array', bookType: 'xlsx' }), false, 'contacts')
+  const contacts = mapContactImportRows(rows)
+  assert.equal(contacts.length, 2)
+  assert.equal(contacts[0].phone, '0505582838')
+  assert.equal(contacts[0].email, 'test@example.test')
+  assert.equal(contacts[0].role, 'עורך דין')
+  assert.equal(contacts[0].additionalContact, 'other@example.test')
+  assert.equal(contacts[0].projectReferences, 'פרויקט א')
+  assert.equal(contacts[0].developer, 'יזם')
+  assert.equal(contacts[0].importDetails['מייל_1'], 'פעילות מייל')
+  assert.deepEqual(contacts[0].tags, ['עורכי דין'])
+})
+
+test('general contacts keep separate phone/mobile and all populated export fields', async () => {
+  const csv = 'אנשי קשר\nאנשי קשר\nName,תפקיד,סוג חברה,חברה,טלפון,נייד,מייל,הערות,כתובת,לקוחות חברות,ניהול תיקי פרויקט\nבדיקה,מנהלת,יזם,חברה,36022210,522336110,mail@example.test,הערה,כתובת,חברה מקושרת,פרויקט נוסף'
+  const [contact] = mapContactImportRows(await readImportRows(new TextEncoder().encode(csv).buffer, true, 'contacts'))
+  assert.equal(contact.phone, '036022210')
+  assert.equal(contact.mobile, '0522336110')
+  assert.equal(contact.role, 'מנהלת')
+  assert.equal(contact.companyType, 'יזם')
+  assert.equal(contact.notes, 'הערה')
+  assert.equal(contact.address, 'כתובת')
+  assert.equal(contact.importDetails['לקוחות חברות'], 'חברה מקושרת')
+  assert.equal(contact.importDetails['ניהול תיקי פרויקט'], 'פרויקט נוסף')
+  assert.equal(mapContactImportRows([{ name: 'International', phone: '+44 123456789' }])[0].phone, '+44 123456789')
+  await assert.rejects(readImportRows(new TextEncoder().encode('חברה,טלפון\nבדיקה,123').buffer, true, 'contacts'), /כותרות/)
+})
+
+test('reimport skips exact contact identities but keeps different people at a shared email', () => {
+  const contact = { id: 'existing', name: 'אדם', company: 'משרד', email: 'shared@example.test', status: 'פעיל', tags: [], createdAt: '2026-01-01' }
+  const other = { ...contact, id: 'other', name: 'אדם אחר' }
+  const result = appendUniqueContacts([contact], [{ ...contact, id: 'new' }, other, { ...other, id: 'duplicate' }])
+  assert.equal(result.added, 1)
+  assert.equal(result.skipped, 2)
+  assert.equal(result.contacts[0].id, 'existing')
+  assert.equal(result.contacts[1].name, 'אדם אחר')
+  assert.equal(appendUniqueContacts([contact], [{ ...contact, notes: 'פרטים נוספים' }]).added, 1)
 })
 
 test('UTF-8 Hebrew CSV without a BOM imports and normalizes Israeli dates', async () => {
@@ -277,6 +327,105 @@ function googleFixture(t, handler, role = 'admin') {
   t.mock.method(console, 'error', () => undefined)
   return { privateEnv, kv }
 }
+
+test('category normalization preserves sources, resolves equivalent roles and is idempotent', () => {
+  const original = { role: '', companyType: 'יועצים', tags: [' יועצים ', 'יועצים', 'לקוחות', 'לקוחות'], importDetails: { source: 'Excel' } }
+  const normalized = normalizeContactCategories(original)
+  assert.equal(normalized.role, 'יועץ'); assert.equal(normalized.companyType, '')
+  assert.deepEqual(normalized.tags, ['לקוחות'])
+  assert.deepEqual(JSON.parse(normalized.importDetails['סיווג מקורי לפני נרמול']), { role: '', companyType: 'יועצים', tags: original.tags })
+  assert.deepEqual(normalizeContactCategories(normalized), normalized)
+  assert.deepEqual(normalizeContactCategories({ role: 'מנהל', tags: ['יזמים'], companyType: '' }).tags, ['יזמים'])
+})
+
+function projectMailFixture(t, googleHandler, role = 'admin', failReference = false) {
+  const kv = new Map([['rameng:admin-config:v1', config], ['rameng:google-tokens:v2:qa', { access_token: 'qa-google-token', email: 'qa@example.test', expires_at: Date.now() + 3600000 }]])
+  const privateEnv = { CONFIG: {
+    get: async key => kv.get(key) || null,
+    put: async (key, value) => { if (failReference && key.startsWith('gmail-project-mail:')) throw Error('KV unavailable'); kv.set(key, value.startsWith('{') ? JSON.parse(value) : value) },
+    delete: async key => kv.delete(key),
+    list: async ({ prefix }) => ({ keys: [...kv.keys()].filter(key => key.startsWith(prefix)).map(name => ({ name })), list_complete: true }),
+  } }
+  t.mock.method(globalThis, 'fetch', async (url, init = {}) => {
+    if (String(url).endsWith('/auth/v1/user')) return Response.json({ id: 'qa', email: 'qa@example.test' })
+    if (String(url).includes('/rest/v1/memberships')) return Response.json([{ role, permissions: null }])
+    if (String(url).endsWith('/rpc/get_workspace_state')) { assert.equal(init.headers.authorization, 'Bearer qa-token'); return Response.json([{ data: { projects: [{ id: 'project', categoryIds: ['architecture'] }], categories: [{ id: 'architecture', name: 'אדריכלות' }], tasks: [{ id: 'task', projectId: 'project' }, { id: 'other-task', projectId: 'other' }] } }]) }
+    assert.equal(init.headers.authorization, 'Bearer qa-google-token')
+    return googleHandler(new URL(url), init)
+  })
+  t.mock.method(console, 'error', () => undefined)
+  return { privateEnv, kv }
+}
+
+const projectLinkRequest = (body, method = 'PUT') => new Request('https://qa.example.test/api/google/gmail/project-links', { method, headers: { authorization: 'Bearer qa-token', 'content-type': 'application/json' }, body: JSON.stringify(body) })
+
+test('Inbox lists actual incoming messages with recipient, unread state and pagination', async t => {
+  const { privateEnv } = projectMailFixture(t, async url => {
+    if (url.pathname.endsWith('/messages')) { assert.equal(url.searchParams.get('labelIds'), 'INBOX'); assert.equal(url.searchParams.get('pageToken'), 'next'); return Response.json({ messages: [{ id: 'incoming', threadId: 'thread' }], nextPageToken: 'more' }) }
+    return Response.json({ id: 'incoming', threadId: 'thread', labelIds: ['INBOX', 'UNREAD'], internalDate: '1791277200000', payload: { headers: [{ name: 'From', value: 'contractor@example.test' }, { name: 'To', value: 'qa@example.test' }, { name: 'Subject', value: 'שלום' }] }, snippet: 'Preview' })
+  })
+  const result = await worker.fetch(request('/api/google/gmail/inbox?pageToken=next'), privateEnv)
+  assert.equal(result.status, 200); const body = await result.json()
+  assert.equal(body.nextPageToken, 'more'); assert.equal(body.messages[0].unread, true); assert.equal(body.messages[0].incoming, true)
+  assert.equal(body.messages[0].to, 'qa@example.test'); assert.equal(body.messages[0].subject, 'שלום'); assert.ok(body.messages[0].date)
+})
+
+test('incoming thread can link to project without task or contact, then optional project task', async t => {
+  const { privateEnv, kv } = projectMailFixture(t, async url => { assert.match(url.pathname, /threads\/thread$/); return Response.json({ messages: [{ threadId: 'thread', payload: { headers: [{ name: 'Subject', value: 'Incoming' }] } }] }) })
+  const body = { orgId: 'org', projectId: 'project', threadId: 'thread' }
+  assert.equal((await worker.fetch(projectLinkRequest(body), privateEnv)).status, 200)
+  assert.equal(kv.get('gmail-project-mail:qa:thread').taskId, null); assert.equal(kv.get('gmail-project-mail:qa:thread').contactId, null)
+  assert.equal((await worker.fetch(projectLinkRequest({ ...body, taskId: 'task' }), privateEnv)).status, 200)
+  assert.equal(kv.get('gmail-project-mail:qa:thread').taskId, 'task')
+  const links = await (await worker.fetch(request('/api/google/gmail/project-links'), privateEnv)).json()
+  assert.equal(links.links.length, 1)
+  assert.equal((await worker.fetch(projectLinkRequest(body, 'DELETE'), privateEnv)).status, 200)
+  assert.equal(kv.has('gmail-project-mail:qa:thread'), false)
+})
+
+test('project links reject invalid project/task and readonly writes before Google access', async t => {
+  const { privateEnv } = projectMailFixture(t, async () => { throw Error('Google must not be called') })
+  assert.equal((await worker.fetch(projectLinkRequest({ orgId: 'org', projectId: 'missing', threadId: 'thread' }), privateEnv)).status, 403)
+  assert.equal((await worker.fetch(projectLinkRequest({ orgId: 'org', projectId: 'project', taskId: 'other-task', threadId: 'thread' }), privateEnv)).status, 400)
+})
+
+test('sending to an unknown recipient saves project history independently of contacts or edit grants', async t => {
+  const { privateEnv, kv } = projectMailFixture(t, async (url, init) => {
+    assert.match(url.pathname, /messages\/send$/)
+    const raw = Buffer.from(JSON.parse(init.body).raw, 'base64url').toString('utf8')
+    assert.match(raw, /To: unknown@example.test/)
+    return Response.json({ id: 'sent', threadId: 'thread' })
+  })
+  const result = await worker.fetch(request('/api/google/gmail/send', { orgId: 'org', projectId: 'project', categoryIds: ['architecture'], to: 'unknown@example.test', subject: 'Project', body: 'Hello' }), privateEnv)
+  assert.equal(result.status, 200); assert.equal((await result.json()).associationSaved, true)
+  const link = kv.get('gmail-project-mail:qa:thread'); assert.equal(link.projectId, 'project'); assert.equal(link.contactId, null); assert.equal(link.taskId, null); assert.equal(link.incoming, false); assert.deepEqual(link.categoryIds, ['architecture'])
+})
+
+test('provider send failures never save project success; reference failures preserve delivery success', async t => {
+  const body = { orgId: 'org', projectId: 'project', to: 'unknown@example.test', subject: 'Project', body: 'Hello' }
+  const first = projectMailFixture(t, async () => Response.json({ error: { message: 'Provider unavailable' } }, { status: 503 }))
+  const failed = await worker.fetch(request('/api/google/gmail/send', body), first.privateEnv)
+  assert.equal(failed.status, 503); assert.ok((await failed.json()).error); assert.equal(first.kv.has('gmail-project-mail:qa:thread'), false)
+  const second = projectMailFixture(t, async () => Response.json({ id: 'sent', threadId: 'thread' }), 'admin', true)
+  const delivered = await worker.fetch(request('/api/google/gmail/send', body), second.privateEnv)
+  assert.equal(delivered.status, 200); assert.equal((await delivered.json()).associationSaved, false)
+})
+
+test('project references remain private to the mailbox and read-only users cannot assign them', async t => {
+  const { privateEnv, kv } = projectMailFixture(t, async () => { throw Error('Unexpected Google request') }, 'viewer')
+  kv.set('gmail-project-mail:other:thread', { mailbox: 'qa@example.test', threadId: 'thread' })
+  kv.set('gmail-project-mail:qa:switched', { mailbox: 'previous@example.test', threadId: 'switched' })
+  assert.deepEqual((await (await worker.fetch(request('/api/google/gmail/project-links'), privateEnv)).json()).links, [])
+  assert.equal((await worker.fetch(projectLinkRequest({ orgId: 'org', projectId: 'project', threadId: 'thread' }), privateEnv)).status, 403)
+})
+
+test('outgoing Hebrew HTML has RTL layout and bounded responsive CID logos', () => {
+  const content = mailContent('<p>שלום</p><img src="data:image/png;base64,aGVsbG8=">')
+  assert.match(content.html, /dir="rtl"/); assert.match(content.html, /text-align:right/)
+  assert.match(content.html, /width="180"/); assert.match(content.html, /max-width:100%;height:auto/); assert.match(content.html, /src="cid:/)
+  assert.equal(content.inline.length, 1)
+  assert.match(mailContent('<p>Hello</p>').html, /dir="ltr"/)
+})
 
 test('draft creation, restoration, update and send use the owner mailbox and preserve attachments and image size', async (t) => {
   const actions = []
@@ -521,4 +670,128 @@ test('inline Gmail image loading stays in the authenticated mailbox and excludes
   })
   const response = await worker.fetch(request('/api/google/gmail/images?messageId=message&userId=other'), privateEnv)
   assert.equal(response.status, 200); assert.deepEqual((await response.json()).images, { logo: 'data:image/png;base64,AQIDBA==' })
+})
+
+test('reading a Gmail thread updates provider labels and returns the real inbox counter', async t => {
+  const writes = []
+  const { privateEnv, kv } = projectMailFixture(t, async (url, init) => {
+    if (url.pathname.endsWith('/labels/INBOX')) return Response.json({ messagesUnread: 17 })
+    assert.equal(url.pathname, '/gmail/v1/users/me/threads/thread/modify')
+    assert.equal(init.method, 'POST'); assert.equal(init.headers['content-type'], 'application/json')
+    writes.push(JSON.parse(init.body)); return Response.json({ id: 'thread' })
+  })
+  const result = await worker.fetch(request('/api/google/gmail/read', { threadId: 'thread', userId: 'someone-else' }), privateEnv)
+  assert.equal(result.status, 200); assert.deepEqual(await result.json(), { ok: true, unreadCount: 17 })
+  assert.deepEqual(writes, [{ removeLabelIds: ['UNREAD'] }]); assert.ok(kv.has('google-read-epoch:qa')); assert.equal(kv.has('google-read-epoch:someone-else'), false)
+})
+
+test('Gmail read failures do not invalidate the cache or claim success', async t => {
+  const { privateEnv, kv } = projectMailFixture(t, async () => Response.json({ error: { message: 'Denied' } }, { status: 403 }))
+  assert.equal((await worker.fetch(request('/api/google/gmail/read', { threadId: 'thread' }), privateEnv)).status, 403)
+  assert.equal(kv.has('google-read-epoch:qa'), false)
+  assert.equal((await worker.fetch(request('/api/google/gmail/read', { threadId: '../another-user' }), privateEnv)).status, 400)
+})
+
+test('successful Gmail trash remains successful if fetching its new count fails', async t => {
+  const { privateEnv } = projectMailFixture(t, async (url, init) => {
+    if (url.pathname.endsWith('/labels/INBOX')) return Response.json({}, { status: 503 })
+    assert.equal(url.pathname, '/gmail/v1/users/me/threads/thread/trash'); assert.equal(init.method, 'POST')
+    return Response.json({ id: 'thread' })
+  })
+  const result = await worker.fetch(request('/api/google/gmail/trash', { threadId: 'thread' }), privateEnv)
+  assert.equal(result.status, 200); assert.deepEqual(await result.json(), { ok: true, unreadCount: null })
+})
+
+test('viewers cannot trash mail and external collaborators cannot call mailbox or Drive APIs', async t => {
+  const { privateEnv } = projectMailFixture(t, async () => { throw Error('Provider must not be contacted') }, 'viewer')
+  assert.equal((await worker.fetch(request('/api/google/gmail/trash', { threadId: 'thread' }), privateEnv)).status, 403)
+})
+
+test('external role ignores permission overrides in both client and server', async t => {
+  const permissions = normalizePermissions('external', { tasks: { edit: true }, files: { view: true }, communication: { view: true } })
+  assert.equal(permissions.tasks.status, true); assert.equal(permissions.tasks.edit, false); assert.equal(permissions.files.view, false); assert.equal(permissions.communication.view, false)
+  const { privateEnv } = projectMailFixture(t, async () => { throw Error('External provider must not be contacted') }, 'external')
+  for (const path of ['/api/google/gmail/inbox', '/api/google/gmail/unread', '/api/google/drive/files?folderId=private']) assert.equal((await worker.fetch(request(path), privateEnv)).status, 403)
+})
+
+test('a categorized email can belong to a project without any task', async t => {
+  const { privateEnv, kv } = projectMailFixture(t, async () => Response.json({ messages: [{ id: 'message', payload: { headers: [{ name: 'Subject', value: 'תכנית' }] } }] }))
+  const result = await worker.fetch(projectLinkRequest({ orgId: 'org', projectId: 'project', threadId: 'thread', categoryIds: ['architecture'], taskId: null }), privateEnv)
+  assert.equal(result.status, 200); assert.deepEqual((await result.json()).link.categoryIds, ['architecture']); assert.equal(kv.get('gmail-project-mail:qa:thread').taskId, null)
+  assert.equal((await worker.fetch(projectLinkRequest({ orgId: 'org', projectId: 'project', threadId: 'thread', categoryIds: ['foreign'] }), privateEnv)).status, 400)
+})
+
+test('Drive sharing verifies project ancestry and revokes only CRM-created permissions', async t => {
+  let mutations = 0
+  const { privateEnv, kv } = projectMailFixture(t, async (url, init) => {
+    if (url.pathname.endsWith('/files/file')) return Response.json({ id: 'file', parents: ['folder'] })
+    if (url.pathname.endsWith('/files/foreign')) return Response.json({ id: 'foreign', parents: ['outside'] })
+    if (url.pathname.endsWith('/files/outside')) return Response.json({ id: 'outside', parents: [] })
+    if (init.method === 'POST') { mutations++; assert.deepEqual(JSON.parse(init.body), { type: 'user', emailAddress: 'external@example.test', role: 'reader' }); return Response.json({ id: 'permission', role: 'reader' }) }
+    if (init.method === 'DELETE') { mutations++; return new Response(null, { status: 204 }) }
+    throw Error(`Unexpected Google URL ${url}`)
+  })
+  kv.set('drive-project-folder:qa:project', { id: 'folder', readOnly: false })
+  const body = { orgId: 'org', projectId: 'project', fileId: 'file', email: 'external@example.test', role: 'reader' }
+  assert.equal((await worker.fetch(request('/api/google/drive/sharing', { ...body, fileId: 'foreign' }), privateEnv)).status, 403); assert.equal(mutations, 0)
+  assert.equal((await worker.fetch(request('/api/google/drive/sharing', body), privateEnv)).status, 200); assert.equal(mutations, 1)
+  const revoke = permissionId => new Request('https://qa.example.test/api/google/drive/sharing', { method: 'DELETE', headers: { authorization: 'Bearer qa-token', 'content-type': 'application/json' }, body: JSON.stringify({ ...body, permissionId }) })
+  assert.equal((await worker.fetch(revoke('owner-permission'), privateEnv)).status, 403); assert.equal(mutations, 1)
+  assert.equal((await worker.fetch(revoke('permission'), privateEnv)).status, 200); assert.equal(mutations, 2)
+})
+
+test('protected Drive folders reject category creation and sharing without provider writes', async t => {
+  const { privateEnv, kv } = projectMailFixture(t, async () => { throw Error('Protected folder must not be modified') })
+  kv.set('drive-project-folder:qa:project', { id: 'folder', readOnly: false }); kv.set('drive-protected-folder:folder', true)
+  assert.equal((await worker.fetch(request('/api/google/drive/sharing', { orgId: 'org', projectId: 'project', fileId: 'folder', email: 'external@example.test', role: 'reader' }), privateEnv)).status, 403)
+  assert.equal((await worker.fetch(request('/api/google/drive/category', { orgId: 'org', projectId: 'project', folderId: 'folder', categoryId: 'architecture', name: 'אדריכלות' }), privateEnv)).status, 403)
+})
+
+test('meeting export uses current linked task fields, preserves manual notes, escapes HTML and excludes other project tasks', async () => {
+  const { meetingHtml } = await server.ssrLoadModule('/src/components/MeetingSummaries.tsx')
+  const workspace = cloneWorkspace(); workspace.projects = [{ id: 'project', name: 'פרויקט' }]; workspace.tasks = [{ id: 'task', projectId: 'project', title: '<img onerror=alert(1)>', status: 'בטיפול', dueDate: '2026-10-09' }, { id: 'private', projectId: 'other', title: 'secret' }]
+  const summary = { title: 'סיכום פגישה', date: '2026-10-08', projectId: 'project', taskIds: ['task','private'], notes: 'הערה ידנית', taskNotes: { task: 'החלטה לפגישה' } }
+  const html = meetingHtml(summary, workspace)
+  assert.match(html, /dir="rtl"/); assert.match(html, /הערה ידנית/); assert.match(html, /החלטה לפגישה/); assert.match(html, /&lt;img onerror=alert\(1\)&gt;/); assert.doesNotMatch(html, /secret/)
+  workspace.tasks[0].status = 'בוצע'; assert.match(meetingHtml(summary, workspace), /בוצע/); assert.equal(summary.taskNotes.task, 'החלטה לפגישה')
+})
+
+test('professional Drive folder creation reuses its stored folder instead of duplicating it', async t => {
+  let creates = 0
+  const { privateEnv, kv } = projectMailFixture(t, async (url, init) => {
+    if (url.pathname.endsWith('/files/category-folder')) return Response.json({ id: 'category-folder', parents: ['folder'] })
+    if (init.method === 'POST') { creates++; assert.equal(JSON.parse(init.body).appProperties.ramCategory, 'architecture'); return Response.json({ id: 'category-folder', name: 'אדריכלות' }) }
+    return Response.json({ files: [] })
+  })
+  kv.set('drive-project-folder:qa:project', { id: 'folder' })
+  const body = { orgId: 'org', projectId: 'project', folderId: 'folder', categoryId: 'architecture', name: 'אדריכלות' }
+  for (let i = 0; i < 2; i++) assert.equal((await worker.fetch(request('/api/google/drive/category', body), privateEnv)).status, 200)
+  assert.equal(creates, 1)
+})
+
+for (const outcome of ['sent', 'failed', 'uncertain']) test(`assignment email records ${outcome} delivery and sends only a claimed authorized task`, async t => {
+  let sends = 0; const states = []
+  const { privateEnv } = projectMailFixture(t, async (url, init) => {
+    assert.ok(url.pathname.endsWith('/messages/send')); sends++
+    const mime = Buffer.from(JSON.parse(init.body).raw, 'base64url').toString('utf8')
+    assert.match(mime, /To: external@example.test/)
+    if (outcome === 'uncertain') throw Error('Connection lost after send started')
+    return Response.json({ id: 'sent' }, { status: outcome === 'failed' ? 403 : 200 })
+  })
+  privateEnv.SUPABASE_SECRET_KEY = 'qa-server-secret'
+  const priorFetch = globalThis.fetch
+  t.mock.method(globalThis, 'fetch', async (target, init = {}) => {
+    const url = new URL(String(target))
+    if (url.pathname.endsWith('/rest/v1/workspace_state')) return Response.json({ data: { tasks: [{ id: 'task', projectId: 'project', assigneeId: 'external', title: 'בדיקת תכנית', status: 'בטיפול' }] } })
+    if (url.pathname.endsWith('/rest/v1/project_collaborators')) return Response.json([{ project_id: 'project' }])
+    if (url.pathname.endsWith('/rest/v1/memberships') && url.searchParams.get('user_id') === 'eq.external') return Response.json([{ role: 'external' }])
+    if (url.pathname.endsWith('/rest/v1/task_notifications')) {
+      if (init.method === 'PATCH') { const state = JSON.parse(init.body).state; states.push(state); return Response.json(state === 'sending' ? [{ id: 'n' }] : []) }
+      return Response.json([{ id: 'n', task_id: 'task', project_id: 'project', user_id: 'external', assigned_by: 'qa', email: 'external@example.test' }])
+    }
+    return priorFetch(target, init)
+  })
+  const response = await worker.fetch(request('/api/task-notifications/send', { orgId: 'org' }), privateEnv)
+  assert.equal(response.status, 200); assert.deepEqual(await response.json(), { sent: outcome === 'sent' ? 1 : 0, failed: outcome === 'sent' ? 0 : 1 })
+  assert.deepEqual(states, ['sending', outcome]); assert.equal(sends, 1)
 })

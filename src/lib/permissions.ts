@@ -39,6 +39,11 @@ const matrix = (value: () => AreaPermissions): PermissionMatrix => Object.fromEn
 
 export function rolePermissionPreset(role: string, isDeveloper = false): PermissionMatrix {
   const effectiveRole = isDeveloper ? 'developer' : role
+  if (effectiveRole === 'external') {
+    const next = matrix(hiddenArea)
+    next.projects = viewArea(); next.tasks = { ...viewArea(), status: true }
+    return next
+  }
   if (effectiveRole === 'developer') {
     const next = matrix(fullArea)
     next.connections = { ...viewArea(), edit: true }
@@ -69,6 +74,7 @@ export function rolePermissionPreset(role: string, isDeveloper = false): Permiss
 
 export function normalizePermissions(role: string, stored?: StoredPermissions | null, isDeveloper = false): PermissionMatrix {
   const next = rolePermissionPreset(role, isDeveloper)
+  if (role === 'external') return next
   if (isDeveloper || role === 'developer' || !stored || typeof stored !== 'object') return next
 
   for (const area of permissionAreas) {
@@ -110,6 +116,8 @@ export function permissionSummary(permissions: PermissionMatrix) {
 }
 
 const workspaceArea: Partial<Record<keyof Workspace, PermissionArea>> = {
+  categories: 'tasks',
+  meetingSummaries: 'tasks',
   contacts: 'contacts',
   deals: 'contacts',
   projects: 'projects',

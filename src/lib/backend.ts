@@ -269,3 +269,26 @@ function fileToDataUrl(file: File): Promise<string> {
     reader.readAsDataURL(file)
   })
 }
+
+export async function setProjectCollaborator(orgId: string, projectId: string, userId: string, allow: boolean) {
+  if (!client || orgId === 'local') throw new Error('ניהול משתתפים דורש חיבור לשרת')
+  const { error } = await client.rpc('set_project_collaborator', { target_org: orgId, target_project: projectId, target_user: userId, allow_access: allow })
+  if (error) throw localizedBackendError(error, 'עדכון גישת המשתתף נכשל')
+}
+export async function listProjectCollaborators(orgId: string) {
+  if (!client || orgId === 'local') return []
+  const { data, error } = await client.from('project_collaborators').select('project_id,user_id').eq('org_id', orgId)
+  if (error) throw localizedBackendError(error, 'טעינת משתתפי הפרויקט נכשלה')
+  return (data || []) as { project_id: string; user_id: string }[]
+}
+export async function taskNotifications(userId: string) {
+  if (!client) return []
+  const { data, error } = await client.from('task_notifications').select('id,task_id,project_id,title,read_at').eq('user_id',userId).order('created_at', { ascending: false }).limit(30)
+  if (error) throw localizedBackendError(error, 'טעינת התראות משימות נכשלה')
+  return (data || []) as { id: string; task_id: string; project_id: string; title: string; read_at: string | null }[]
+}
+export async function readTaskNotification(id: string) {
+  if (!client) return
+  const { error } = await client.rpc('read_task_notification', { notification_id: id })
+  if (error) throw localizedBackendError(error, 'עדכון ההתראה נכשל')
+}

@@ -1,3 +1,4 @@
+import { CategoryPicker } from './Categories'
 import DriveConnection from './DriveConnection'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { CalendarPlus, ExternalLink, FileText, RefreshCw, Upload } from 'lucide-react'
@@ -143,7 +144,8 @@ export function CalendarPage({ workspace, setWorkspace, onProject, onTask, start
         {weekdayLabels.map((label) => <div className="month-weekday" role="columnheader" key={label}>{label}</div>)}
         {days.map((day) => {
           const key = dateKey(day)
-          const dayEvents = eventsFor(key)
+          const dueTasks = calendarItemFilter === 'אירועים' ? [] : workspace.tasks.filter(task => task.dueDate === key && (calendarProjectFilter === 'הכל' || task.projectId === calendarProjectFilter || (calendarProjectFilter === '__none__' && !task.projectId)) && (!calendarSearch || `${task.title} ${task.description || ''} ${workspace.projects.find(project => project.id === task.projectId)?.name || ''}`.toLowerCase().includes(calendarSearch.toLowerCase())))
+          const dayEvents = [...eventsFor(key), ...dueTasks.map(task => ({ id: `task-due-${task.id}`, title: `משימה: ${task.title}` }))]
           const inMonth = day.getMonth() === month.getMonth()
           const classes = ['month-day', inMonth ? '' : 'outside', key === todayKey ? 'today' : '', key === selectedDate ? 'selected' : ''].filter(Boolean).join(' ')
           return <button type="button" role="gridcell" aria-selected={key === selectedDate} className={classes} key={key} onClick={() => setSelectedDate(key)}>
@@ -182,6 +184,7 @@ export function CalendarPage({ workspace, setWorkspace, onProject, onTask, start
 
 export function FilesPage({ workspace, setWorkspace, orgId, projectId, onProject, onTask, canEdit = true, permissions }: { workspace: Workspace; setWorkspace: React.Dispatch<React.SetStateAction<Workspace>>; orgId: string; projectId?: string; onProject?: (id: string) => void; onTask?: (id: string) => void; canEdit?: boolean; permissions?: AreaPermissions }) {
   const filePermissions: AreaPermissions = permissions || { view: true, create: canEdit, edit: canEdit, status: canEdit, delete: canEdit }
+  const [categoryFilter, setCategoryFilter] = useState('')
   const [driveOpen, setDriveOpen] = useState(false)
   const canUpload = filePermissions.create
   const [uploading, setUploading] = useState(false); const [error, setError] = useState(''); const [uploadProjectId, setUploadProjectId] = useState(projectId || ''); const [uploadTaskId, setUploadTaskId] = useState('')
@@ -202,6 +205,7 @@ export function FilesPage({ workspace, setWorkspace, orgId, projectId, onProject
     return 'אחר'
   }
   const records = useMemo(() => baseRecords.filter((file) => {
+    if (categoryFilter && !file.categoryIds?.includes(categoryFilter)) return false
     const project = workspace.projects.find((item) => item.id === file.projectId)
     const task = workspace.tasks.find((item) => item.id === file.taskId)
     const q = search.trim().toLowerCase()
@@ -219,7 +223,7 @@ export function FilesPage({ workspace, setWorkspace, orgId, projectId, onProject
     if (dateFrom && uploaded < dateFrom) return false
     if (dateTo && uploaded > dateTo) return false
     return true
-  }), [baseRecords, workspace.projects, workspace.tasks, search, projectId, projectFilter, taskFilter, typeFilter, dateFrom, dateTo])
+  }), [categoryFilter, baseRecords, workspace.projects, workspace.tasks, search, projectId, projectFilter, taskFilter, typeFilter, dateFrom, dateTo])
   const availableTasks = workspace.tasks.filter((task) => (projectId || uploadProjectId) ? task.projectId === (projectId || uploadProjectId) : !task.projectId)
   const filterTasks = workspace.tasks.filter((task) => {
     const pid = projectId || (projectFilter !== 'הכל' && projectFilter !== '__none__' ? projectFilter : '')
@@ -232,12 +236,13 @@ export function FilesPage({ workspace, setWorkspace, orgId, projectId, onProject
     <label className="list-filter-field filter-grow"><span>חיפוש</span><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="שם קובץ, פרויקט, כתובת או משימה" /></label>
     {!projectId && <label className="list-filter-field"><span>פרויקט</span><select value={projectFilter} onChange={(e) => { setProjectFilter(e.target.value); setTaskFilter('הכל') }}><option value="הכל">כל הפרויקטים</option><option value="__none__">כללי, ללא פרויקט</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.name} — {project.address || 'כתובת חסרה'}</option>)}</select></label>}
     <label className="list-filter-field"><span>משימה</span><select value={taskFilter} onChange={(e) => setTaskFilter(e.target.value)}><option value="הכל">כל המשימות</option><option value="__none__">ללא משימה</option>{filterTasks.map((task) => <option key={task.id} value={task.id}>{task.title}</option>)}</select></label>
+<label className="list-filter-field"><span>מקצוע</span><select aria-label="סינון קבצים לפי מקצוע" value={categoryFilter} onChange={event => setCategoryFilter(event.target.value)}><option value="">כל המקצועות</option>{workspace.categories.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
     <label className="list-filter-field"><span>סוג קובץ</span><select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}><option>הכל</option><option>PDF</option><option>תמונות</option><option>מסמכים</option><option>גיליונות</option><option>אחר</option></select></label>
     <label className="list-filter-field"><span>הועלה מתאריך</span><input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} /></label>
     <label className="list-filter-field"><span>הועלה עד תאריך</span><input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} /></label>
     <button type="button" className="secondary compact-filter-clear" onClick={() => { setSearch(''); if (!projectId) setProjectFilter('הכל'); setTaskFilter('הכל'); setTypeFilter('הכל'); setDateFrom(''); setDateTo('') }}>ניקוי סינון</button>
     <span className="filter-count">{records.length} מתוך {baseRecords.length} קבצים</span>
   </div>
-  {driveOpen && workspace.projects.find((project) => project.id === (projectId || uploadProjectId)) && <Modal title="תיקיית Drive של הפרויקט" onClose={() => setDriveOpen(false)}><DriveConnection project={workspace.projects.find((project) => project.id === (projectId || uploadProjectId))!} workspace={workspace} canCreateFolder={canUpload} canUnlinkFolder={filePermissions.delete} /></Modal>}
-  {error && <div className="error-banner">{error}</div>}<div className="file-list">{records.map((file) => <div className="linked-file-row" key={file.id}><StoredFileLink file={file}><span className="file-icon"><FileText /></span><div><strong>{file.name}</strong><small>{workspace.projects.find((project) => project.id === file.projectId)?.name || 'כללי'}{file.taskId ? ` · ${workspace.tasks.find((task) => task.id === file.taskId)?.title || 'משימה'}` : ''} · גרסה {file.version} · {new Intl.NumberFormat('he-IL', { maximumFractionDigits: 1 }).format((file.size || 0) / 1024)} KB</small></div><ExternalLink /></StoredFileLink><div className="context-links">{filePermissions.delete && <DeleteButton message={`למחוק את הקובץ "${file.name}" מרשימת CRM? המקור יישמר באחסון.`} onConfirm={() => setWorkspace((current) => ({ ...current, files: current.files.filter((item) => item.id !== file.id) }))} />}{file.projectId && onProject ? <button type="button" onClick={() => onProject(file.projectId!)}>פרויקט: {workspace.projects.find((project) => project.id === file.projectId)?.name || 'פתיחה'}</button> : <span>כללי</span>}{file.taskId && onTask && <button type="button" onClick={() => onTask(file.taskId!)}>משימה: {workspace.tasks.find((task) => task.id === file.taskId)?.title || 'פתיחה'}</button>}</div></div>)}{!records.length && <EmptyState title="אין קבצים" text="העלו מסמכים ותכניות." />}</div></section>
+  {driveOpen && workspace.projects.find((project) => project.id === (projectId || uploadProjectId)) && <Modal title="תיקיית Drive של הפרויקט" onClose={() => setDriveOpen(false)}><DriveConnection orgId={orgId} project={workspace.projects.find((project) => project.id === (projectId || uploadProjectId))!} workspace={workspace} canCreateFolder={canUpload} canUnlinkFolder={filePermissions.delete} canShare={filePermissions.edit} /></Modal>}
+  {error && <div className="error-banner">{error}</div>}<div className="file-list">{records.map((file) => <div className="linked-file-row" key={file.id}><StoredFileLink file={file}><span className="file-icon"><FileText /></span><div><strong>{file.name}</strong><small>{workspace.projects.find((project) => project.id === file.projectId)?.name || 'כללי'}{file.taskId ? ` · ${workspace.tasks.find((task) => task.id === file.taskId)?.title || 'משימה'}` : ''} · גרסה {file.version} · {new Intl.NumberFormat('he-IL', { maximumFractionDigits: 1 }).format((file.size || 0) / 1024)} KB</small></div><ExternalLink /></StoredFileLink><CategoryPicker workspace={workspace} projectId={file.projectId} value={file.categoryIds || []} disabled={!filePermissions.edit || !file.projectId} onChange={categoryIds => setWorkspace(current => ({ ...current, files: current.files.map(item => item.id === file.id ? { ...item, categoryIds } : item) }))} /><div className="context-links">{filePermissions.delete && <DeleteButton message={`למחוק את הקובץ "${file.name}" מרשימת CRM? המקור יישמר באחסון.`} onConfirm={() => setWorkspace((current) => ({ ...current, files: current.files.filter((item) => item.id !== file.id) }))} />}{file.projectId && onProject ? <button type="button" onClick={() => onProject(file.projectId!)}>פרויקט: {workspace.projects.find((project) => project.id === file.projectId)?.name || 'פתיחה'}</button> : <span>כללי</span>}{file.taskId && onTask && <button type="button" onClick={() => onTask(file.taskId!)}>משימה: {workspace.tasks.find((task) => task.id === file.taskId)?.title || 'פתיחה'}</button>}</div></div>)}{!records.length && <EmptyState title="אין קבצים" text="העלו מסמכים ותכניות." />}</div></section>
 }

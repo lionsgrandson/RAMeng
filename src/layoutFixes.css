@@ -2359,3 +2359,25 @@ textarea::placeholder {
 .project-title-manager {
   font-weight:700!important;
 }
+
+.mail-assignment{display:flex;flex-wrap:wrap;gap:12px;align-items:end;margin:12px 0}.mail-assignment label{display:grid;gap:6px;min-width:160px}.mail-assignment select{max-width:100%}
+.mail-compose>.card-head,.mail-compose>small,.mail-compose>div{grid-column:1/-1;min-width:0}
+.mail-compose>div:not(.card-head):not([hidden]){display:grid;gap:12px}
+.mail-compose>div[hidden]{display:none}
+
+/* Udi V3: small extensions using the existing card and form styles. */
+.category-manager, .meeting-summaries, .task-delivery { padding: 12px; margin-block: 12px; }
+.category-manager summary, .task-delivery summary { cursor: pointer; font-weight: 600; }
+.category-picker { display: flex; flex-wrap: wrap; gap: 8px; min-width: 170px; }
+.category-picker label, .mail-assignment label { display: flex; gap: 6px; align-items: center; }
+.category-picker input[type=checkbox], .category-manager input[type=checkbox] { width: auto; }
+.task-overview-counts { gap: 16px; flex-wrap: wrap; }
+.task-group-row th { background: #edf4ee; text-align: right; padding: 12px; }
+.meeting-task { padding: 12px; border-bottom: 1px solid #dbe3dd; }
+.meeting-task textarea { width: 100%; }
+.task-notifications { padding: 10px; max-height: 240px; overflow: auto; }
+.task-notifications button { display: block; text-align: right; width: 100%; padding: 8px; }
+.contact-mail-layout { min-width: 0; }
+.contact-thread-body { min-width: 0; overflow-wrap: anywhere; }
+.drive-list > div { display: flex; gap: 8px; align-items: center; }
+.drive-list > div > a { flex: 1; min-width: 0; }

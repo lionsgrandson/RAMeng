@@ -166,3 +166,7 @@ Secret values are intentionally excluded. Public identifiers may be recorded aft
 
 - Configure the Supabase Auth site/redirect URLs for any additional production domains if needed.
 - Add any additional production domains to the Google OAuth client's authorized redirect URIs before moving the CRM away from the current Workers URL.
+
+## Udi V3 approved release — 2026-10-08
+
+Applied `20261008094956_udi_v3_project_workflows.sql` to `qvunspguudkhwgbjvvuf` after protected private workspace/function backups. Verified unchanged pre-release records and RLS on both added tables. Restored existing Worker-only server secret bindings and deployed frontend/Worker version `1542bd85-15cb-4b44-ad74-9c04e877701f`. Real Gmail delivery/read/trash/RTL and Google folder creation passed in Udi Chrome. Full evidence and remaining external-recipient verification limits are in `UDI_V3_IMPLEMENTATION.md`. No secrets are recorded here.

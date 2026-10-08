@@ -53,7 +53,7 @@
 בגדול, הסדר הוא:
 
 1. ליצור/לקבל גישה לפרויקט Supabase של הלקוח.
-2. להריץ את כל `supabase/setup.sql` ב-SQL Editor.
+2. בהתקנה חדשה להריץ `supabase/setup.sql` ואחריו את קובצי `supabase/migrations/` לפי סדר. בעדכון מערכת קיימת להריץ רק מיגרציות שטרם הוחלו.
 3. להריץ `deploy.cmd` בחשבון Cloudflare של הלקוח.
 4. להגדיר ב-Worker את `ADMIN_SETUP_TOKEN` ואת `SUPABASE_SECRET_KEY`.
 5. להגדיר ב-Supabase Auth את `https://rameng-crm.rameng-crm-worker.workers.dev` כ-Site URL ואת `https://rameng-crm.rameng-crm-worker.workers.dev/?invite=1` כ-Redirect URL.

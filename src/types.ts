@@ -12,6 +12,14 @@ export interface Contact {
   name: string
   company?: string
   phone?: string
+  mobile?: string
+  role?: string
+  companyType?: string
+  address?: string
+  projectReferences?: string
+  developer?: string
+  additionalContact?: string
+  importDetails?: Record<string, string>
   email?: string
   status: string
   tags: string[]
@@ -35,6 +43,9 @@ export interface Project {
   name: string
   address: string
   clientIds: ID[]
+  contactIds?: ID[]
+  meetingTemplate?: string
+  categoryIds?: ID[]
   managerId?: ID
   status: ProjectStatus
   startDate?: string
@@ -53,6 +64,7 @@ export interface Task {
   parentId?: ID
   title: string
   description?: string
+  categoryIds?: ID[]
   assigneeId?: ID
   status: string
   priority: Priority
@@ -90,6 +102,7 @@ export interface FileRecord {
   storagePath?: string
   type?: string
   size?: number
+  categoryIds?: ID[]
   version: number
   uploadedAt: string
 }
@@ -112,6 +125,7 @@ export interface TeamMember {
   name: string
   email: string
   role: 'מנהל' | 'מפקח' | 'מהנדס' | 'משרד' | 'צפייה'
+  external?: boolean
   active: boolean
 }
 
@@ -214,7 +228,12 @@ export interface AppSettings {
   defaultInspector: string
 }
 
+export interface Category { id: ID; name: string }
+export interface MeetingSummary { id: ID; projectId: ID; title: string; date: string; taskIds: ID[]; notes: string; taskNotes: Record<string, string>; updatedAt: string }
+
 export interface Workspace {
+  categories: Category[]
+  meetingSummaries: MeetingSummary[]
   contacts: Contact[]
   deals: Deal[]
   projects: Project[]

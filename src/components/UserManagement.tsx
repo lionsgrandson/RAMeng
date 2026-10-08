@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { KeyRound, MailPlus, Plus, RefreshCw, ShieldCheck, SlidersHorizontal, Trash2, UsersRound } from 'lucide-react'
-import { listOrganizationMembers, setOrganizationMemberPermissions, setOrganizationMemberRole, type OrganizationMember } from '../lib/backend'
+import { listProjectCollaborators, setProjectCollaborator, listOrganizationMembers, setOrganizationMemberPermissions, setOrganizationMemberRole, type OrganizationMember } from '../lib/backend'
 import { integrationsApi } from '../lib/api'
 import {
   normalizePermissions,
@@ -17,8 +17,9 @@ import {
 import type { TeamMember, Workspace } from '../types'
 import { Chip, EmptyState, Field, Modal } from './common'
 
-const assignableRoles = ['admin', 'assistant', 'inspector', 'engineer', 'viewer'] as const
+const assignableRoles = ['admin', 'assistant', 'inspector', 'engineer', 'viewer', 'external'] as const
 const roleLabels: Record<string, string> = {
+  external: 'משתתף חיצוני',
   developer: 'מפתח',
   admin: 'מנהל',
   assistant: 'עוזר/ת',
@@ -63,6 +64,8 @@ export default function UserManagement({ orgId, canManage, isDeveloper, workspac
   workspace: Workspace
   setWorkspace: React.Dispatch<React.SetStateAction<Workspace>>
 }) {
+  const [projectGrants, setProjectGrants] = useState<{ project_id: string; user_id: string }[]>([])
+  const [managingExternal, setManagingExternal] = useState<OrganizationMember | null>(null)
   const [members, setMembers] = useState<OrganizationMember[]>([])
   const [loading, setLoading] = useState(true)
   const [adding, setAdding] = useState(false)
@@ -81,6 +84,7 @@ export default function UserManagement({ orgId, canManage, isDeveloper, workspac
       email: member.email,
       role: teamRole(member.role),
       active: true,
+      external: member.role === 'external',
     }))
     const current = JSON.stringify(workspace.team)
     const incoming = JSON.stringify(mapped)
@@ -275,7 +279,7 @@ export default function UserManagement({ orgId, canManage, isDeveloper, workspac
             <td>{protectedDeveloper
               ? <span className="muted-text">מוגן</span>
               : canManage
-                ? <button type="button" className="secondary" onClick={() => openPermissions(member)}><SlidersHorizontal /> התאמה</button>
+                ? member.role === 'external' ? <button type="button" className="secondary" onClick={() => { setManagingExternal(member); void listProjectCollaborators(orgId).then(setProjectGrants).catch(e => setError(e.message)) }}>גישה לפרויקטים</button> : <button type="button" className="secondary" onClick={() => openPermissions(member)}><SlidersHorizontal /> התאמה</button>
                 : <span className="muted-text">—</span>}</td>
             <td>{canManage
               ? <div className="user-actions">
@@ -301,6 +305,7 @@ export default function UserManagement({ orgId, canManage, isDeveloper, workspac
       {!members.length && <EmptyState title="אין משתמשים נוספים" text="הוסיפו משתמש." />}
     </div>}
 
+    {managingExternal && <Modal title={`גישה לפרויקטים — ${managingExternal.displayName}`} onClose={() => setManagingExternal(null)}><p>המשתתף יראה רק פרויקטים מסומנים ומשימות שהוקצו לו, ויוכל לעדכן רק את סטטוס המשימות שלו. מסמכים משותפים בנפרד דרך Drive.</p>{error && <p role="alert">{error}</p>}{workspace.projects.map(project => <label key={project.id}><input type="checkbox" disabled={submitting} checked={projectGrants.some(grant => grant.project_id === project.id && grant.user_id === managingExternal.userId)} onChange={event => { const allow = event.target.checked; setSubmitting(true); void setProjectCollaborator(orgId, project.id, managingExternal.userId, allow).then(() => listProjectCollaborators(orgId)).then(setProjectGrants).catch(e => setError(e.message)).finally(() => setSubmitting(false)) }} />{project.name}</label>)}</Modal>}
     {adding && <Modal title="הוספת משתמש" onClose={() => !submitting && setAdding(false)}>
       <form className="form-grid" onSubmit={(e) => void add(e)}>
         <div className="info-banner"><MailPlus /> משתמש חדש יקבל הזמנה במייל. ניתן לדייק את ההרשאות אחרי ההוספה.</div>

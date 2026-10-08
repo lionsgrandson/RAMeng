@@ -5,10 +5,10 @@ const key = `rameng-qa-${role}`
 const versionKey = `${key}-version`
 let authListener: ((event: string, session: unknown) => void) | undefined
 let failedSave = false
-const user = { id: 'qa-user', email: 'qa@example.test', user_metadata: { full_name: 'בודק QA' } }
+const user = { id: role === 'external' ? 'qa-external' : 'qa-user', email: role === 'external' ? 'external@example.test' : 'qa@example.test', user_metadata: { full_name: role === 'external' ? 'משתתף חיצוני לבדיקה' : 'בודק QA' } }
 export const configureBackend = () => undefined
 export const getRuntime = () => ({ apiBase: '' })
-export const getBackend = () => ({ auth: { onAuthStateChange: (listener: typeof authListener) => { authListener = listener; return { data: { subscription: { unsubscribe() {} } } } } }, removeChannel() {} })
+export const getBackend = () => ({ auth: { getUser: async () => ({ data: { user } }), onAuthStateChange: (listener: typeof authListener) => { authListener = listener; return { data: { subscription: { unsubscribe() {} } } } } }, removeChannel() {}, from: () => { const query: any = { data: [], error: null }; for (const method of ['select','eq','in','order','limit']) query[method] = () => query; query.maybeSingle = async () => ({ data: { org_id: 'qa-org' } }); return query }, rpc: async () => ({ data: [{ data: JSON.parse(localStorage.getItem(key) || '{}') }] }) })
 export const getCurrentUser = async () => user
 export const getAccessToken = async () => ''
 export const signIn = async () => user
@@ -16,13 +16,17 @@ export const signOut = async () => authListener?.('SIGNED_OUT', null)
 export const requestPasswordReset = async () => undefined
 export const updatePassword = async () => user
 export const updateCurrentUserName = async (name: string) => ({ ...user, user_metadata: { full_name: name } })
-export const listOrganizationMembers = async () => [{ userId: user.id, displayName: user.user_metadata.full_name, email: user.email, role }]
+export const listOrganizationMembers = async () => [{ userId: user.id, displayName: user.user_metadata.full_name, email: user.email, role }, ...JSON.parse(localStorage.getItem('qa-members') || '[]')]
 export const setOrganizationMemberRole = async () => undefined
 export const setOrganizationMemberPermissions = async () => undefined
+export const taskNotifications = async () => []
+export const readTaskNotification = async () => undefined
+export const listProjectCollaborators = async () => JSON.parse(localStorage.getItem('qa-project-grants') || '[]')
+export const setProjectCollaborator = async (_org: string, projectId: string, userId: string, allow: boolean) => { const current = await listProjectCollaborators(); const next = current.filter((grant: any) => grant.project_id !== projectId || grant.user_id !== userId); if (allow) next.push({ project_id: projectId, user_id: userId }); localStorage.setItem('qa-project-grants', JSON.stringify(next)) }
 export const subscribeWorkspace = () => null
 export async function loadOrganizationWorkspace() {
   const cached = JSON.parse(localStorage.getItem(key) || 'null')
-  const workspace = cached || cloneWorkspace()
+  const workspace = { ...cloneWorkspace(), ...(cached || {}) }
   if (!cached && !workspace.contacts.length) workspace.contacts = [{ id: 'qa-client', name: 'לקוח בדיקה', email: 'client@example.test', status: 'פעיל', tags: [], createdAt: '2026-10-04T09:00:00Z' }]
   if (!cached && !workspace.projects.length) workspace.projects = [{ id: 'qa-project', name: 'פרויקט בדיקה', address: 'רחוב בדיקה 10, ירושלים', clientIds: ['qa-client'], status: 'בביצוע', progress: 20, createdAt: '2026-10-04T09:00:00Z' }]
   if (!cached && !workspace.tasks.length) workspace.tasks = [{ id: 'qa-task', title: 'משימת בדיקה', projectId: 'qa-project', status: 'דורש מעקב', priority: 'דחופה', custom: {}, order: 1, createdAt: '2026-10-04T09:00:00Z' }]

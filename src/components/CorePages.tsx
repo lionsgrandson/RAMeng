@@ -2,7 +2,8 @@ import { useMemo, useState, type FormEvent } from 'react'
 import { AlertTriangle, ArrowLeft, ArrowRight, BriefcaseBusiness, CalendarDays, CircleDollarSign, FileSpreadsheet, ListChecks, Plus, Search, Sparkles, Upload, UsersRound } from 'lucide-react'
 import type { Contact, Deal, DealStage, Quote, TeamMember, Workspace } from '../types'
 import { integrationsApi } from '../lib/api'
-import { readImportRows } from '../lib/imports'
+import { ContactTags, ContactFields, contactFormDetails } from './ContactFields'
+import { appendUniqueContacts, mapContactImportRows, readImportRows } from '../lib/imports'
 import { Chip, EmptyState, Field, Modal, dateLabel, money, nowIso, uid } from './common'
 
 type DashboardPage = 'clients' | 'projects' | 'tasks' | 'calendar' | 'reports'
@@ -41,11 +42,11 @@ export function ClientsPage({ workspace, setWorkspace }: { workspace: Workspace;
   const rows = workspace.contacts.filter((contact) => !query || `${contact.name} ${contact.company || ''} ${contact.email || ''} ${contact.phone || ''}`.toLowerCase().includes(query.toLowerCase()))
   const save = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault(); const data = new FormData(event.currentTarget)
-    const next: Contact = { id: editing?.id || uid('contact'), name: String(data.get('name') || ''), company: String(data.get('company') || ''), phone: String(data.get('phone') || ''), email: String(data.get('email') || ''), status: String(data.get('status') || 'פעיל') as Contact['status'], tags: String(data.get('tags') || '').split(',').map((value) => value.trim()).filter(Boolean), notes: String(data.get('notes') || ''), createdAt: editing?.createdAt || nowIso() }
+    const next: Contact = { ...editing, ...contactFormDetails(data), id: editing?.id || uid('contact'), name: String(data.get('name') || ''), company: String(data.get('company') || ''), phone: String(data.get('phone') || ''), email: String(data.get('email') || ''), status: String(data.get('status') || 'פעיל') as Contact['status'], tags: String(data.get('tags') || '').split(',').map((value) => value.trim()).filter(Boolean), notes: String(data.get('notes') || ''), createdAt: editing?.createdAt || nowIso() }
     setWorkspace((current) => ({ ...current, contacts: editing?.id ? current.contacts.map((item) => item.id === editing.id ? next : item) : [...current.contacts, next] })); setEditing(null)
   }
   return <section className="card"><div className="card-head"><div><h2>לקוחות ולידים</h2><p>אנשי קשר, פרטי תקשורת, תגיות והערות</p></div><button className="primary" onClick={() => setEditing({ id: '', name: '', status: 'פעיל', tags: [], createdAt: nowIso() })}><Plus /> לקוח חדש</button></div><div className="list-toolbar"><div className="search-box"><Search /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="חיפוש לקוח..." /></div></div><div className="table-scroll"><table className="data-table"><thead><tr><th>שם</th><th>חברה</th><th>טלפון</th><th>מייל</th><th>סטטוס</th><th>תגיות</th></tr></thead><tbody>{rows.map((contact) => <tr key={contact.id} onClick={() => setEditing(contact)} className="click-row"><td><strong>{contact.name}</strong></td><td>{contact.company}</td><td>{contact.phone}</td><td>{contact.email}</td><td><Chip tone={contact.status === 'פעיל' ? 'good' : 'neutral'}>{contact.status}</Chip></td><td>{contact.tags.join(', ')}</td></tr>)}</tbody></table>{!rows.length && <EmptyState title="אין לקוחות להצגה" text="הוסיפו לקוח ידנית או ייבאו קובץ Excel/CSV." />}</div>
-    {editing && <Modal title={editing.id ? 'עריכת לקוח' : 'לקוח חדש'} onClose={() => setEditing(null)}><form className="form-grid" onSubmit={save}><Field label="שם"><input name="name" required defaultValue={editing.name} /></Field><Field label="חברה"><input name="company" defaultValue={editing.company} /></Field><Field label="טלפון"><input name="phone" defaultValue={editing.phone} /></Field><Field label="מייל"><input name="email" type="email" defaultValue={editing.email} /></Field><Field label="סטטוס"><select name="status" defaultValue={editing.status}><option>ליד</option><option>פעיל</option><option>בהמתנה</option><option>לא פעיל</option></select></Field><Field label="תגיות"><input name="tags" defaultValue={editing.tags.join(', ')} placeholder="יזם, דיירים, קבלן" /></Field><Field label="הערות"><textarea name="notes" defaultValue={editing.notes} rows={4} /></Field><div className="form-actions"><button className="secondary" type="button" onClick={() => setEditing(null)}>ביטול</button><button className="primary" type="submit">שמירה</button></div></form></Modal>}
+    {editing && <Modal title={editing.id ? 'עריכת לקוח' : 'לקוח חדש'} onClose={() => setEditing(null)}><form className="form-grid" onSubmit={save}><Field label="שם"><input name="name" required defaultValue={editing.name} /></Field><Field label="חברה"><input name="company" defaultValue={editing.company} /></Field><Field label="טלפון"><input name="phone" defaultValue={editing.phone} /></Field><Field label="מייל"><input name="email" type="email" defaultValue={editing.email} /></Field><ContactFields contact={editing} contacts={workspace.contacts} /><Field label="סטטוס"><select name="status" defaultValue={editing.status}><option>ליד</option><option>פעיל</option><option>בהמתנה</option><option>לא פעיל</option></select></Field><ContactTags contact={editing} contacts={workspace.contacts} /><Field label="הערות"><textarea name="notes" defaultValue={editing.notes} rows={4} /></Field><div className="form-actions"><button className="secondary" type="button" onClick={() => setEditing(null)}>ביטול</button><button className="primary" type="submit">שמירה</button></div></form></Modal>}
   </section>
 }
 
@@ -73,19 +74,22 @@ export function TeamPage({ workspace, setWorkspace }: { workspace: Workspace; se
 export function ImportCenter({ workspace, setWorkspace, canImport }: { workspace: Workspace; setWorkspace: React.Dispatch<React.SetStateAction<Workspace>>; canImport: boolean }) {
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [pending, setPending] = useState<{ contacts: Contact[]; files: string[] } | null>(null)
 
   const importFile = async (file: File, kind: 'contacts' | 'tasks') => {
+    if (!canImport || busy) return
     setMessage('')
     setError('')
+    setBusy(true)
     try {
       const buffer = await file.arrayBuffer()
-      const rows = await readImportRows(buffer, /\.csv$/i.test(file.name))
+      const rows = await readImportRows(buffer, /\.csv$/i.test(file.name), kind)
 
       if (kind === 'contacts') {
-        const contacts: Contact[] = rows.map((row) => ({ id: uid('contact'), name: String(row['שם'] || row.name || row.Name || ''), company: String(row['חברה'] || row.company || ''), phone: String(row['טלפון'] || row.phone || ''), email: String(row['מייל'] || row.email || ''), status: 'פעיל', tags: [], createdAt: nowIso() })).filter((item) => item.name)
+        const contacts: Contact[] = mapContactImportRows(rows).map((contact) => ({ ...contact, id: uid('contact'), createdAt: nowIso() }))
         if (!contacts.length) throw new Error('לא נמצאה עמודת שם תקינה')
-        setWorkspace((current) => ({ ...current, contacts: [...current.contacts, ...contacts] }))
-        setMessage(`יובאו ${contacts.length} לקוחות`)
+        setPending({ contacts, files: [file.name] })
       } else {
         const tasks = rows.map((row, index) => ({ id: uid('task'), projectId: String(row['projectId'] || '') || undefined, title: String(row['משימה'] || row.title || row.Task || ''), description: String(row['הערות'] || row.notes || ''), status: String(row['סטטוס'] || 'טרם התחיל'), priority: 'רגילה' as const, startDate: String(row['תאריך התחלה'] || '') || undefined, dueDate: String(row['תאריך סיום'] || '') || undefined, followUpDate: String(row['מועד מעקב'] || '') || undefined, emailTo: String(row['מייל'] || '') || undefined, custom: {}, order: workspace.tasks.length + index + 1, createdAt: nowIso() })).filter((item) => item.title)
         if (!tasks.length) throw new Error('לא נמצאה עמודת משימה תקינה')
@@ -94,19 +98,33 @@ export function ImportCenter({ workspace, setWorkspace, canImport }: { workspace
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'ייבוא הקובץ נכשל')
-    }
+    } finally { setBusy(false) }
   }
 
   const onPick = (event: React.ChangeEvent<HTMLInputElement>, kind: 'contacts' | 'tasks') => {
-    const file = event.currentTarget.files?.[0]
+    const files = Array.from(event.currentTarget.files || [])
     event.currentTarget.value = ''
-    if (file) void importFile(file, kind)
+    if (!canImport || busy || !files.length) return
+    if (kind === 'tasks') { void importFile(files[0], kind); return }
+    setMessage(''); setError(''); setPending(null); setBusy(true)
+    void Promise.all(files.map(async (file) => {
+      const rows = await readImportRows(await file.arrayBuffer(), /\.csv$/i.test(file.name), 'contacts')
+      const contacts = mapContactImportRows(rows).map((contact) => ({ ...contact, id: uid('contact'), createdAt: nowIso() }))
+      if (!contacts.length) throw new Error(`${file.name}: לא נמצאו אנשי קשר לייבוא`)
+      return contacts
+    })).then((contacts) => setPending({ contacts: contacts.flat(), files: files.map((file) => file.name) }))
+      .catch((e) => setError(e instanceof Error ? e.message : 'ייבוא הקובץ נכשל'))
+      .finally(() => setBusy(false))
   }
+
+  const preview = pending ? appendUniqueContacts(workspace.contacts, pending.contacts) : null
 
   return <div className="import-grid">
     {!canImport && <div className="info-banner"><FileSpreadsheet /> קיימת הרשאת צפייה בלבד. כדי לייבא קבצים נדרשת גם הרשאת הוספה.</div>}
-    <section className="card import-card"><span><UsersRound /></span><h2>ייבוא לקוחות</h2><p>Excel או CSV עם עמודות שם, חברה, טלפון ומייל.</p><label className="upload-button" aria-disabled={!canImport}><Upload /> בחירת קובץ<input disabled={!canImport} aria-label="ייבוא קובץ לקוחות" type="file" accept=".xlsx,.xls,.csv" onChange={(e) => onPick(e, 'contacts')} /></label></section>
-    <section className="card import-card"><span><ListChecks /></span><h2>ייבוא משימות</h2><p>Excel או CSV עם משימה, סטטוס, תאריכים, הערות ומייל.</p><label className="upload-button" aria-disabled={!canImport}><FileSpreadsheet /> בחירת קובץ<input disabled={!canImport} aria-label="ייבוא קובץ משימות" type="file" accept=".xlsx,.xls,.csv" onChange={(e) => onPick(e, 'tasks')} /></label></section>
+    <section className="card import-card"><span><UsersRound /></span><h2>ייבוא לקוחות</h2><p>Excel או CSV, כולל רשימות עורכי דין ואנשי קשר. הכותרות מזוהות אוטומטית גם אחרי שורות כותרת. ניתן לבחור כמה קבצים יחד.</p><label className="upload-button" aria-disabled={!canImport}><Upload /> בחירת קובץ<input disabled={!canImport || busy} aria-label="ייבוא קובץ לקוחות" multiple type="file" accept=".xlsx,.xls,.csv" onChange={(e) => onPick(e, 'contacts')} /></label></section>
+    <section className="card import-card"><span><ListChecks /></span><h2>ייבוא משימות</h2><p>Excel או CSV עם משימה, סטטוס, תאריכים, הערות ומייל.</p><label className="upload-button" aria-disabled={!canImport}><FileSpreadsheet /> בחירת קובץ<input disabled={!canImport || busy} aria-label="ייבוא קובץ משימות" type="file" accept=".xlsx,.xls,.csv" onChange={(e) => onPick(e, 'tasks')} /></label></section>
+    {busy && <div className="info-banner" role="status">קורא את הקבצים...</div>}
+    {pending && preview && <Modal wide title="תצוגה מקדימה של ייבוא לקוחות" onClose={() => setPending(null)}><p>{pending.files.join(', ')}</p><p>{preview.added} אנשי קשר חדשים · {preview.skipped} כפילויות ידולגו</p><p>פרטי התפקיד, החברה, הטלפונים, הכתובת והעמודות הנוספות יישמרו בכרטיס הלקוח. שמות פרויקטים נשמרים כהפניות ללא יצירת פרויקטים.</p><div className="table-scroll"><table className="data-table"><thead><tr><th>שם</th><th>חברה</th><th>תפקיד</th><th>טלפון</th><th>נייד</th><th>מייל</th></tr></thead><tbody>{pending.contacts.slice(0, 10).map((contact) => <tr key={contact.id}><td>{contact.name}</td><td>{contact.company}</td><td>{contact.role}</td><td dir="ltr">{contact.phone}</td><td dir="ltr">{contact.mobile}</td><td>{contact.email}</td></tr>)}</tbody></table></div>{pending.contacts.length > 10 && <p>מוצגות 10 הרשומות הראשונות מתוך {pending.contacts.length}.</p>}<div className="form-actions"><button type="button" className="secondary" onClick={() => setPending(null)}>ביטול</button><button type="button" className="primary" disabled={!canImport || !preview.added} onClick={() => { if (!canImport) return; setWorkspace((current) => ({ ...current, contacts: appendUniqueContacts(current.contacts, pending.contacts).contacts })); setMessage(`יובאו ${preview.added} לקוחות; דולגו ${preview.skipped} כפילויות`); setPending(null) }}>ייבוא {preview.added} לקוחות</button></div></Modal>}
     {message && <div className="success-banner" role="status">{message}</div>}
     {error && <div className="error-banner" role="alert">{error}</div>}
   </div>

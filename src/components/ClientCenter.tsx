@@ -1,8 +1,10 @@
+import { contactOptions, normalizeWorkspaceCategories } from '../lib/contactCategories'
 import { useMemo, useState, type Dispatch, type FormEvent, type SetStateAction } from 'react'
 import { ArrowRight, BarChart3, CalendarDays, ExternalLink, FileText, FolderKanban, LayoutDashboard, ListChecks, Mail, Plus, Search, Settings2 } from 'lucide-react'
 import type { ClientNote, Contact, Project, ProjectStatus, Task, Workspace } from '../types'
 import type { AreaPermissions } from '../lib/permissions'
 import { Chip, EmptyState, Field, Modal, StoredFileLink, confirmDelete, dateLabel, dateTimeLabel, money, nowIso, uid } from './common'
+import { ContactTags, ContactFields, contactFields, contactFormDetails } from './ContactFields'
 import AddressAutocomplete from './AddressAutocomplete'
 
 import DeleteButton from './RecordDelete'
@@ -57,6 +59,8 @@ function ClientDirectory({ workspace, setWorkspace, onSelectClient, canEditConta
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('הכל')
   const [tagFilter, setTagFilter] = useState('הכל')
+  const [roleFilter, setRoleFilter] = useState('הכל')
+  const [companyTypeFilter, setCompanyTypeFilter] = useState('הכל')
   const [projectFilter, setProjectFilter] = useState('הכל')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
@@ -64,17 +68,19 @@ function ClientDirectory({ workspace, setWorkspace, onSelectClient, canEditConta
   const availableTags = useMemo(() => [...new Set(workspace.contacts.flatMap((contact) => contact.tags))].sort((a, b) => a.localeCompare(b, 'he')), [workspace.contacts])
   const rows = useMemo(() => workspace.contacts.filter((contact) => {
     const q = query.trim().toLowerCase()
-    if (q && !`${contact.name} ${contact.company || ''} ${contact.email || ''} ${contact.phone || ''} ${contact.tags.join(' ')}`.toLowerCase().includes(q)) return false
+    if (q && !`${contact.name} ${contact.company || ''} ${contact.email || ''} ${contact.phone || ''} ${contact.mobile || ''} ${contact.role || ''} ${contact.companyType || ''} ${contact.address || ''} ${contact.projectReferences || ''} ${contact.tags.join(' ')}`.toLowerCase().includes(q)) return false
     if (statusFilter !== 'הכל' && contact.status !== statusFilter) return false
+    if (roleFilter !== 'הכל' && contact.role !== roleFilter) return false
+    if (companyTypeFilter !== 'הכל' && contact.companyType !== companyTypeFilter) return false
     if (tagFilter !== 'הכל' && !contact.tags.includes(tagFilter)) return false
-    const clientProjects = workspace.projects.filter((project) => project.clientIds.includes(contact.id))
+    const clientProjects = workspace.projects.filter((project) => (project.clientIds.includes(contact.id) || project.contactIds?.includes(contact.id)))
     if (projectFilter === '__none__' && clientProjects.length) return false
     if (projectFilter !== 'הכל' && projectFilter !== '__none__' && !clientProjects.some((project) => project.id === projectFilter)) return false
     const created = contact.createdAt.slice(0, 10)
     if (dateFrom && created < dateFrom) return false
     if (dateTo && created > dateTo) return false
     return true
-  }), [workspace.contacts, workspace.projects, query, statusFilter, tagFilter, projectFilter, dateFrom, dateTo])
+  }), [workspace.contacts, workspace.projects, query, statusFilter, tagFilter, roleFilter, companyTypeFilter, projectFilter, dateFrom, dateTo])
 
   const createClient = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -84,6 +90,7 @@ function ClientDirectory({ workspace, setWorkspace, onSelectClient, canEditConta
       name: String(data.get('name') || ''),
       company: String(data.get('company') || ''),
       phone: String(data.get('phone') || ''),
+      ...contactFormDetails(data),
       email: String(data.get('email') || ''),
       status: String(data.get('status') || 'פעיל'),
       tags: String(data.get('tags') || '').split(',').map((value) => value.trim()).filter(Boolean),
@@ -102,28 +109,31 @@ function ClientDirectory({ workspace, setWorkspace, onSelectClient, canEditConta
   return <section className="clients-center">
     <div className="client-directory-head">
       <h2>לקוחות</h2>
+      {contactAccess.edit && <button type="button" className="secondary" onClick={() => setWorkspace(current => normalizeWorkspaceCategories(current))}>ארגון תגיות ותפקידים</button>}
       {contactAccess.create && <button type="button" className="primary" onClick={() => setAdding(true)}><Plus /> לקוח חדש</button>}
     </div>
     <div className="client-filter-panel card">
       <label className="client-directory-search search-box labeled-search"><span>חיפוש לקוחות</span><div><Search /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="שם, חברה, מייל, טלפון או תגית" aria-label="חיפוש לקוחות" /></div></label>
       <label className="client-filter-field"><span>סטטוס</span><select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}><option>הכל</option>{[...new Set(workspace.contacts.map((contact) => contact.status))].map((status) => <option key={status}>{status}</option>)}</select></label>
       <label className="client-filter-field"><span>תגית</span><select value={tagFilter} onChange={(e) => setTagFilter(e.target.value)}><option value="הכל">כל התגיות</option>{availableTags.map((tag) => <option key={tag}>{tag}</option>)}</select></label>
+      <label className="client-filter-field"><span>תפקיד</span><select value={roleFilter} onChange={event => setRoleFilter(event.target.value)}><option value="הכל">כל התפקידים</option>{contactOptions(workspace.contacts, 'role').map(value => <option key={value}>{value}</option>)}</select></label>
+      <label className="client-filter-field"><span>סוג חברה</span><select value={companyTypeFilter} onChange={event => setCompanyTypeFilter(event.target.value)}><option value="הכל">כל סוגי החברות</option>{contactOptions(workspace.contacts, 'companyType').map(value => <option key={value}>{value}</option>)}</select></label>
       <label className="client-filter-field"><span>פרויקט</span><select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)}><option value="הכל">כל הפרויקטים</option><option value="__none__">ללא פרויקט</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.name} — {project.address || 'כתובת חסרה'}</option>)}</select></label>
       <label className="client-filter-field"><span>נוצר מתאריך</span><input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} /></label>
       <label className="client-filter-field"><span>נוצר עד תאריך</span><input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} /></label>
-      <button type="button" className="secondary compact-filter-clear" onClick={() => { setQuery(''); setStatusFilter('הכל'); setTagFilter('הכל'); setProjectFilter('הכל'); setDateFrom(''); setDateTo('') }}>ניקוי סינון</button>
+      <button type="button" className="secondary compact-filter-clear" onClick={() => { setQuery(''); setStatusFilter('הכל'); setTagFilter('הכל'); setRoleFilter('הכל'); setCompanyTypeFilter('הכל'); setProjectFilter('הכל'); setDateFrom(''); setDateTo('') }}>ניקוי סינון</button>
       <span className="filter-count">{rows.length} מתוך {workspace.contacts.length} לקוחות</span>
     </div>
     <div className="client-card-grid">
       {rows.map((contact) => {
-        const projects = workspace.projects.filter((project) => project.clientIds.includes(contact.id))
+        const projects = workspace.projects.filter((project) => (project.clientIds.includes(contact.id) || project.contactIds?.includes(contact.id)))
         const projectIds = new Set(projects.map((project) => project.id))
         const openTasks = workspace.tasks.filter((task) => task.projectId && projectIds.has(task.projectId) && !['בוצע', 'סגור'].includes(task.status)).length
         return <button type="button" className="client-card card" key={contact.id} onClick={() => onSelectClient(contact.id)}>
           <div className="client-card-top"><span className="avatar large">{contact.name.slice(0, 2)}</span><Chip tone={contact.status === 'פעיל' ? 'good' : contact.status === 'ליד' ? 'brand' : 'neutral'}>{contact.status}</Chip></div>
           <h3>{contact.name}</h3>
-          <p>{contact.company || 'לקוח פרטי'}</p>
-          <div className="client-contact-lines"><span>{contact.phone || 'ללא טלפון'}</span><span>{contact.email || 'ללא מייל'}</span></div>
+          <p>{[contact.company, contact.role].filter(Boolean).join(' · ') || 'לקוח פרטי'}</p>
+          <div className="client-contact-lines"><span>{contact.mobile || contact.phone || 'ללא טלפון'}</span><span>{contact.email || 'ללא מייל'}</span></div>
           <div className="client-card-stats">{(projectPermissions?.view ?? true) && <span><b>{projects.length}</b> פרויקטים</span>}{(taskPermissions?.view ?? true) && <span><b>{openTasks}</b> משימות פתוחות</span>}</div>
         </button>
       })}
@@ -134,8 +144,8 @@ function ClientDirectory({ workspace, setWorkspace, onSelectClient, canEditConta
       <Field label="חברה"><input name="company" /></Field>
       <Field label="טלפון"><input name="phone" type="tel" autoComplete="tel" /></Field>
       <Field label="מייל"><input name="email" type="email" autoComplete="email" /></Field>
-      <Field label="סטטוס"><select name="status"><option>ליד</option><option>פעיל</option><option>בהמתנה</option><option>לא פעיל</option></select></Field>
-      <Field label="תגיות"><input name="tags" placeholder="יזם, קבלן, דיירים" /></Field>
+      <ContactFields contacts={workspace.contacts} /><Field label="סטטוס"><select name="status"><option>ליד</option><option>פעיל</option><option>בהמתנה</option><option>לא פעיל</option></select></Field>
+      <ContactTags contacts={workspace.contacts} />
       <Field label="הערות"><textarea name="notes" rows={4} /></Field>
       <div className="form-actions"><button className="secondary" type="button" onClick={() => setAdding(false)}>ביטול</button><button className="primary">שמירה</button></div>
     </form></Modal>}
@@ -175,7 +185,7 @@ function ClientWorkspace({ workspace, setWorkspace, onSelectClient, onProject, c
 
   if (!contact) return <section className="card"><EmptyState title="הלקוח לא נמצא" text="ייתכן שהלקוח נמחק או שהמידע השתנה." action={<button type="button" className="secondary" onClick={() => onSelectClient(null)}>חזרה ללקוחות</button>} /></section>
 
-  const projects = workspace.projects.filter((project) => project.clientIds.includes(contact.id))
+  const projects = workspace.projects.filter((project) => (project.clientIds.includes(contact.id) || project.contactIds?.includes(contact.id)))
   const projectIds = new Set(projects.map((project) => project.id))
   const tasks = workspace.tasks.filter((task) => task.projectId && projectIds.has(task.projectId))
   const openTasks = tasks.filter((task) => !['בוצע', 'סגור'].includes(task.status))
@@ -214,6 +224,7 @@ function ClientWorkspace({ workspace, setWorkspace, onSelectClient, onProject, c
       name: String(data.get('name') || ''),
       company: String(data.get('company') || ''),
       phone: String(data.get('phone') || ''),
+      ...contactFormDetails(data),
       email: String(data.get('email') || ''),
       status: String(data.get('status') || 'פעיל'),
       tags: String(data.get('tags') || '').split(',').map((value) => value.trim()).filter(Boolean),
@@ -369,12 +380,12 @@ function ClientWorkspace({ workspace, setWorkspace, onSelectClient, onProject, c
         {calendarAccess.view && <button type="button" onClick={() => setTab('timeline')}><small>אירועים</small><strong>{events.length}</strong><span>{events.filter((event) => new Date(event.start).getTime() > Date.now()).length} עתידיים</span></button>}
         {fileAccess.view && <button type="button" onClick={() => setTab('files')}><small>קבצים</small><strong>{files.length}</strong><span>{financeAccess.view ? `${quotes.length} מסמכים כספיים` : 'מסמכי פרויקט'}</span></button>}
       </section>
-      <section className="card"><div className="card-head"><h2>פרטי קשר</h2>{canUpdateContacts && <button type="button" className="secondary" onClick={() => setEditingClient(true)}>עריכה</button>}</div><div className="client-detail-list"><div><span>טלפון</span><strong>{contact.phone ? <a href={`tel:${contact.phone}`}>{contact.phone}</a> : '—'}</strong></div><div><span>מייל</span><strong>{contact.email ? <button type="button" className="text-button" onClick={() => setTab('messages')}>{contact.email}</button> : '—'}</strong></div><div><span>חברה</span><strong>{contact.company || '—'}</strong></div><div><span>תגיות</span><strong>{contact.tags.length ? contact.tags.join(', ') : '—'}</strong></div></div>{contact.notes && <div className="client-notes-block"><strong>הערות</strong><p>{contact.notes}</p></div>}</section>
+      <section className="card"><div className="card-head"><h2>פרטי קשר</h2>{canUpdateContacts && <button type="button" className="secondary" onClick={() => setEditingClient(true)}>עריכה</button>}</div><div className="client-detail-list"><div><span>טלפון</span><strong>{contact.phone ? <a href={`tel:${contact.phone}`}>{contact.phone}</a> : '—'}</strong></div><div><span>מייל</span><strong>{contact.email ? <button type="button" className="text-button" onClick={() => setTab('messages')}>{contact.email}</button> : '—'}</strong></div><div><span>חברה</span><strong>{contact.company || '—'}</strong></div>{contactFields.map(([key, label]) => contact[key] && <div key={key}><span>{label}</span><strong>{key === 'mobile' ? <a href={`tel:${contact[key]}`}>{contact[key]}</a> : contact[key]}</strong></div>)}{Object.entries(contact.importDetails || {}).map(([label, value]) => <div key={label}><span>{label}</span><strong>{value}</strong></div>)}<div><span>תגיות</span><strong>{contact.tags.length ? contact.tags.join(', ') : '—'}</strong></div></div>{contact.notes && <div className="client-notes-block"><strong>הערות</strong><p>{contact.notes}</p></div>}</section>
       {projectAccess.view && <section className="card"><div className="card-head"><h2>פרויקטים</h2>{canCreateProjects && <button type="button" className="primary" onClick={() => setAddingProject(true)}><Plus /> פרויקט</button>}</div><div className="compact-project-list">{projects.slice(0, 5).map((project) => <button key={project.id} onClick={() => onProject(project.id)}><div><strong>{project.name}</strong><small>{project.address || 'ללא כתובת'}</small></div><Chip tone={project.status === 'בביצוע' ? 'good' : 'brand'}>{project.status}</Chip></button>)}{!projects.length && <EmptyState title="אין פרויקטים ללקוח" text="ניתן ליצור פרויקט ישירות מכרטיס הלקוח." />}</div></section>}
       {taskAccess.view && <section className="card"><div className="card-head"><h2>לטיפול</h2></div><div className="compact-task-list">{openTasks.slice(0, 6).map((task) => <button type="button" key={task.id} onClick={() => setEditingTask(task)}><div><strong>{task.title}</strong><small>{workspace.projects.find((project) => project.id === task.projectId)?.name || ''}</small></div><Chip tone={task.priority === 'דחופה' || task.status === 'דורש מעקב' ? 'bad' : 'brand'}>{task.status}</Chip></button>)}{!openTasks.length && <div className="table-empty">אין משימות פתוחות.</div>}</div></section>}
     </div>}
 
-    {tab === 'projects' && projectAccess.view && <section className="card"><div className="card-head"><h2>פרויקטים</h2>{canCreateProjects && <button type="button" className="primary" onClick={() => setAddingProject(true)}><Plus /> פרויקט חדש</button>}</div><div className="client-project-list">{projects.map((project) => <article key={project.id}>
+    {tab === 'projects' && projectAccess.view && <section className="card"><div className="card-head"><h2>פרויקטים</h2>{canCreateProjects && <button type="button" className="primary" onClick={() => setAddingProject(true)}><Plus /> פרויקט חדש</button>}</div><div className="client-project-list">{canUpdateProjects && <details><summary>שיוך איש הקשר לפרויקטים נוספים</summary>{workspace.projects.map(project => <label key={project.id}><input type="checkbox" checked={project.contactIds?.includes(contact.id) || false} onChange={event => patchProject(project.id, { contactIds: event.target.checked ? [...(project.contactIds || []), contact.id] : project.contactIds?.filter(id => id !== contact.id) })} />{project.name}{project.clientIds.includes(contact.id) ? ' · גם לקוח הפרויקט' : ''}</label>)}</details>}{projects.map((project) => <article key={project.id}>
       <div className="client-project-main"><div><span className="project-site-label">פרויקט</span><strong>{project.name || 'פרויקט בנייה'}</strong><small className="client-project-address">{project.address || 'חסרה כתובת'}</small></div><button type="button" className="secondary" onClick={() => onProject(project.id)}><FolderKanban /> פתיחה</button></div>
       <div className="client-project-fields">
         {canStatusProjects ? <label>סטטוס<select value={project.status} onChange={(e) => patchProject(project.id, { status: e.target.value as ProjectStatus })}><option>בתכנון</option><option>בביצוע</option><option>בהמתנה</option><option>הושלם</option><option>מוקפא</option></select></label> : <div><span>סטטוס</span><strong>{project.status}</strong></div>}
@@ -411,15 +422,15 @@ function ClientWorkspace({ workspace, setWorkspace, onSelectClient, onProject, c
       <Field label="חברה"><input name="company" defaultValue={contact.company} /></Field>
       <Field label="טלפון"><input name="phone" type="tel" autoComplete="tel" defaultValue={contact.phone} /></Field>
       <Field label="מייל"><input name="email" type="email" autoComplete="email" defaultValue={contact.email} /></Field>
-      <Field label="סטטוס"><select name="status" defaultValue={contact.status}><option>ליד</option><option>פעיל</option><option>בהמתנה</option><option>לא פעיל</option></select></Field>
-      <Field label="תגיות"><input name="tags" defaultValue={contact.tags.join(', ')} /></Field>
+      <ContactFields contact={contact} contacts={workspace.contacts} /><Field label="סטטוס"><select name="status" defaultValue={contact.status}><option>ליד</option><option>פעיל</option><option>בהמתנה</option><option>לא פעיל</option></select></Field>
+      <ContactTags contact={contact} contacts={workspace.contacts} />
       <Field label="הערות"><textarea name="notes" rows={5} defaultValue={contact.notes} /></Field>
       <div className="form-actions"><button className="secondary" type="button" onClick={() => setEditingClient(false)}>ביטול</button><button className="primary">שמירה</button></div>
     </form></Modal>}
 
     {canCreateProjects && addingProject && <Modal title="פרויקט חדש ללקוח" onClose={() => setAddingProject(false)} wide><form className="form-grid two-col" onSubmit={createProject}>
       <Field label="שם הפרויקט"><input name="name" required /></Field><Field label="כתובת *" hint="שדה חובה — התחילו להקליד ובחרו מההצעות"><AddressAutocomplete name="address" required existingAddresses={workspace.projects.map((item) => item.address)} placeholder="רחוב, מספר, עיר" /></Field>
-      <Field label="סטטוס"><select name="status"><option>בתכנון</option><option>בביצוע</option><option>בהמתנה</option><option>הושלם</option><option>מוקפא</option></select></Field>
+      <ContactFields contacts={workspace.contacts} /><Field label="סטטוס"><select name="status"><option>בתכנון</option><option>בביצוע</option><option>בהמתנה</option><option>הושלם</option><option>מוקפא</option></select></Field>
       <Field label="מנהל פרויקט"><select name="managerId"><option value="">לא משויך</option>{workspace.team.filter((member) => member.active).map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select></Field>
       <Field label="תאריך התחלה"><input name="startDate" type="date" /></Field><Field label="יעד"><input name="targetDate" type="date" /></Field>
       <Field label="הערות"><textarea name="notes" rows={4} /></Field>
@@ -429,7 +440,7 @@ function ClientWorkspace({ workspace, setWorkspace, onSelectClient, onProject, c
     {canCreateTasks && addingTask && <Modal title="משימה חדשה" onClose={() => setAddingTask(false)}><form className="form-grid" onSubmit={createTask}>
       <Field label="פרויקט"><select name="projectId" required><option value="">בחירת פרויקט</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name} — {project.address || 'כתובת חסרה'}</option>)}</select></Field>
       <Field label="משימה"><input name="title" required /></Field>
-      <Field label="סטטוס"><select name="status">{workspace.taskStatuses.map((status) => <option key={status}>{status}</option>)}</select></Field>
+      <ContactFields contacts={workspace.contacts} /><Field label="סטטוס"><select name="status">{workspace.taskStatuses.map((status) => <option key={status}>{status}</option>)}</select></Field>
       <Field label="עדיפות"><select name="priority"><option>נמוכה</option><option>רגילה</option><option>גבוהה</option><option>דחופה</option></select></Field>
       <Field label="צבע / קטלוג"><select name="colorTag"><option value="">ללא צבע</option>{CLIENT_TASK_COLORS.filter((item) => item.id).map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></Field>
       <Field label="אחראי"><select name="assigneeId"><option value="">ללא אחראי</option>{workspace.team.filter((member) => member.active).map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select></Field>
