@@ -16,6 +16,19 @@ const { mailContent } = await import('../worker/src/mailHtml.js')
 const options = { canManageUsers: false, isDeveloper: false }
 const { deleteProject, deleteContact } = await server.ssrLoadModule('/src/lib/records.ts')
 
+test('calendar merge keeps private Google metadata for source filters and deduplicates equivalent timestamps', async () => {
+  const { mergeCalendarEvents } = await server.ssrLoadModule('/src/components/CalendarFiles.tsx')
+  const shared = [{ id: 'local', title: 'QA meeting', start: '2026-10-08T06:00:00.000Z', projectId: 'project', taskId: 'task', notes: 'Shared notes' }]
+  const personal = [{ id: 'google-remote', title: 'QA meeting', start: '2026-10-08T09:00:00+03:00', googleEventId: 'remote', googleHtmlLink: 'https://calendar.google.com/private' }, { id: 'another', title: 'QA meeting', start: '2026-10-08T10:00:00+03:00', googleEventId: 'another' }]
+  const merged = mergeCalendarEvents(shared, personal)
+  assert.equal(merged.length, 2); assert.equal(merged[0].id, 'local')
+  assert.equal(merged[0].projectId, 'project'); assert.equal(merged[0].notes, 'Shared notes')
+  assert.equal(merged.filter(event => event.googleEventId).length, 2)
+  assert.equal(merged[0].googleHtmlLink, personal[0].googleHtmlLink)
+  assert.equal(shared[0].googleEventId, undefined)
+  assert.deepEqual(mergeCalendarEvents(shared, []), shared)
+})
+
 test('daily Google cache is private, expires after 24 hours and manual refresh bypasses it', async () => {
   const kv = new Map(); const env = { CONFIG: { get: async key => kv.get(key) || null, put: async (key, value) => kv.set(key, JSON.parse(value)) } }
   let calls = 0; const url = 'https://www.googleapis.com/drive/v3/files?q=folder'

@@ -9,6 +9,16 @@ import type { CalendarEvent, FileRecord, Workspace } from '../types'
 import type { AreaPermissions } from '../lib/permissions'
 import { Chip, EmptyState, Field, Modal, StoredFileLink, dateTimeLabel, nowIso, uid } from './common'
 
+// Google metadata stays in the caller's personal display state. Shared records
+// retain their project/task links without hiding their matching Google event.
+export function mergeCalendarEvents(shared: CalendarEvent[], personal: CalendarEvent[]) {
+  const sameEvent = (left: CalendarEvent, right: CalendarEvent) => left.title === right.title && Date.parse(left.start) === Date.parse(right.start)
+  return [...shared.map(item => {
+    const google = personal.find(candidate => sameEvent(item, candidate))
+    return google ? { ...item, googleEventId: google.googleEventId, googleHtmlLink: google.googleHtmlLink } : item
+  }), ...personal.filter(item => !shared.some(candidate => sameEvent(item, candidate)))]
+}
+
 export function CalendarPage({ workspace, setWorkspace, onProject, onTask, startCreating = false, canEdit = true, permissions }: { workspace: Workspace; setWorkspace: React.Dispatch<React.SetStateAction<Workspace>>; onProject?: (id: string) => void; onTask?: (id: string) => void; startCreating?: boolean; canEdit?: boolean; permissions?: AreaPermissions }) {
   const calendarPermissions: AreaPermissions = permissions || { view: true, create: canEdit, edit: canEdit, status: canEdit, delete: canEdit }
   const canCreate = calendarPermissions.create
@@ -94,7 +104,7 @@ export function CalendarPage({ workspace, setWorkspace, onProject, onTask, start
   const monthLabel = new Intl.DateTimeFormat('he-IL-u-ca-gregory', { month: 'long', year: 'numeric' }).format(month)
   const todayKey = dateKey(today)
   const weekdayLabels = ['א׳', 'ב׳', 'ג׳', 'ד׳', 'ה׳', 'ו׳', 'ש׳']
-  const filteredCalendarEvents = useMemo(() => [...workspace.events, ...personalEvents.filter((item) => !workspace.events.some((shared) => shared.title === item.title && shared.start === item.start))].filter((item) => {
+  const filteredCalendarEvents = useMemo(() => mergeCalendarEvents(workspace.events, personalEvents).filter((item) => {
     const project = workspace.projects.find((entry) => entry.id === item.projectId)
     const task = workspace.tasks.find((entry) => entry.id === item.taskId)
     const q = calendarSearch.trim().toLowerCase()
