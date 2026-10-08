@@ -1,0 +1,39 @@
+name: RAM CRM checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ram-crm-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Install Worker dependencies
+        run: npm ci --prefix worker
+      - name: TypeScript check
+        run: npm run lint
+      - name: Regression tests
+        run: npm test
+      - name: Worker syntax check
+        run: node --check worker/src/index.js
+      - name: Production build
+        run: npm run build
