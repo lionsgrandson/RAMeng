@@ -1,29 +1,47 @@
-name: CRM verification
+name: RAM CRM checks
+
 on:
   push:
     branches: [main]
   pull_request:
+    branches: [main]
+
 permissions:
   contents: read
+
+concurrency:
+  group: ram-crm-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Check out code
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: '22'
           cache: npm
           cache-dependency-path: |
             package-lock.json
             worker/package-lock.json
-      - run: npm ci
-      - run: npm ci --prefix worker
-      - run: npm run lint
-      - run: npm test
-      - run: npm run build
-      - run: node --check worker/src/index.js
-      - run: git diff --check
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Install Worker dependencies
+        run: npm ci --prefix worker
+      - name: TypeScript check
+        run: npm run lint
+      - name: Regression tests
+        run: npm test
+      - name: Worker syntax check
+        run: node --check worker/src/index.js
+      - name: Production build
+        run: npm run build
+      - name: Whitespace check
+        run: git diff --check
       - name: Install disposable PostgreSQL runtime
         run: npm install --prefix "$RUNNER_TEMP/rameng-pg-runner" --no-save embedded-postgres@17.9.0-beta.17 pg
       - name: Execute database workflows
