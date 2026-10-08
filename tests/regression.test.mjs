@@ -74,6 +74,16 @@ test('project deletion preserves dependent business records and removes their pr
   assert.equal(workspace.tasks[0].projectId, 'p')
 })
 
+test('project deletion unassigns external tasks while retaining internal assignments and task content', () => {
+  const workspace = cloneWorkspace()
+  workspace.team = [{ id: 'external', role: 'צפייה', external: true }, { id: 'internal', role: 'מהנדס' }]
+  workspace.tasks = [{ id: 'a', projectId: 'p', assigneeId: 'external', title: 'Preserved', status: 'בטיפול', description: 'Keep notes' }, { id: 'b', projectId: 'p', assigneeId: 'internal' }, { id: 'c', projectId: 'other', assigneeId: 'external' }]
+  const next = deleteProject(workspace, 'p')
+  assert.equal(next.tasks[0].assigneeId, undefined)
+  assert.equal(next.tasks[0].title, 'Preserved'); assert.equal(next.tasks[0].description, 'Keep notes')
+  assert.equal(next.tasks[1].assigneeId, 'internal'); assert.deepEqual(next.tasks[2], workspace.tasks[2])
+})
+
 test('contact deletion preserves projects and financial records without dangling client links', () => {
   const workspace = cloneWorkspace()
   workspace.contacts = [{ id: 'c' }, { id: 'keep' }]
@@ -87,6 +97,21 @@ test('contact deletion preserves projects and financial records without dangling
   assert.equal(next.quotes[0].contactId, undefined)
   assert.equal(next.deals[0].contactId, undefined)
   assert.deepEqual(next.clientNotes, [])
+})
+
+test('contact deletion removes independent project contact links and preserves other associations', () => {
+  const workspace = cloneWorkspace()
+  workspace.contacts = [{ id: 'c' }, { id: 'keep' }]
+  workspace.projects = [
+    { id: 'contact-only', clientIds: ['keep'], contactIds: ['c', 'keep'] },
+    { id: 'both', clientIds: ['c', 'keep'], contactIds: ['c'] },
+    { id: 'untouched', clientIds: ['keep'], contactIds: ['keep'] },
+  ]
+  const next = deleteContact(workspace, 'c')
+  assert.deepEqual(next.projects[0], { id: 'contact-only', clientIds: ['keep'], contactIds: ['keep'] })
+  assert.deepEqual(next.projects[1], { id: 'both', clientIds: ['keep'], contactIds: [] })
+  assert.equal(next.projects[2], workspace.projects[2])
+  assert.deepEqual(workspace.projects[0].contactIds, ['c', 'keep'])
 })
 
 test('contact exports detect row-three headers, preserve extra columns and ignore date footers', async () => {
@@ -311,17 +336,19 @@ test('linking an existing Drive folder validates and saves an owner-scoped refer
   const result = await worker.fetch(request('/api/google/drive/project-folder', { projectId: 'project', folderId: 'existing-folder', name: 'QA' }), privateEnv)
   assert.equal(result.status, 200)
   assert.equal((await result.json()).id, 'existing-folder')
-  assert.equal(writes[0][0], 'drive-project-folder:qa:project')
+  assert.equal(writes.find(([key]) => key === 'drive-project-folder:qa:project')?.[1].readOnly, true)
+  assert.equal(writes.find(([key]) => key === 'drive-readonly-folder:qa:existing-folder')?.[1], true)
   assert.equal(calls.some(([url, method]) => url.includes('googleapis.com') && method !== 'GET'), false)
 })
 
-function googleFixture(t, handler, role = 'admin') {
+function googleFixture(t, handler, role = 'admin', ancestry = {}) {
   const kv = new Map([['rameng:admin-config:v1', config], ['rameng:google-tokens:v2:qa', { access_token: 'qa-google-token', expires_at: Date.now() + 3600000 }]])
-  const privateEnv = { CONFIG: { get: async (key) => kv.get(key) || null, put: async (key, value) => kv.set(key, JSON.parse(value)) } }
+  const privateEnv = { CONFIG: { get: async (key) => kv.get(key) || null, put: async (key, value) => kv.set(key, JSON.parse(value)), delete: async key => kv.delete(key) } }
   t.mock.method(globalThis, 'fetch', async (url, init = {}) => {
     if (String(url).endsWith('/auth/v1/user')) return Response.json({ id: 'qa', email: 'qa@example.test' })
     if (String(url).includes('/rest/v1/memberships')) return Response.json([{ role, permissions: null }])
     assert.equal(init.headers.authorization, 'Bearer qa-google-token')
+    if (new URL(url).searchParams.get('fields') === 'id,parents,trashed,mimeType') { const id = decodeURIComponent(new URL(url).pathname.split('/').at(-1)); return Response.json({ id, parents: ancestry[id] || [] }) }
     return handler(new URL(url), init)
   })
   t.mock.method(console, 'error', () => undefined)
@@ -338,7 +365,7 @@ test('category normalization preserves sources, resolves equivalent roles and is
   assert.deepEqual(normalizeContactCategories({ role: 'מנהל', tags: ['יזמים'], companyType: '' }).tags, ['יזמים'])
 })
 
-function projectMailFixture(t, googleHandler, role = 'admin', failReference = false) {
+function projectMailFixture(t, googleHandler, role = 'admin', failReference = false, ancestry = {}) {
   const kv = new Map([['rameng:admin-config:v1', config], ['rameng:google-tokens:v2:qa', { access_token: 'qa-google-token', email: 'qa@example.test', expires_at: Date.now() + 3600000 }]])
   const privateEnv = { CONFIG: {
     get: async key => kv.get(key) || null,
@@ -351,6 +378,7 @@ function projectMailFixture(t, googleHandler, role = 'admin', failReference = fa
     if (String(url).includes('/rest/v1/memberships')) return Response.json([{ role, permissions: null }])
     if (String(url).endsWith('/rpc/get_workspace_state')) { assert.equal(init.headers.authorization, 'Bearer qa-token'); return Response.json([{ data: { projects: [{ id: 'project', categoryIds: ['architecture'] }], categories: [{ id: 'architecture', name: 'אדריכלות' }], tasks: [{ id: 'task', projectId: 'project' }, { id: 'other-task', projectId: 'other' }] } }]) }
     assert.equal(init.headers.authorization, 'Bearer qa-google-token')
+    if (new URL(url).searchParams.get('fields') === 'id,parents,trashed,mimeType') { const id = decodeURIComponent(new URL(url).pathname.split('/').at(-1)); return Response.json({ id, parents: ancestry[id] || [] }) }
     return googleHandler(new URL(url), init)
   })
   t.mock.method(console, 'error', () => undefined)
@@ -747,13 +775,28 @@ test('protected Drive folders reject category creation and sharing without provi
   assert.equal((await worker.fetch(request('/api/google/drive/category', { orgId: 'org', projectId: 'project', folderId: 'folder', categoryId: 'architecture', name: 'אדריכלות' }), privateEnv)).status, 403)
 })
 
+test('Drive per-file OAuth rejection gives actionable feedback without recording a permission', async t => {
+  const { privateEnv, kv } = projectMailFixture(t, async () => Response.json({ error: { errors: [{ reason: 'appNotAuthorizedToFile' }] } }, { status: 403 }))
+  kv.set('drive-project-folder:qa:project', { id: 'folder', readOnly: false })
+  const result = await worker.fetch(request('/api/google/drive/sharing', { orgId: 'org', projectId: 'project', fileId: 'folder', email: 'external@example.test', role: 'reader' }), privateEnv)
+  assert.equal(result.status, 403)
+  assert.match((await result.json()).error, /קובץ שהועלה דרך המערכת/)
+  assert.equal([...kv.keys()].some(key => key.startsWith('drive-share:')), false)
+})
+
 test('meeting export uses current linked task fields, preserves manual notes, escapes HTML and excludes other project tasks', async () => {
   const { meetingHtml } = await server.ssrLoadModule('/src/components/MeetingSummaries.tsx')
   const workspace = cloneWorkspace(); workspace.projects = [{ id: 'project', name: 'פרויקט' }]; workspace.tasks = [{ id: 'task', projectId: 'project', title: '<img onerror=alert(1)>', status: 'בטיפול', dueDate: '2026-10-09' }, { id: 'private', projectId: 'other', title: 'secret' }]
   const summary = { title: 'סיכום פגישה', date: '2026-10-08', projectId: 'project', taskIds: ['task','private'], notes: 'הערה ידנית', taskNotes: { task: 'החלטה לפגישה' } }
   const html = meetingHtml(summary, workspace)
   assert.match(html, /dir="rtl"/); assert.match(html, /הערה ידנית/); assert.match(html, /החלטה לפגישה/); assert.match(html, /&lt;img onerror=alert\(1\)&gt;/); assert.doesNotMatch(html, /secret/)
+  workspace.tasks[0].description = 'תיאור ארוך mixed English <script>alert(1)</script>'
+  assert.match(meetingHtml(summary, workspace), /תיאור ארוך mixed English &lt;script&gt;alert\(1\)&lt;\/script&gt;/)
   workspace.tasks[0].status = 'בוצע'; assert.match(meetingHtml(summary, workspace), /בוצע/); assert.equal(summary.taskNotes.task, 'החלטה לפגישה')
+  workspace.tasks = workspace.tasks.filter(task => task.id !== 'task')
+  const deletedHtml = meetingHtml(summary, workspace)
+  assert.match(deletedHtml, /משימה שהוסרה: task/); assert.match(deletedHtml, /הערה ידנית/)
+  assert.equal(summary.taskNotes.task, 'החלטה לפגישה')
 })
 
 test('professional Drive folder creation reuses its stored folder instead of duplicating it', async t => {
@@ -769,29 +812,157 @@ test('professional Drive folder creation reuses its stored folder instead of dup
   assert.equal(creates, 1)
 })
 
-for (const outcome of ['sent', 'failed', 'uncertain']) test(`assignment email records ${outcome} delivery and sends only a claimed authorized task`, async t => {
+for (const outcome of ['sent', 'failed', 'uncertain', 'server-error', 'timeout-response', 'standalone', 'database-error']) test(`assignment email handles ${outcome} delivery without duplicate or lost sends`, async t => {
   let sends = 0; const states = []
   const { privateEnv } = projectMailFixture(t, async (url, init) => {
     assert.ok(url.pathname.endsWith('/messages/send')); sends++
     const mime = Buffer.from(JSON.parse(init.body).raw, 'base64url').toString('utf8')
     assert.match(mime, /To: external@example.test/)
     if (outcome === 'uncertain') throw Error('Connection lost after send started')
+    if (outcome === 'server-error') return Response.json({}, { status: 503 })
+    if (outcome === 'timeout-response') return Response.json({}, { status: 408 })
     return Response.json({ id: 'sent' }, { status: outcome === 'failed' ? 403 : 200 })
   })
   privateEnv.SUPABASE_SECRET_KEY = 'qa-server-secret'
   const priorFetch = globalThis.fetch
   t.mock.method(globalThis, 'fetch', async (target, init = {}) => {
     const url = new URL(String(target))
-    if (url.pathname.endsWith('/rest/v1/workspace_state')) return Response.json({ data: { tasks: [{ id: 'task', projectId: 'project', assigneeId: 'external', title: 'בדיקת תכנית', status: 'בטיפול' }] } })
+    if (url.pathname.endsWith('/rest/v1/workspace_state')) return outcome === 'database-error' ? Response.json({ message: 'Database unavailable' }, { status: 503 }) : Response.json({ data: { tasks: [{ id: 'task', ...(outcome === 'standalone' ? {} : { projectId: 'project' }), assigneeId: 'external', title: 'בדיקת תכנית', status: 'בטיפול' }] } })
     if (url.pathname.endsWith('/rest/v1/project_collaborators')) return Response.json([{ project_id: 'project' }])
-    if (url.pathname.endsWith('/rest/v1/memberships') && url.searchParams.get('user_id') === 'eq.external') return Response.json([{ role: 'external' }])
+    if (url.pathname.endsWith('/rest/v1/memberships') && url.searchParams.get('user_id') === 'eq.external') return Response.json([{ role: outcome === 'standalone' ? 'engineer' : 'external' }])
     if (url.pathname.endsWith('/rest/v1/task_notifications')) {
       if (init.method === 'PATCH') { const state = JSON.parse(init.body).state; states.push(state); return Response.json(state === 'sending' ? [{ id: 'n' }] : []) }
-      return Response.json([{ id: 'n', task_id: 'task', project_id: 'project', user_id: 'external', assigned_by: 'qa', email: 'external@example.test' }])
+      return Response.json([{ id: 'n', task_id: 'task', project_id: outcome === 'standalone' ? null : 'project', user_id: 'external', assigned_by: 'qa', email: 'external@example.test' }])
     }
     return priorFetch(target, init)
   })
   const response = await worker.fetch(request('/api/task-notifications/send', { orgId: 'org' }), privateEnv)
-  assert.equal(response.status, 200); assert.deepEqual(await response.json(), { sent: outcome === 'sent' ? 1 : 0, failed: outcome === 'sent' ? 0 : 1 })
-  assert.deepEqual(states, ['sending', outcome]); assert.equal(sends, 1)
+  if (outcome === 'database-error') { assert.equal(response.status, 502); assert.deepEqual(states, []); assert.equal(sends, 0); return }
+  const success = ['sent','standalone'].includes(outcome)
+  assert.equal(response.status, 200); assert.deepEqual(await response.json(), { sent: success ? 1 : 0, failed: success ? 0 : 1 })
+  assert.deepEqual(states, ['sending', success ? 'sent' : outcome === 'failed' ? 'failed' : 'uncertain']); assert.equal(sends, 1)
+})
+
+test('Drive writes reject protected ancestors through folder relinking, creation, upload, category and sharing endpoints', async t => {
+  let mutations = 0
+  const { privateEnv, kv } = projectMailFixture(t, async (url, init) => {
+    if (init.method && init.method !== 'GET') { mutations++; throw Error('Protected content must never be modified') }
+    return Response.json({ id: 'child', mimeType: 'application/vnd.google-apps.folder', parents: ['protected'], capabilities: { canAddChildren: true } })
+  }, 'admin', false, { child: ['protected'] })
+  kv.set('drive-protected-folder:protected', true)
+  kv.set('drive-project-folder:qa:project', { id: 'child', readOnly: false })
+  const bodies = [
+    ['/api/google/drive/project-folder', { projectId: 'new-project', folderId: 'child', readOnly: false }],
+    ['/api/google/drive/project-folder', { projectId: 'new-project', name: 'New', parentId: 'child' }],
+    ['/api/google/drive/upload', { projectId: 'project', recordId: 'r', automatic: false, file: { name: 'test.txt', type: 'text/plain', data: 'AQID' } }],
+    ['/api/google/drive/category', { orgId: 'org', projectId: 'project', folderId: 'child', categoryId: 'architecture', name: 'Architecture' }],
+    ['/api/google/drive/sharing', { orgId: 'org', projectId: 'project', fileId: 'child', email: 'external@example.test', role: 'reader' }],
+  ]
+  for (const [path, body] of bodies) assert.equal((await worker.fetch(request(path, body), privateEnv)).status, 403, path)
+  assert.equal(mutations, 0)
+  assert.equal(kv.has('drive-project-folder:qa:new-project'), false)
+})
+
+test('Drive relinking cannot turn a descendant of a read-only linked folder into a writable root', async t => {
+  const { privateEnv, kv } = googleFixture(t, async () => Response.json({ id: 'child', mimeType: 'application/vnd.google-apps.folder', capabilities: { canAddChildren: true } }), 'admin', { child: ['read-only'] })
+  kv.set('drive-readonly-folder:qa:read-only', true)
+  assert.equal((await worker.fetch(request('/api/google/drive/project-folder', { projectId: 'new', folderId: 'child', readOnly: false }), privateEnv)).status, 403)
+  assert.equal(kv.has('drive-project-folder:qa:new'), false)
+})
+
+test('reopened tasks immediately leave the archive while server completion metadata refreshes', async () => {
+  const { isCompleted } = await server.ssrLoadModule('/src/components/TaskBoard.tsx')
+  assert.equal(isCompleted({ status: 'בטיפול', completedAt: '2026-10-08T18:00:00Z' }), false)
+  assert.equal(isCompleted({ status: 'בוצע', completedAt: undefined }), true)
+  assert.equal(isCompleted({ status: '', completedAt: '2026-10-08T18:00:00Z' }), true)
+})
+
+test('task table tolerates absent optional custom fields', async () => {
+  const { default: TaskBoard } = await server.ssrLoadModule('/src/components/TaskBoard.tsx')
+  const { createElement } = await import('react')
+  const { renderToStaticMarkup } = await import('react-dom/server')
+  const workspace = cloneWorkspace()
+  workspace.tasks = [{ id: 't', title: 'Legacy task', status: 'בטיפול', priority: 'רגילה', order: 1, createdAt: '2026-10-08' }]
+  workspace.taskColumns.push({ id: 'optional', key: 'custom.optional', label: 'Optional', type: 'text', visible: true })
+  assert.match(renderToStaticMarkup(createElement(TaskBoard, { workspace, setWorkspace() {} })), /Legacy task/)
+})
+
+test('restricted workspace hydration supplies safe missing settings on load and refresh', async () => {
+  const { hydrateWorkspace } = await server.ssrLoadModule('/src/seed.ts')
+  const projection = { settings: { organizationName: 'Restricted', organizationShortName: 'RAM', logoUrl: '' }, tasks: [] }
+  const workspace = hydrateWorkspace(projection)
+  assert.equal(workspace.settings.organizationName, 'Restricted')
+  assert.equal(typeof workspace.settings.website, 'string')
+  assert.doesNotThrow(() => workspace.settings.website.replace(/^https?:\/\//, ''))
+  assert.deepEqual(workspace.contacts, [])
+  assert.equal(projection.settings.website, undefined)
+})
+
+test('expired or rejected invitation callbacks cannot render a working password-change form', async () => {
+  const { invitationUrlError } = await server.ssrLoadModule('/src/lib/runtime.ts')
+  assert.match(invitationUrlError('#error=access_denied&error_code=otp_expired'), /פג תוקף/)
+  assert.match(invitationUrlError('#error_code=otp_expired'), /קישור חדש/)
+  assert.equal(invitationUrlError('#type=invite&access_token=fixture'), '')
+  const { SetPasswordScreen } = await server.ssrLoadModule('/src/components/AuthSetup.tsx')
+  const { createElement } = await import('react'); const { renderToStaticMarkup } = await import('react-dom/server')
+  const oldWindow = globalThis.window
+  try {
+    globalThis.window = { location: { hash: '#error=access_denied&error_code=otp_expired' } }
+    const html = renderToStaticMarkup(createElement(SetPasswordScreen, { onSuccess() {} }))
+    assert.match(html, /קישור חדש/); assert.doesNotMatch(html, /<form|type="password"/)
+  } finally { globalThis.window = oldWindow }
+})
+
+for (const outcome of ['sent','uncertain','provider-error','revoked-sender','missing-google','already-claimed','interrupted','blocked-front']) test(`cron outbox handles ${outcome} with no browser session and no duplicate retry`, async t => {
+  let sends=0; let state=outcome==='interrupted' ? 'sending' : 'pending'; const transitions=[]
+  const { privateEnv, kv }=projectMailFixture(t,async (_url,init)=>{
+    sends++
+    const raw=Buffer.from(JSON.parse(init.body).raw,'base64url').toString('utf8')
+    assert.match(raw,/To: external@example.test/)
+    if(outcome==='uncertain') throw Error('Interrupted Gmail send')
+    return Response.json({id:'sent'},{status:outcome==='provider-error'?503:200})
+  })
+  privateEnv.SUPABASE_SECRET_KEY='qa-server-secret'
+  if(outcome==='missing-google') kv.delete('rameng:google-tokens:v2:qa')
+  const priorFetch=globalThis.fetch
+  t.mock.method(globalThis,'fetch',async(target,init={})=>{
+    const url=new URL(String(target))
+    if(url.pathname.endsWith('/rest/v1/task_notifications')) {
+      if(init.method==='PATCH') {
+        const patch=JSON.parse(init.body)
+        if(url.searchParams.has('delivery_started_at')) {
+          if(state==='sending') { state='uncertain'; transitions.push(state) }
+          return Response.json([])
+        }
+        if(patch.state==='sending') {
+          assert.ok(patch.delivery_started_at)
+          if(state!=='pending'||outcome==='already-claimed') return Response.json([])
+          state='sending'; transitions.push(state); return Response.json([{id:'n'}])
+        }
+        state=patch.state; transitions.push(state); return Response.json([])
+      }
+      assert.equal(url.searchParams.get('background_ready'),'eq.true')
+      if(state!=='pending') return Response.json([])
+      if(outcome==='blocked-front' && url.searchParams.get('select')==='id,org_id,assigned_by') {
+        if(!url.searchParams.has('id')) return Response.json(Array.from({length:10},(_,index)=>({id:`blocked-${index}`,org_id:'org',assigned_by:'offline'})))
+        assert.equal(url.searchParams.get('id'),'gt.blocked-9')
+      }
+      return Response.json([{id:'n',org_id:'org',assigned_by:'qa',task_id:'task',project_id:'project',user_id:'external',email:'external@example.test'}])
+    }
+    if(url.pathname.endsWith('/rest/v1/memberships')) {
+      const recipient=url.searchParams.get('user_id')==='eq.external'
+      return Response.json([{role:recipient?'external':outcome==='revoked-sender'?'external':'admin',permissions:null}])
+    }
+    if(url.pathname.endsWith('/rest/v1/workspace_state')) return Response.json({data:{tasks:[{id:'task',projectId:'project',assigneeId:'external',title:'QA task',status:'בטיפול'}]}})
+    if(url.pathname.endsWith('/rest/v1/project_collaborators')) return Response.json([{project_id:'project'}])
+    // Cron must never manufacture a user's login session.
+    assert.ok(!url.pathname.endsWith('/auth/v1/user'))
+    return priorFetch(target,init)
+  })
+  for(let iteration=0;iteration<(outcome==='blocked-front'?3:2);iteration++) { let completion; await worker.scheduled({},privateEnv,{waitUntil:promise=>{completion=promise}}); await completion }
+  const attempted=['sent','uncertain','provider-error','blocked-front'].includes(outcome)
+  assert.equal(sends,attempted?1:0)
+  if(outcome==='interrupted') assert.deepEqual(transitions,['uncertain'])
+  else if(attempted) assert.deepEqual(transitions,['sending',['sent','blocked-front'].includes(outcome)?'sent':'uncertain'])
+  else assert.deepEqual(transitions,[])
 })

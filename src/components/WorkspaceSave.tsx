@@ -1,7 +1,7 @@
 import { createContext, useContext } from 'react'
 import { Save } from 'lucide-react'
 
-export const WorkspaceSaveContext = createContext({ save: () => {}, state: 'idle', allowed: false, dirty: false })
+export const WorkspaceSaveContext = createContext({ save: () => {}, refresh: async () => {}, state: 'idle', allowed: false, dirty: false })
 
 export function SaveButton() {
   const { save, state, allowed } = useContext(WorkspaceSaveContext)

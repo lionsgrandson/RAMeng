@@ -12,6 +12,12 @@ export interface RuntimeConfig {
 // Production keeps the current origin so a future custom domain continues to work.
 export const PRODUCTION_APP_URL = 'https://rameng-crm.rameng-crm-worker.workers.dev'
 
+export function invitationUrlError(hash: string) {
+  const params = new URLSearchParams(hash.replace(/^#/, ''))
+  if (params.has('error') || params.has('error_code')) return 'קישור ההזמנה או איפוס הסיסמה אינו תקף או פג תוקף. בקשו קישור חדש מהמנהל.'
+  return ''
+}
+
 export function authRedirectUrl(path = '/?invite=1') {
   const origin = typeof window !== 'undefined' ? window.location.origin : ''
   const isLocal = /^(https?:\/\/)(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)

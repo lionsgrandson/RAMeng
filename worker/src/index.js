@@ -603,7 +603,7 @@ async function handleGmailInbox(request, env, config) {
 }
 
 async function handleTaskNotifications(request, env, config) {
-  const user = await requireAreaAction(request, env, config, 'tasks', 'edit')
+  const user = await requireAnyAreaAction(request, env, config, [{ area: 'tasks', action: 'create' }, { area: 'tasks', action: 'edit' }])
   await requireAreaAction(request, env, config, 'communication', 'create')
   const { orgId, notificationId } = await parseBody(request)
   if (!orgId) throw Object.assign(new Error('חסר ארגון'), { status: 400 })
@@ -614,27 +614,33 @@ async function handleTaskNotifications(request, env, config) {
     // Retry only a confirmed provider rejection, never an ambiguous send.
     await admin.from('task_notifications').update({ state: 'pending', error: null }).eq('id', notificationId).eq('org_id', orgId).eq('assigned_by', user.id).eq('state', 'failed')
   }
-  const pending = await admin.from('task_notifications').select('*').eq('org_id', orgId).eq('assigned_by', user.id).eq('state', 'pending').order('created_at').limit(20)
+  return apiJson(request, await deliverTaskNotifications(env, config, admin, orgId, user.id))
+}
+
+async function deliverTaskNotifications(env, config, admin, orgId, senderId, limit = 20, backgroundOnly = false) {
+  let query = admin.from('task_notifications').select('*').eq('org_id', orgId).eq('assigned_by', senderId).eq('state', 'pending'); if (backgroundOnly) query = query.eq('background_ready', true)
+  const pending = await query.order('created_at').limit(limit)
   if (pending.error) throw Object.assign(new Error('טעינת התראות המשימות נכשלה'), { status: 502 })
   let sent = 0; let failed = 0
   for (const notification of pending.data || []) {
     const workspace = await admin.from('workspace_state').select('data').eq('org_id', orgId).single()
-    const task = workspace.data?.data?.tasks?.find(task => task.id === notification.task_id && task.assigneeId === notification.user_id && task.projectId === notification.project_id)
+    const task = workspace.data?.data?.tasks?.find(task => task.id === notification.task_id && task.assigneeId === notification.user_id && (task.projectId || null) === (notification.project_id || null))
     const recipient = await admin.from('memberships').select('role').eq('org_id', orgId).eq('user_id', notification.user_id).maybeSingle()
     const grant = recipient.data?.role === 'external' ? await admin.from('project_collaborators').select('project_id').eq('org_id', orgId).eq('user_id', notification.user_id).eq('project_id', notification.project_id).maybeSingle() : null
+    if (workspace.error || recipient.error || grant?.error) throw Object.assign(new Error('אימות גישת המשימה נכשל. ההתראה נשארת בתור לשליחה.'), { status: 502 })
     if (!task || !recipient.data || (grant && !grant.data)) { await admin.from('task_notifications').update({ state: 'cancelled' }).eq('id', notification.id).eq('state', 'pending'); continue }
-    const claimed = await admin.from('task_notifications').update({ state: 'sending' }).eq('id', notification.id).eq('state', 'pending').select('id')
+    const claimed = await admin.from('task_notifications').update({ state: 'sending', delivery_started_at: new Date().toISOString() }).eq('id', notification.id).eq('state', 'pending').select('id')
     if (claimed.error || !claimed.data?.length) continue
     let attempted = false
     try {
       const link = `${PRODUCTION_APP_URL}/#app?page=tasks&task=${encodeURIComponent(task.id)}`
       const body = `הוקצתה לך משימה: ${task.title}\nסטטוס: ${task.status}\nתאריך יעד: ${task.dueDate || 'לא נקבע'}\nלצפייה ועדכון במערכת: ${link}`
-      const payload = await buildGmailMessage({ to: notification.email, subject: `משימה לטיפול: ${task.title}`, body }, env, config, user.id)
+      const payload = await buildGmailMessage({ to: notification.email, subject: `משימה לטיפול: ${task.title}`, body }, env, config, senderId)
       // Check connection before the write; connection failures are safely retryable.
-      await validGoogleAccessToken(env, config, user.id)
+      await validGoogleAccessToken(env, config, senderId)
       attempted = true
-      const response = await googleFetch(env, config, user.id, 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) })
-      if (!response.ok) { attempted = false; throw new Error('Google דחה את שליחת התראת המשימה') }
+      const response = await googleFetch(env, config, senderId, 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) })
+      if (!response.ok) { attempted = response.status >= 500 || response.status === 408; throw new Error(attempted ? 'לא התקבל אישור ודאי לשליחה מ-Google. יש לבדוק את תיקיית נשלח.' : 'Google דחה את שליחת התראת המשימה') }
       const saved = await admin.from('task_notifications').update({ state: 'sent', error: null }).eq('id', notification.id)
       if (saved.error) throw new Error('המייל נשלח, אך אישור השליחה לא נשמר. אין לנסות לשלוח שוב.')
       sent++
@@ -643,7 +649,7 @@ async function handleTaskNotifications(request, env, config) {
       await admin.from('task_notifications').update({ state: attempted ? 'uncertain' : 'failed', error: String(e.message || 'שליחת ההתראה נכשלה').slice(0, 500) }).eq('id', notification.id)
     }
   }
-  return apiJson(request, { sent, failed })
+  return { sent, failed }
 }
 
 async function handleGmailSearch(request, env, config) {
@@ -907,6 +913,27 @@ function escapeDriveQuery(value) {
   return String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'")
 }
 
+async function assertDriveWritable(env, config, userId, fileId, allowTargetReadOnly = false) {
+  let frontier = [fileId]; const seen = new Set()
+  for (let depth = 0; depth < 30 && frontier.length; depth++) {
+    const next = []
+    for (const id of frontier) {
+      if (seen.has(id)) continue
+      seen.add(id)
+      if (seen.size > 200) throw Object.assign(new Error('לא ניתן לאמת את מסלול התיקייה'), { status: 403 })
+      if (await env.CONFIG.get(`drive-protected-folder:${id}`, 'json') || (!(allowTargetReadOnly && id === fileId) && await env.CONFIG.get(`drive-readonly-folder:${userId}:${id}`, 'json'))) throw Object.assign(new Error('התיקייה או תיקיית האב מוגנת משינויים'), { status: 403 })
+      // Never use the daily metadata cache for write authorization.
+      const response = await googleFetch(env, { ...config, dailyGoogleRead: false }, userId, `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?fields=id,parents,trashed,mimeType&supportsAllDrives=true`)
+      if (!response.ok) throw Object.assign(new Error('לא ניתן לאמת את הרשאות תיקיית האב'), { status: 403 })
+      const file = await response.json()
+      if (!file.id || file.trashed) throw Object.assign(new Error('הקובץ או תיקיית האב אינם זמינים'), { status: 403 })
+      next.push(...(file.parents || []))
+    }
+    frontier = next
+  }
+  if (frontier.length) throw Object.assign(new Error('לא ניתן לאמת את מסלול התיקייה'), { status: 403 })
+}
+
 async function handleDriveProjectFolder(request, env, config) {
   const user = await requireGoogleAreaAction(request, env, config, 'files', 'create')
   const body = await parseBody(request)
@@ -926,10 +953,14 @@ async function handleDriveProjectFolder(request, env, config) {
     if (body.readOnly === false && folder.capabilities?.canAddChildren === false) throw Object.assign(new Error('יש לכם הרשאת צפייה בלבד בתיקייה. להעלאה נדרשת הרשאת עריכה.'), { status: 403 })
     const protectedFolder = Boolean(await env.CONFIG.get(`drive-protected-folder:${folder.id}`, 'json'))
     const result = { id: folder.id, name: folder.name, readOnly: protectedFolder || body.readOnly !== false, protected: protectedFolder, webViewLink: folder.webViewLink || `https://drive.google.com/drive/folders/${folder.id}` }
+    if (!result.readOnly) await assertDriveWritable(env, config, user.id, folder.id, true)
+    if (result.readOnly) await env.CONFIG.put(`drive-readonly-folder:${user.id}:${folder.id}`, 'true')
+    else await env.CONFIG.delete(`drive-readonly-folder:${user.id}:${folder.id}`)
     await env.CONFIG.put(key, JSON.stringify(result))
     return apiJson(request, result)
   }
   if (!name) throw Object.assign(new Error('חסר שם פרויקט'), { status: 400 })
+  await assertDriveWritable(env, config, user.id, parentId)
 
   const search = new URL('https://www.googleapis.com/drive/v3/files')
   search.searchParams.set('q', `'${escapeDriveQuery(parentId)}' in parents and name='${escapeDriveQuery(name)}' and mimeType='application/vnd.google-apps.folder' and trashed=false`)
@@ -1013,6 +1044,7 @@ async function handleDriveSharing(request, env, config) {
   await mailProjectContext(request, env, config, user, { orgId: body.orgId, projectId: body.projectId })
   const folder = await projectDriveContent(request, env, config, user, body.projectId, body.fileId)
   if (request.method !== 'GET' && (folder.readOnly || await env.CONFIG.get(`drive-protected-folder:${folder.id}`, 'json'))) throw Object.assign(new Error('התיקייה מוגנת משינויים. שיתוף זמין לתיקיות שאושרו לעריכה.'), { status: 403 })
+  if (request.method !== 'GET') await assertDriveWritable(env, config, user.id, body.fileId)
   const base = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(body.fileId)}/permissions`
   let response
   if (request.method === 'POST') {
@@ -1024,7 +1056,13 @@ async function handleDriveSharing(request, env, config) {
     response = await googleFetch(env, config, user.id, `${base}/${encodeURIComponent(body.permissionId)}?supportsAllDrives=true`, { method: 'DELETE' })
     if (response.ok) await env.CONFIG.delete(key)
   } else response = await googleFetch(env, { ...config, dailyGoogleRead: false }, user.id, `${base}?supportsAllDrives=true&fields=permissions(id,type,emailAddress,role,permissionDetails),nextPageToken`)
-  if (!response.ok) throw Object.assign(new Error('פעולת השיתוף נדחתה על ידי Google Drive. בדקו את הרשאות התיקייה.'), { status: response.status })
+  if (!response.ok) {
+    const failure = await response.json().catch(() => ({}))
+    const appAccessMissing = (failure.error?.errors || []).some(error => error.reason === 'appNotAuthorizedToFile')
+    throw Object.assign(new Error(appAccessMissing
+      ? 'למערכת אין הרשאת שינוי לקובץ הזה. אפשר לשתף אותו ישירות ב-Google Drive, או לבחור קובץ שהועלה דרך המערכת.'
+      : 'פעולת השיתוף נדחתה על ידי Google Drive. בדקו את הרשאות התיקייה.'), { status: response.status })
+  }
   if (request.method === 'DELETE') return apiJson(request, { ok: true })
   const result = await response.json()
   if (request.method === 'POST') await env.CONFIG.put(`drive-share:${user.id}:${body.fileId}:${result.id}`, JSON.stringify({ projectId: body.projectId, at: new Date().toISOString() }))
@@ -1038,6 +1076,7 @@ async function handleDriveCategory(request, env, config) {
   await mailProjectContext(request, env, config, user, { ...body, categoryIds: [body.categoryId] })
   const folder = await projectDriveContent(request, env, config, user, body.projectId, body.folderId)
   if (folder.readOnly || await env.CONFIG.get(`drive-protected-folder:${folder.id}`, 'json')) throw Object.assign(new Error('התיקייה מוגנת משינויים'), { status: 403 })
+  await assertDriveWritable(env, config, user.id, body.folderId)
   const key = `drive-category:${user.id}:${body.projectId}:${body.categoryId}`
   const existing = await env.CONFIG.get(key, 'json')
   if (existing) {
@@ -1102,6 +1141,7 @@ async function uploadGoogleDriveFile(env, config, userId, body, queued = false) 
   const folder = await env.CONFIG.get(`drive-project-folder:${userId}:${projectId}`, 'json')
   if (!folder) return { skipped: true, reason: 'unlinked' }
   if (folder.readOnly || await env.CONFIG.get(`drive-protected-folder:${folder.id}`, 'json')) return { skipped: true, reason: 'read-only-folder' }
+  await assertDriveWritable(env, config, userId, folder.id)
   const [file] = validatedAttachments([body.file])
   if (body.automatic === true && !queued) return queueDriveUpload(env, userId, { ...body, projectId, recordId, kind, file }, (await googleTokens(env, userId))?.email || '')
   const pendingKey = `drive-pending:${userId}:${projectId}:${kind}:${recordId}`
@@ -1519,9 +1559,42 @@ async function executeQueuedDriveUpload(env, config, job) {
   return uploadGoogleDriveFile(env, config, job.userId, job.body, true)
 }
 
+
+async function deliverBackgroundTaskNotifications(env, config) {
+  if (!cleanString(env.SUPABASE_SECRET_KEY)) return
+  const admin = supabaseAdmin(env, config)
+  // An interrupted claim cannot prove non-delivery. Never resend it automatically.
+  const recovered = await admin.from('task_notifications').update({ state: 'uncertain', error: 'השליחה נקטעה ללא אישור ודאי. יש לבדוק את תיקיית נשלח לפני שליחה נוספת.' }).eq('state','sending').lte('delivery_started_at', new Date(Date.now()-15*60000).toISOString())
+  if (recovered.error) throw new Error('Task delivery recovery unavailable')
+  // Rotate through the queue so disconnected/revoked senders cannot permanently
+  // keep every later assignment outside the bounded scan.
+  const cursorKey = 'task-notification-scan-cursor:v1'
+  const cursor = await env.CONFIG.get(cursorKey, 'json')
+  let query = admin.from('task_notifications').select('id,org_id,assigned_by').eq('state','pending').eq('background_ready',true).order('id').limit(10)
+  if (cursor?.id) query = query.gt('id', cursor.id)
+  const candidates = await query
+  if (candidates.error) throw new Error('Task outbox unavailable')
+  if (!candidates.data?.length) { await env.CONFIG.delete(cursorKey); return }
+  await env.CONFIG.put(cursorKey, JSON.stringify({ id: candidates.data.at(-1).id }))
+  const seen = new Set(); let batches = 0
+  for (const item of candidates.data || []) {
+    if (!item.assigned_by) continue
+    const key = item.org_id + ':' + item.assigned_by
+    if (seen.has(key)) continue; seen.add(key)
+    const tokens = await googleTokens(env,item.assigned_by)
+    if (!tokens?.email || !(tokens.refresh_token || tokens.access_token)) continue
+    const membership = await admin.from('memberships').select('role,permissions').eq('org_id',item.org_id).eq('user_id',item.assigned_by).maybeSingle()
+    if (membership.error) continue
+    if (!membership.data || !(rolePermissionAllowed(membership.data.role,membership.data.permissions,'tasks','create') || rolePermissionAllowed(membership.data.role,membership.data.permissions,'tasks','edit')) || !rolePermissionAllowed(membership.data.role,membership.data.permissions,'communication','create')) continue
+    // Bounded sends use the assigning user's personal connection and the same atomic claim.
+    await deliverTaskNotifications(env,config,admin,item.org_id,item.assigned_by,1,true)
+    if (++batches >= 2) break
+  }
+}
+
 export default {
   async scheduled(_event, env, ctx) {
-    ctx.waitUntil((async () => { const config = await readConfig(env); await refreshGoogleReads(env, (userId, url) => googleFetch(env, config, userId, url)); await runDriveQueue(env, (job) => executeQueuedDriveUpload(env, config, job)) })())
+    ctx.waitUntil((async () => { const config = await readConfig(env); try { await deliverBackgroundTaskNotifications(env, config) } catch { console.error('Task outbox temporarily unavailable') }; await refreshGoogleReads(env, (userId, url) => googleFetch(env, config, userId, url)); await runDriveQueue(env, (job) => executeQueuedDriveUpload(env, config, job)) })())
   },
   async fetch(request, env) {
     try {

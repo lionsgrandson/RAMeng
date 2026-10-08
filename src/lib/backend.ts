@@ -1,7 +1,7 @@
 import { createClient, type RealtimeChannel, type SupabaseClient, type User } from '@supabase/supabase-js'
 import type { RuntimeConfig } from './runtime'
 import type { Workspace } from '../types'
-import { cloneWorkspace } from '../seed'
+import { cloneWorkspace, hydrateWorkspace } from '../seed'
 import type { StoredPermissions } from './permissions'
 import { authRedirectUrl } from './runtime'
 
@@ -179,7 +179,7 @@ export async function loadOrganizationWorkspace(userId: string): Promise<{ orgId
     return { orgId, role: String(membership.role), permissions: membership.permissions as StoredPermissions | null, workspace, version: 0 }
   }
 
-  const workspace = { ...cloneWorkspace(), ...(state.data as Workspace) }
+  const workspace = hydrateWorkspace(state.data as Workspace)
   workspace.checklistTemplates = (workspace.checklistTemplates || []).filter((template) => template.id !== 'tpl-supervision')
   if (workspace.settings.defaultInspector === 'אודי מאיר') workspace.settings.defaultInspector = ''
   saveLocalWorkspace(workspace)
@@ -216,7 +216,7 @@ export async function readWorkspaceState(orgId: string) {
   const { data, error } = await client.rpc('get_workspace_state', { target_org: orgId })
   if (error) throw localizedBackendError(error, 'רענון הנתונים נכשל')
   const row = Array.isArray(data) ? data[0] : data
-  return row?.data ? { workspace: { ...cloneWorkspace(), ...row.data } as Workspace, version: Number(row.version || 0) } : null
+  return row?.data ? { workspace: hydrateWorkspace(row.data), version: Number(row.version || 0) } : null
 }
 
 export function subscribeWorkspace(orgId: string, onWorkspace: (workspace: Workspace, version: number) => void): RealtimeChannel | null {
@@ -250,7 +250,7 @@ export async function refreshSignedUrl(path: string) {
 export function loadLocalWorkspace(): Workspace {
   try {
     const raw = localStorage.getItem('rameng-workspace')
-    return raw ? { ...cloneWorkspace(), ...JSON.parse(raw) as Workspace } : cloneWorkspace()
+    return raw ? hydrateWorkspace(JSON.parse(raw)) : cloneWorkspace()
   } catch {
     return cloneWorkspace()
   }

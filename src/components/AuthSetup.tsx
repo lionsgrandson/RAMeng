@@ -3,6 +3,7 @@ import { Building2, KeyRound, LockKeyhole } from 'lucide-react'
 import { bootstrapServer } from '../lib/api'
 import { requestPasswordReset, signIn, updatePassword } from '../lib/backend'
 import { Field } from './common'
+import { invitationUrlError } from '../lib/runtime'
 
 function authErrorMessage(error: unknown, fallback: string) {
   const message = error instanceof Error ? error.message : ''
@@ -114,9 +115,11 @@ export function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
 export function SetPasswordScreen({ onSuccess }: { onSuccess: () => void }) {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const linkError = invitationUrlError(window.location.hash)
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    if (linkError) return
     const data = new FormData(event.currentTarget)
     const password = String(data.get('password') || '')
     const confirm = String(data.get('confirm') || '')
@@ -139,13 +142,13 @@ export function SetPasswordScreen({ onSuccess }: { onSuccess: () => void }) {
     <section className="login-card">
       <span className="login-icon"><KeyRound /></span>
       <h1>הגדרת סיסמה</h1>
-      <p>בחרו סיסמה לחשבון שלכם.</p>
+      <p>{linkError || 'בחרו סיסמה לחשבון שלכם.'}</p>
       {error && <div className="error-banner">{error}</div>}
-      <form className="form-grid" onSubmit={(e) => void submit(e)}>
+      {!linkError && <form className="form-grid" onSubmit={(e) => void submit(e)}>
         <Field label="סיסמה חדשה"><input name="password" type="password" required autoComplete="new-password" /></Field>
         <Field label="אימות סיסמה"><input name="confirm" type="password" required autoComplete="new-password" /></Field>
         <button className="primary login-submit" disabled={loading}>{loading ? 'שומר...' : 'שמירת סיסמה'}</button>
-      </form>
+      </form>}
     </section>
   </div>
 }

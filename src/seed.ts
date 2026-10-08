@@ -46,3 +46,9 @@ export const emptyWorkspace: Workspace = {
 }
 
 export const cloneWorkspace = () => JSON.parse(JSON.stringify(emptyWorkspace)) as Workspace
+
+// Restricted RPC projections intentionally omit private settings and optional fields.
+export function hydrateWorkspace(snapshot: Partial<Workspace>): Workspace {
+  const defaults = cloneWorkspace()
+  return { ...defaults, ...snapshot, settings: { ...defaults.settings, ...snapshot.settings } }
+}

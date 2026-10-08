@@ -1,0 +1,32 @@
+name: CRM verification
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            worker/package-lock.json
+      - run: npm ci
+      - run: npm ci --prefix worker
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+      - run: node --check worker/src/index.js
+      - run: git diff --check
+      - name: Install disposable PostgreSQL runtime
+        run: npm install --prefix "$RUNNER_TEMP/rameng-pg-runner" --no-save embedded-postgres@17.9.0-beta.17 pg
+      - name: Execute database workflows
+        run: node tests/run-database.mjs
+        env:
+          RAMENG_TEST_PG_RUNTIME: ${{ runner.temp }}/rameng-pg-runner

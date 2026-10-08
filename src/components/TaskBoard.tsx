@@ -38,10 +38,12 @@ const TASK_COLOR_OPTIONS = [
   { id: 'gray', label: 'אפור', hex: '#7d8780' },
 ] as const
 const taskColor = (id?: string) => TASK_COLOR_OPTIONS.find((item) => item.id === (id || '')) || TASK_COLOR_OPTIONS[0]
-const isCompleted = (task: Task) => Boolean(task.completedAt) || COMPLETED_STATUSES.includes(task.status)
+// Status changes are immediately available to external users; completion metadata
+// is normalized by the server after save and can briefly retain its old value.
+export const isCompleted = (task: Task) => COMPLETED_STATUSES.includes(task.status) || (!task.status && Boolean(task.completedAt))
 
 const fieldValue = (task: Task, column: TaskColumn) => {
-  if (column.key.startsWith('custom.')) return task.custom[column.key.slice(7)] || ''
+  if (column.key.startsWith('custom.')) return task.custom?.[column.key.slice(7)] || ''
   return String((task as unknown as Record<string, unknown>)[column.key] ?? '')
 }
 
