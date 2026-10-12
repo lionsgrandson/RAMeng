@@ -1,0 +1,75 @@
+.mailbox .contact-mail-layout { grid-template-columns: minmax(0,1fr); padding: 0; gap: 0; }
+.mailbox .contact-thread-list { gap: 0; max-height: 70vh; overflow-y: auto; overscroll-behavior: contain; }
+.mailbox .contact-thread-list > .mailbox-row { border: 0; border-bottom: 1px solid #e2e7ec; border-radius: 0; background: #f2f6fa; display: grid; grid-template-columns: minmax(140px, 1fr) minmax(200px, 2fr) minmax(110px, auto); gap: 5px 18px; padding: 14px 20px; color: #374151; }
+.mailbox .mailbox-row.unread { background: #fff; color: #111827; border-inline-start: 4px solid #2563eb; }
+.mailbox .mailbox-row.read { border-inline-start: 4px solid transparent; }
+.mailbox .mailbox-row.read strong { font-weight: 500; }
+.mailbox .mailbox-row.unread .mailbox-sender, .mailbox .mailbox-row.unread strong { font-weight: 750; }
+.mailbox .mailbox-row:hover { background: #eaf1fb; box-shadow: inset 0 1px #d9e3f0, inset 0 -1px #d9e3f0; }
+.mailbox .mailbox-row.active { background: #e1edff; }
+.mailbox .mailbox-sender { grid-column: 1; grid-row: 1; }
+.mailbox .mailbox-subject { grid-column: 2; grid-row: 1; }
+.mailbox .mailbox-date { grid-column: 3; grid-row: 1; }
+.mailbox .mailbox-preview { grid-column: 2 / 4; color: #667085; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mailbox-reading .contact-mail-layout { grid-template-columns: minmax(240px, 30%) minmax(0, 1fr); }
+.mailbox-reading .contact-thread-list > .mailbox-row { grid-template-columns: minmax(0,1fr); padding: 12px; }
+.mailbox-reading .mailbox-row > .mailbox-sender, .mailbox-reading .mailbox-row > .mailbox-subject, .mailbox-reading .mailbox-row > .mailbox-date, .mailbox-reading .mailbox-row > .mailbox-preview { grid-column: 1; grid-row: auto; }
+.mailbox .contact-thread-body { padding: 16px; max-height: 75vh; overflow-y: auto; overscroll-behavior: contain; min-width: 0; }
+.mailbox .contact-thread-body[hidden] { display: none; }
+.mail-thread-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; position: sticky; top: -16px; z-index: 2; background: white; padding: 12px 0; border-bottom: 1px solid #e2e7ec; }
+.field-help { display: block; color: #667085; line-height: 1.6; margin: 8px 0; max-width: 760px; }
+.mailbox > .toolbar { flex-wrap: wrap; }
+.mailbox > .toolbar > input { flex: 1 1 280px; width: auto; }
+.mailbox > .toolbar > select { flex: 0 1 180px; width: auto; }
+.mailbox > .toolbar > small { flex: 0 0 auto; white-space: nowrap; }
+.mailbox .mail-assignment { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; padding: 16px; background: #f8fafc; border-radius: 10px; margin-block: 12px; }
+.mailbox .mail-assignment > label { display: flex; flex-direction: column; min-width: 0; gap: 6px; }
+.mailbox .mail-assignment > label select { width: 100%; min-width: 0; }
+.mailbox .mail-assignment > div, .mailbox .mail-assignment > button { grid-column: 1 / -1; }
+.pdf-reader-action { padding: 8px 14px; }
+.pdf-reader-action small { display: block; margin-top: 8px; }
+.linked-file-row > a strong { overflow-wrap: anywhere; white-space: normal; line-height: 1.5; }
+.file-plan-metadata { display: flex; flex-wrap: wrap; gap: 12px; padding: 10px 14px; background: #f8fafc; }
+.file-plan-metadata label { display: grid; gap: 6px; font-size: 12px; }
+.file-plan-metadata input[type=number] { width: 85px; }
+.file-version-upload { margin: 8px 14px; }
+.file-version-history { padding: 10px 14px; }
+.file-version-history a { display: block; padding: 8px; overflow-wrap: anywhere; }
+.project-contacts-table th, .project-contacts-table td { padding: 14px; }
+.display-settings { padding: 16px; }
+.display-settings > .card-head { margin: -16px -16px 16px; }
+.display-settings > p { color: #667085; line-height: 1.6; }
+.display-personal-settings { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; padding: 16px; margin-block: 16px; border: 1px solid #e2e7ec; border-radius: 12px; background: #f8fafc; }
+.display-personal-settings > h3, .display-personal-settings > p { grid-column: 1 / -1; margin: 0; }
+.display-settings label { display: flex; flex-direction: column; gap: 6px; min-width: 0; font-size: 13px; }
+.display-column-list { display: grid; gap: 10px; }
+.display-column-row { display: grid; grid-template-columns: 30px 70px minmax(160px,1fr) 130px auto; align-items: center; gap: 12px; padding: 12px; border: 1px solid #e2e7ec; border-radius: 10px; background: white; }
+.display-column-number { text-align: center; color: #667085; font-weight: 700; }
+.display-column-row .display-column-visible { flex-direction: row; align-items: center; }
+.display-column-visible input { width: auto; }
+.display-column-actions { display: flex; align-items: center; gap: 4px; }
+.display-column-actions .icon-btn { border: 1px solid #dce4dd; background: #f8faf8; }
+.display-add-column { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; padding-block: 16px; }
+.display-settings h3 { margin-top: 24px; }
+.task-table-wrap.table-density-compact .task-table td { padding-block: 3px; }
+.task-table-wrap.table-density-compact .cell-input { min-height: 30px; padding-block: 4px; }
+.task-table-wrap.table-density-compact .task-action-btn { min-height: 30px; padding-block: 4px; }
+.task-actions-cell { white-space: nowrap; }
+.task-table-percent { table-layout: fixed; width: 100%; }
+.task-table-percent th, .task-table-percent td { min-width: 0; overflow: hidden; overflow-wrap: anywhere; }
+.task-table-percent .cell-input { width: 100%; min-width: 0; }
+.task-table-percent .task-actions-cell { white-space: normal; }
+@media(max-width: 1050px) { .display-column-row { grid-template-columns: 26px 65px minmax(0,1fr); }.display-column-actions { grid-column: 3; }.display-column-row > label:nth-of-type(3) { grid-column: 2 / 3; } }
+@media(max-width: 600px) { .display-personal-settings { grid-template-columns: minmax(0,1fr); }.display-column-row { gap: 8px; }.display-column-actions { flex-wrap: wrap; }.display-column-row > label:nth-of-type(3) input { width: 85px; } }
+@media (max-width: 850px) {
+  .mailbox-reading .contact-mail-layout { grid-template-columns: minmax(0,1fr); }
+  .mailbox-reading .contact-thread-list { display: none; }
+  .mailbox .contact-thread-list > .mailbox-row { grid-template-columns: minmax(0,1fr); }
+  .mailbox .mailbox-row > .mailbox-sender, .mailbox .mailbox-row > .mailbox-subject, .mailbox .mailbox-row > .mailbox-date, .mailbox .mailbox-row > .mailbox-preview { grid-column: 1; grid-row: auto; }
+}
+
+.external-task-page{max-width:760px;margin:24px auto;padding:16px}.external-task-page .card{padding:24px}.external-task-page textarea{width:100%;min-height:100px}.task-scroll-controls{position:sticky;top:0;z-index:2;background:var(--surface,#fff);padding:8px}.email-cell .task-action-btn{flex-shrink:0}.project-contacts-table td{overflow-wrap:anywhere}
+
+.preview-notice{position:fixed;bottom:0;inset-inline:0;z-index:10000;padding:10px 16px;background:#fff4d6;color:#4d3600;border-top:1px solid #ddc585;font:14px Arial;text-align:center}@media print{.preview-notice{display:none}}
+
+.task-board-wrap .task-scroll-controls{flex-wrap:wrap;gap:8px}.task-scroll-controls>label{min-width:0;max-width:100%;flex:1 1 220px}.task-scroll-controls select{min-width:0;width:100%}@media(max-width:600px){.task-scroll-controls>label{flex-basis:100%;width:100%}.task-scroll-controls>button{flex:1 1 auto;white-space:normal}}

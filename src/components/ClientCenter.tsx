@@ -1,3 +1,5 @@
+import { taskColumnChoices } from '../lib/taskProfession'
+import ContactTable from './ContactTable'
 import { contactOptions, normalizeWorkspaceCategories } from '../lib/contactCategories'
 import { useMemo, useState, type Dispatch, type FormEvent, type SetStateAction } from 'react'
 import { ArrowRight, BarChart3, CalendarDays, ExternalLink, FileText, FolderKanban, LayoutDashboard, ListChecks, Mail, Plus, Search, Settings2 } from 'lucide-react'
@@ -124,6 +126,7 @@ function ClientDirectory({ workspace, setWorkspace, onSelectClient, canEditConta
       <button type="button" className="secondary compact-filter-clear" onClick={() => { setQuery(''); setStatusFilter('הכל'); setTagFilter('הכל'); setRoleFilter('הכל'); setCompanyTypeFilter('הכל'); setProjectFilter('הכל'); setDateFrom(''); setDateTo('') }}>ניקוי סינון</button>
       <span className="filter-count">{rows.length} מתוך {workspace.contacts.length} לקוחות</span>
     </div>
+    <ContactTable contacts={rows} onContact={onSelectClient} />
     <div className="client-card-grid">
       {rows.map((contact) => {
         const projects = workspace.projects.filter((project) => (project.clientIds.includes(contact.id) || project.contactIds?.includes(contact.id)))
@@ -460,7 +463,7 @@ function ClientWorkspace({ workspace, setWorkspace, onSelectClient, onProject, c
       <Field label="יעד"><input name="dueDate" type="date" defaultValue={editingTask.dueDate || ''} disabled={!canUpdateTasks} /></Field>
       <Field label="מועד מעקב"><input name="followUpDate" type="date" defaultValue={editingTask.followUpDate || ''} disabled={!canUpdateTasks} /></Field>
       <Field label="מייל"><input name="emailTo" type="email" defaultValue={editingTask.emailTo || ''} disabled={!canUpdateTasks} /></Field>
-      {workspace.taskColumns.filter((column) => column.key.startsWith('custom.')).map((column) => <Field key={column.id} label={column.label}><input name={`custom-${column.id}`} defaultValue={editingTask.custom[column.key.slice(7)] || ''} disabled={!canUpdateTasks} /></Field>)}
+      {workspace.taskColumns.filter((column) => column.key.startsWith('custom.')).map((column) => <Field key={column.id} label={column.label}>{taskColumnChoices(column, workspace) !== undefined ? <select name={`custom-${column.id}`} defaultValue={editingTask.custom[column.key.slice(7)] || ''} disabled={!canUpdateTasks}><option value="">ללא</option>{editingTask.custom[column.key.slice(7)] && !taskColumnChoices(column, workspace)!.includes(editingTask.custom[column.key.slice(7)]) && <option>{editingTask.custom[column.key.slice(7)]}</option>}{taskColumnChoices(column, workspace)!.map(value => <option key={value}>{value}</option>)}</select> : <input name={`custom-${column.id}`} defaultValue={editingTask.custom[column.key.slice(7)] || ''} disabled={!canUpdateTasks} />}</Field>)}
       <Field label="תיאור"><textarea name="description" rows={5} defaultValue={editingTask.description || ''} disabled={!canUpdateTasks} /></Field>
       <div className="form-actions full"><button type="button" className="secondary" onClick={() => setEditingTask(null)}>סגירה</button>{(canUpdateTasks || canStatusTasks) && <button className="primary">שמירת שינויים</button>}</div>
     </form></Modal>}

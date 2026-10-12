@@ -1,4 +1,6 @@
+import { jerusalemInstant, jerusalemDate, taskCalendarTime } from '../lib/taskTime'
 import { CategoryPicker } from './Categories'
+import { taskCalendarDates } from '../lib/taskCalendar'
 import DriveConnection from './DriveConnection'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { CalendarPlus, ExternalLink, FileText, RefreshCw, Upload } from 'lucide-react'
@@ -7,7 +9,7 @@ import { integrationsApi } from '../lib/api'
 import { uploadFile } from '../lib/backend'
 import type { CalendarEvent, FileRecord, Workspace } from '../types'
 import type { AreaPermissions } from '../lib/permissions'
-import { Chip, EmptyState, Field, Modal, StoredFileLink, dateTimeLabel, nowIso, uid } from './common'
+import { Chip, EmptyState, Field, Modal, StoredFileLink, PdfReaderButton, dateTimeLabel, nowIso, uid } from './common'
 
 // Google metadata stays in the caller's personal display state. Shared records
 // retain their project/task links without hiding their matching Google event.
@@ -24,7 +26,7 @@ export function CalendarPage({ workspace, setWorkspace, onProject, onTask, start
   const canCreate = calendarPermissions.create
   const canSync = calendarPermissions.view
   const [personalEvents, setPersonalEvents] = useState<CalendarEvent[]>([])
-  const today = new Date()
+  const today = new Date(`${jerusalemDate(new Date().toISOString())}T12:00:00`)
   const dateKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
   const [adding, setAdding] = useState(startCreating && canCreate)
   const [syncing, setSyncing] = useState(false)
@@ -62,8 +64,12 @@ export function CalendarPage({ workspace, setWorkspace, onProject, onTask, start
     if (submitting) return
     const data = new FormData(event.currentTarget)
     setFormError('')
-    const start = new Date(String(data.get('start')))
-    const end = data.get('end') ? new Date(String(data.get('end'))) : undefined
+    let start: Date; let end: Date | undefined
+    try {
+      const rawStart = String(data.get('start')); const rawEnd = String(data.get('end') || '')
+      start = new Date(jerusalemInstant(rawStart.slice(0, 10), rawStart.slice(11, 16)))
+      end = rawEnd ? new Date(jerusalemInstant(rawEnd.slice(0, 10), rawEnd.slice(11, 16))) : undefined
+    } catch (e) { setFormError((e as Error).message); return }
     if (!String(data.get('title') || '').trim() || Number.isNaN(start.getTime())) { setFormError('יש להזין כותרת ותאריך התחלה תקינים.'); return }
     if (end && (Number.isNaN(end.getTime()) || end <= start)) { setFormError('מועד הסיום חייב להיות אחרי מועד ההתחלה.'); return }
     setSubmitting(true)
@@ -87,7 +93,7 @@ export function CalendarPage({ workspace, setWorkspace, onProject, onTask, start
       }
     }
     setWorkspace((current) => ({ ...current, events: [...current.events, item] }))
-    setSelectedDate(dateKey(new Date(item.start)))
+    setSelectedDate(jerusalemDate(item.start))
     setMonth(new Date(new Date(item.start).getFullYear(), new Date(item.start).getMonth(), 1))
     setAdding(false)
     setSubmitting(false)
@@ -117,10 +123,10 @@ export function CalendarPage({ workspace, setWorkspace, onProject, onTask, start
     if (calendarSourceFilter === 'מקומי' && item.googleEventId) return false
     return true
   }), [workspace.events, personalEvents, workspace.projects, workspace.tasks, calendarSearch, calendarProjectFilter, calendarSourceFilter])
-  const eventsFor = (key: string) => calendarItemFilter === 'משימות' ? [] : filteredCalendarEvents.filter((item) => dateKey(new Date(item.start)) === key).sort((a, b) => a.start.localeCompare(b.start))
+  const eventsFor = (key: string) => calendarItemFilter === 'משימות' ? [] : filteredCalendarEvents.filter((item) => jerusalemDate(item.start) === key).sort((a, b) => a.start.localeCompare(b.start))
   const selectedEvents = eventsFor(selectedDate)
-  const selectedTasks = calendarItemFilter === 'אירועים' ? [] : workspace.tasks.filter((task) => {
-    if (![task.startDate, task.dueDate, task.followUpDate].some((value) => value === selectedDate)) return false
+  const tasksFor = (day: string) => calendarItemFilter === 'אירועים' ? [] : workspace.tasks.filter((task) => {
+    if (!taskCalendarDates(task).some((item) => item.date === day)) return false
     if (calendarProjectFilter !== 'הכל') {
       if (calendarProjectFilter === '__none__' && task.projectId) return false
       if (calendarProjectFilter !== '__none__' && task.projectId !== calendarProjectFilter) return false
@@ -129,6 +135,7 @@ export function CalendarPage({ workspace, setWorkspace, onProject, onTask, start
     const q = calendarSearch.trim().toLowerCase()
     return !q || `${task.title} ${task.description || ''} ${task.emailTo || ''} ${project?.name || ''} ${project?.address || ''}`.toLowerCase().includes(q)
   })
+  const selectedTasks = tasksFor(selectedDate)
 
   return <div className="calendar-page">
     <section className="card calendar-month-card">
@@ -154,13 +161,13 @@ export function CalendarPage({ workspace, setWorkspace, onProject, onTask, start
         {weekdayLabels.map((label) => <div className="month-weekday" role="columnheader" key={label}>{label}</div>)}
         {days.map((day) => {
           const key = dateKey(day)
-          const dueTasks = calendarItemFilter === 'אירועים' ? [] : workspace.tasks.filter(task => task.dueDate === key && (calendarProjectFilter === 'הכל' || task.projectId === calendarProjectFilter || (calendarProjectFilter === '__none__' && !task.projectId)) && (!calendarSearch || `${task.title} ${task.description || ''} ${workspace.projects.find(project => project.id === task.projectId)?.name || ''}`.toLowerCase().includes(calendarSearch.toLowerCase())))
-          const dayEvents = [...eventsFor(key), ...dueTasks.map(task => ({ id: `task-due-${task.id}`, title: `משימה: ${task.title}` }))]
+          const dueTasks = tasksFor(key)
+          const dayEvents = [...eventsFor(key), ...dueTasks.map(task => ({ id: `task-date-${task.id}`, title: `${taskCalendarDates(task).filter(item => item.date === key).map(item => item.label).join(' / ')}: ${task.title}${taskCalendarTime(task, key) ? ` · ${taskCalendarTime(task, key)}` : ''}` }))]
           const inMonth = day.getMonth() === month.getMonth()
           const classes = ['month-day', inMonth ? '' : 'outside', key === todayKey ? 'today' : '', key === selectedDate ? 'selected' : ''].filter(Boolean).join(' ')
-          return <button type="button" role="gridcell" aria-selected={key === selectedDate} className={classes} key={key} onClick={() => setSelectedDate(key)}>
+          return <button type="button" role="gridcell" aria-selected={key === selectedDate} className={classes} key={key} onClick={() => { setSelectedDate(key); document.querySelector('.selected-day-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }}>
             <span className="month-day-number">{day.getDate()}</span>
-            <div className="month-day-items">{dayEvents.slice(0, 3).map((item) => <span key={item.id} title={item.title}>{item.title}</span>)}{dayEvents.length > 3 && <small>+{dayEvents.length - 3}</small>}</div>
+            <div className="month-day-items">{dayEvents.slice(0, 3).map((item) => <span key={item.id} title={item.title}>{item.title}</span>)}{dayEvents.length > 3 && <small>+{dayEvents.length - 3} נוספים — לחצו לפתיחת היום</small>}</div>
           </button>
         })}
       </div>
@@ -169,8 +176,8 @@ export function CalendarPage({ workspace, setWorkspace, onProject, onTask, start
     <section className="card selected-day-card">
       <div className="card-head"><div><h2>{new Intl.DateTimeFormat('he-IL-u-ca-gregory', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(new Date(`${selectedDate}T12:00:00`))}</h2><p>אירועים ומשימות לתאריך שנבחר</p></div></div>
       <div className="selected-day-list">
-        {selectedEvents.map((item) => <article key={item.id} className="selected-day-item"><div className="calendar-date"><strong>{new Intl.DateTimeFormat('he-IL', { hour: '2-digit', minute: '2-digit' }).format(new Date(item.start))}</strong><span>אירוע</span></div><div><strong>{item.title}</strong><small>{dateTimeLabel(item.start)}{item.location ? ` · ${item.location}` : ''}</small><div className="context-links">{item.projectId && onProject && <button type="button" onClick={() => onProject(item.projectId!)}>פרויקט: {workspace.projects.find((project) => project.id === item.projectId)?.address || workspace.projects.find((project) => project.id === item.projectId)?.name || 'פתיחה'}</button>}{item.taskId && onTask && <button type="button" onClick={() => onTask(item.taskId!)}>פתיחת המשימה</button>}</div></div>{calendarPermissions.delete && !item.googleEventId && <DeleteButton message={`למחוק את האירוע "${item.title}"?`} onConfirm={() => setWorkspace((current) => ({ ...current, events: current.events.filter((event) => event.id !== item.id) }))} />}{item.googleEventId && <Chip tone="brand">Google</Chip>}{item.googleHtmlLink && <a className="icon-btn" href={item.googleHtmlLink} target="_blank" rel="noreferrer" aria-label={`פתיחת ${item.title} ב-Google Calendar`}><ExternalLink /></a>}</article>)}
-        {selectedTasks.map((task) => <article key={task.id} className="selected-day-item task-day-item"><div className="calendar-date"><strong>משימה</strong><span>{task.status}</span></div><div><strong>{task.title}</strong><small>{task.startDate === selectedDate ? 'תאריך התחלה' : task.dueDate === selectedDate ? 'תאריך סיום' : 'מועד מעקב'}{task.emailTo ? ` · ${task.emailTo}` : ''}</small><div className="context-links">{task.projectId && onProject && <button type="button" onClick={() => onProject(task.projectId!)}>פרויקט: {workspace.projects.find((project) => project.id === task.projectId)?.address || workspace.projects.find((project) => project.id === task.projectId)?.name || 'פתיחה'}</button>}{onTask && <button type="button" onClick={() => onTask(task.id)}>פתיחת המשימה</button>}</div></div><Chip tone={['בוצע', 'סגור'].includes(task.status) ? 'good' : 'brand'}>{task.status}</Chip></article>)}
+        {selectedEvents.map((item) => <article key={item.id} className="selected-day-item"><div className="calendar-date"><strong>{new Intl.DateTimeFormat('he-IL', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jerusalem' }).format(new Date(item.start))}</strong><span>אירוע</span></div><div><strong>{item.title}</strong><small>{dateTimeLabel(item.start)}{item.location ? ` · ${item.location}` : ''}</small><div className="context-links">{item.projectId && onProject && <button type="button" onClick={() => onProject(item.projectId!)}>פרויקט: {workspace.projects.find((project) => project.id === item.projectId)?.address || workspace.projects.find((project) => project.id === item.projectId)?.name || 'פתיחה'}</button>}{item.taskId && onTask && <button type="button" onClick={() => onTask(item.taskId!)}>פתיחת המשימה</button>}</div></div>{calendarPermissions.delete && !item.googleEventId && <DeleteButton message={`למחוק את האירוע "${item.title}"?`} onConfirm={() => setWorkspace((current) => ({ ...current, events: current.events.filter((event) => event.id !== item.id) }))} />}{item.googleEventId && <Chip tone="brand">Google</Chip>}{item.googleHtmlLink && <a className="icon-btn" href={item.googleHtmlLink} target="_blank" rel="noreferrer" aria-label={`פתיחת ${item.title} ב-Google Calendar`}><ExternalLink /></a>}</article>)}
+        {selectedTasks.map((task) => <article key={task.id} className="selected-day-item task-day-item"><div className="calendar-date"><strong>משימה</strong><span>{task.status}</span></div><div><strong>{task.title}{taskCalendarTime(task, selectedDate) && ` · ${taskCalendarTime(task, selectedDate)}`}</strong><small>{task.startDate === selectedDate ? 'תאריך התחלה' : task.dueDate === selectedDate ? 'תאריך סיום' : 'מועד מעקב'}{task.emailTo ? ` · ${task.emailTo}` : ''}</small><div className="context-links">{task.projectId && onProject && <button type="button" onClick={() => onProject(task.projectId!)}>פרויקט: {workspace.projects.find((project) => project.id === task.projectId)?.address || workspace.projects.find((project) => project.id === task.projectId)?.name || 'פתיחה'}</button>}{onTask && <button type="button" onClick={() => onTask(task.id)}>פתיחת המשימה</button>}</div></div><Chip tone={['בוצע', 'סגור'].includes(task.status) ? 'good' : 'brand'}>{task.status}</Chip></article>)}
         {!selectedEvents.length && !selectedTasks.length && <EmptyState title="אין פריטים בתאריך הזה" text="בחרו יום אחר או הוסיפו אירוע חדש." />}
       </div>
     </section>
@@ -241,6 +248,18 @@ export function FilesPage({ workspace, setWorkspace, orgId, projectId, onProject
   })
   const add = async (file: File, chosenProjectId?: string, taskId?: string) => { setUploading(true); setError(''); try { const pid = chosenProjectId || projectId || 'general'; const result = await uploadFile(orgId, pid, file); const record: FileRecord = { id: uid('file'), projectId: pid === 'general' ? undefined : pid, taskId: taskId || undefined, name: file.name, url: result.url, storagePath: result.path, type: file.type, size: file.size, version: 1, uploadedAt: nowIso() }; setWorkspace((current) => ({ ...current, files: [record, ...current.files] })) } catch (e) { setError(e instanceof Error ? e.message : 'העלאה נכשלה') } finally { setUploading(false) } }
   const changeProject = (value: string) => { setUploadProjectId(value); setUploadTaskId('') }
+  const replaceFile = async (record: FileRecord, next: File) => {
+    setUploading(true); setError('')
+    try {
+      const result = await uploadFile(orgId, record.projectId || 'general', next)
+      setWorkspace(current => ({ ...current, files: current.files.map(item => {
+        if (item.id !== record.id) return item
+        const previous = { name: item.name, url: item.url, storagePath: item.storagePath, type: item.type, size: item.size, version: item.version, uploadedAt: item.uploadedAt }
+        return { ...item, name: next.name, url: result.url, storagePath: result.path, type: next.type, size: next.size, version: item.version + 1, uploadedAt: nowIso(), planUpdatedAt: new Date().toLocaleDateString('en-CA'), previousVersions: [previous, ...(item.previousVersions || [])] }
+      }) }))
+    } catch (e) { setError(e instanceof Error ? e.message : 'העלאת גרסה נכשלה') }
+    finally { setUploading(false) }
+  }
   return <section className="card"><div className="card-head"><div><h2>קבצים ומסמכים</h2><p>מסמכי פרויקט, תכניות, חוזים ותמונות המשויכים לפרויקט או למשימה.</p></div>{canUpload && <div className="inline-create">{!projectId && <select aria-label="שיוך קובץ לפרויקט" value={uploadProjectId} onChange={(e) => changeProject(e.target.value)}><option value="">כללי, ללא פרויקט</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.name} — {project.address || 'כתובת חסרה'}</option>)}</select>}<select aria-label="שיוך קובץ למשימה" value={uploadTaskId} onChange={(e) => setUploadTaskId(e.target.value)}><option value="">ללא שיוך למשימה</option>{availableTasks.map((task) => <option key={task.id} value={task.id}>{task.title}</option>)}</select><button className="secondary" type="button" disabled={!(projectId || uploadProjectId)} onClick={() => setDriveOpen(true)}>תיקיית Drive והגדרות</button><label className="primary file-label" tabIndex={0}><Upload /> {uploading ? 'מעלה...' : 'העלאת קובץ'}<input type="file" aria-label="בחירת קובץ להעלאה" disabled={uploading} onChange={(e) => { const file = e.target.files?.[0]; if (!file) return; void add(file, projectId || uploadProjectId || undefined, uploadTaskId || undefined); e.currentTarget.value = '' }} /></label></div>}</div>
   <div className="list-filter-panel file-filter-panel">
     <label className="list-filter-field filter-grow"><span>חיפוש</span><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="שם קובץ, פרויקט, כתובת או משימה" /></label>
@@ -250,9 +269,9 @@ export function FilesPage({ workspace, setWorkspace, orgId, projectId, onProject
     <label className="list-filter-field"><span>סוג קובץ</span><select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}><option>הכל</option><option>PDF</option><option>תמונות</option><option>מסמכים</option><option>גיליונות</option><option>אחר</option></select></label>
     <label className="list-filter-field"><span>הועלה מתאריך</span><input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} /></label>
     <label className="list-filter-field"><span>הועלה עד תאריך</span><input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} /></label>
-    <button type="button" className="secondary compact-filter-clear" onClick={() => { setSearch(''); if (!projectId) setProjectFilter('הכל'); setTaskFilter('הכל'); setTypeFilter('הכל'); setDateFrom(''); setDateTo('') }}>ניקוי סינון</button>
+    <button type="button" className="secondary compact-filter-clear" onClick={() => { setSearch(''); if (!projectId) setProjectFilter('הכל'); setTaskFilter('הכל'); setTypeFilter('הכל'); setDateFrom(''); setDateTo(''); setCategoryFilter('') }}>ניקוי סינון</button>
     <span className="filter-count">{records.length} מתוך {baseRecords.length} קבצים</span>
   </div>
   {driveOpen && workspace.projects.find((project) => project.id === (projectId || uploadProjectId)) && <Modal title="תיקיית Drive של הפרויקט" onClose={() => setDriveOpen(false)}><DriveConnection orgId={orgId} project={workspace.projects.find((project) => project.id === (projectId || uploadProjectId))!} workspace={workspace} canCreateFolder={canUpload} canUnlinkFolder={filePermissions.delete} canShare={filePermissions.edit} /></Modal>}
-  {error && <div className="error-banner">{error}</div>}<div className="file-list">{records.map((file) => <div className="linked-file-row" key={file.id}><StoredFileLink file={file}><span className="file-icon"><FileText /></span><div><strong>{file.name}</strong><small>{workspace.projects.find((project) => project.id === file.projectId)?.name || 'כללי'}{file.taskId ? ` · ${workspace.tasks.find((task) => task.id === file.taskId)?.title || 'משימה'}` : ''} · גרסה {file.version} · {new Intl.NumberFormat('he-IL', { maximumFractionDigits: 1 }).format((file.size || 0) / 1024)} KB</small></div><ExternalLink /></StoredFileLink><CategoryPicker workspace={workspace} projectId={file.projectId} value={file.categoryIds || []} disabled={!filePermissions.edit || !file.projectId} onChange={categoryIds => setWorkspace(current => ({ ...current, files: current.files.map(item => item.id === file.id ? { ...item, categoryIds } : item) }))} /><div className="context-links">{filePermissions.delete && <DeleteButton message={`למחוק את הקובץ "${file.name}" מרשימת CRM? המקור יישמר באחסון.`} onConfirm={() => setWorkspace((current) => ({ ...current, files: current.files.filter((item) => item.id !== file.id) }))} />}{file.projectId && onProject ? <button type="button" onClick={() => onProject(file.projectId!)}>פרויקט: {workspace.projects.find((project) => project.id === file.projectId)?.name || 'פתיחה'}</button> : <span>כללי</span>}{file.taskId && onTask && <button type="button" onClick={() => onTask(file.taskId!)}>משימה: {workspace.tasks.find((task) => task.id === file.taskId)?.title || 'פתיחה'}</button>}</div></div>)}{!records.length && <EmptyState title="אין קבצים" text="העלו מסמכים ותכניות." />}</div></section>
+  {error && <div className="error-banner">{error}</div>}<div className="file-list">{records.map((file) => <div className="linked-file-row" key={file.id}><StoredFileLink file={file}><span className="file-icon"><FileText /></span><div><strong dir="auto" title={file.name}>{file.name}</strong><small>{workspace.projects.find((project) => project.id === file.projectId)?.name || 'כללי'}{file.taskId ? ` · ${workspace.tasks.find((task) => task.id === file.taskId)?.title || 'משימה'}` : ''} · גרסה {file.version} · {new Intl.NumberFormat('he-IL', { maximumFractionDigits: 1 }).format((file.size || 0) / 1024)} KB</small></div><ExternalLink /></StoredFileLink><CategoryPicker workspace={workspace} projectId={file.projectId} value={file.categoryIds || []} disabled={!filePermissions.edit || !file.projectId} onChange={categoryIds => setWorkspace(current => ({ ...current, files: current.files.map(item => item.id === file.id ? { ...item, categoryIds } : item) }))} /><PdfReaderButton file={file} />{filePermissions.edit && canUpload && <label className="secondary file-label file-version-upload">{uploading ? 'מעלה...' : 'העלאת גרסה חדשה'}<input aria-label={`העלאת גרסה חדשה של ${file.name}`} type="file" disabled={uploading} onChange={event => { const next = event.target.files?.[0]; event.target.value = ''; if (next) void replaceFile(file, next) }} /></label>}{!!file.previousVersions?.length && <details className="file-version-history"><summary>גרסאות קודמות ({file.previousVersions.length})</summary>{file.previousVersions.map((revision, index) => <StoredFileLink key={`${revision.version}-${index}`} file={{ ...revision, id: file.id }}><span>גרסה {revision.version} · {dateTimeLabel(revision.uploadedAt)} · {revision.name}</span></StoredFileLink>)}</details>}<div className="file-plan-metadata"><label>סטטוס תכנית<select aria-label={`סטטוס תכנית ${file.name}`} disabled={!filePermissions.edit} value={file.planStatus || ''} onChange={event => setWorkspace(current => ({ ...current, files: current.files.map(item => item.id === file.id ? { ...item, planStatus: event.target.value, planUpdatedAt: new Date().toLocaleDateString('en-CA') } : item) }))}><option value="">לא סווג כתכנית</option><option>טיוטה</option><option>לעיון</option><option>לאישור</option><option>מאושרת</option><option>לביצוע</option><option>מבוטלת</option><option>עדות (As Made)</option></select></label><label>תאריך עדכון<input aria-label={`תאריך עדכון תכנית ${file.name}`} type="date" disabled={!filePermissions.edit} value={file.planUpdatedAt || ''} onChange={event => setWorkspace(current => ({ ...current, files: current.files.map(item => item.id === file.id ? { ...item, planUpdatedAt: event.target.value } : item) }))} /></label><label>גרסה<input aria-label={`גרסת תכנית ${file.name}`} type="number" min="1" step="1" disabled={!filePermissions.edit} value={file.version} onChange={event => { const version = Number(event.target.value); if (Number.isInteger(version) && version > 0) setWorkspace(current => ({ ...current, files: current.files.map(item => item.id === file.id ? { ...item, version } : item) })) }} /></label></div><div className="context-links">{filePermissions.delete && <DeleteButton message={`למחוק את הקובץ "${file.name}" מרשימת CRM? המקור יישמר באחסון.`} onConfirm={() => setWorkspace((current) => ({ ...current, files: current.files.filter((item) => item.id !== file.id) }))} />}{file.projectId && onProject ? <button type="button" onClick={() => onProject(file.projectId!)}>פרויקט: {workspace.projects.find((project) => project.id === file.projectId)?.name || 'פתיחה'}</button> : <span>כללי</span>}{file.taskId && onTask && <button type="button" onClick={() => onTask(file.taskId!)}>משימה: {workspace.tasks.find((task) => task.id === file.taskId)?.title || 'פתיחה'}</button>}</div></div>)}{!records.length && <EmptyState title="אין קבצים" text="העלו מסמכים ותכניות." />}</div></section>
 }

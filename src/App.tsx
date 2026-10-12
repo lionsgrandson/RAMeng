@@ -1,3 +1,5 @@
+import ExternalTaskPage from './components/ExternalTaskPage'
+import { DisplayContext, useDisplayPreferences } from './components/DisplaySettings'
 import { normalizeWorkspaceCategories } from './lib/contactCategories'
 import ProjectMail from './components/ProjectMail'
 import DriveAutoSync from './components/DriveAutoSync'
@@ -5,7 +7,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { User } from '@supabase/supabase-js'
 import { Mail, AudioLines, BarChart3, Bell, Bot, CalendarDays, ChevronDown, ContactRound, FileInput, FileText, FolderKanban, LayoutDashboard, ListChecks, LogOut, Menu, ReceiptText, Search, Settings, UsersRound, X } from 'lucide-react'
 import { SaveButton, WorkspaceSaveContext } from './components/WorkspaceSave'
-import type { Workspace } from './types'
+import type { Task, Workspace } from './types'
 import { cloneWorkspace } from './seed'
 import { configureBackend, getBackend, getCurrentUser, loadOrganizationWorkspace, saveOrganizationWorkspace, signOut, subscribeWorkspace, readWorkspaceState } from './lib/backend'
 import { loadRuntimeConfig, type RuntimeConfig } from './lib/runtime'
@@ -178,6 +180,7 @@ export default function App() {
   const [selectedProject, setSelectedProject] = useState<string | null>(null)
   const [projectTab, setProjectTab] = useState<ProjectTab>('summary')
   const [selectedClient, setSelectedClient] = useState<string | null>(null)
+  const [mailTask, setMailTask] = useState<Task | null>(null)
   const [selectedTask, setSelectedTask] = useState<string | null>(null)
   const [selectedReport, setSelectedReport] = useState<string | null>(null)
   const [selectedReportItem, setSelectedReportItem] = useState<string | null>(null)
@@ -187,6 +190,7 @@ export default function App() {
   const [search, setSearch] = useState('')
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error' | 'conflict'>('idle')
   const [saveAttempt, setSaveAttempt] = useState(0)
+  const displayPreferences = useDisplayPreferences(user?.id)
   const immediateSaveRef = useRef(false)
   const workspaceVersionRef = useRef(0)
   const localRevisionRef = useRef(0)
@@ -322,23 +326,29 @@ export default function App() {
     clientNotes: permissions.communication.view ? workspace.clientNotes : [],
     audit: canViewAdminData ? workspace.audit : [],
   }), [workspace, permissions, canViewAdminData])
+  // Evaluate mutations once; React may replay state updater functions.
+  const editingWorkspaceRef = useRef(workspace)
+  editingWorkspaceRef.current = workspace
   const editableSetWorkspace: typeof setWorkspace = (action) => {
     if (!canEdit) return
-    setWorkspace((current) => {
+    const current = editingWorkspaceRef.current
+    {
       const requested = typeof action === 'function' ? action(current) : action
       const next = permissions.contacts.edit ? normalizeWorkspaceCategories(requested) : requested
-      if (next === current || JSON.stringify(next) === JSON.stringify(current)) return current
+      if (next === current || JSON.stringify(next) === JSON.stringify(current)) return
       const permissionError = workspaceMutationError(current, next, permissions, { canManageUsers, isDeveloper })
       if (permissionError) {
         window.setTimeout(() => setPermissionNotice(permissionError), 0)
-        return current
+        return
       }
       window.setTimeout(() => setPermissionNotice(''), 0)
       if (['projects', 'contacts', 'tasks', 'reports', 'files', 'events', 'quotes', 'clientNotes'].some((key) => (next[key as keyof Workspace] as unknown[]).length < (current[key as keyof Workspace] as unknown[]).length)) immediateSaveRef.current = true
       localRevisionRef.current += 1
       dirtyRef.current = true
-      return appendAutomaticAudit(current, next, user?.email || 'משתמש')
-    })
+      const updated = appendAutomaticAudit(current, next, user?.email || 'משתמש')
+      editingWorkspaceRef.current = updated
+      setWorkspace(updated)
+    }
   }
 
   useEffect(() => {
@@ -513,9 +523,11 @@ export default function App() {
   if (loadError) return <div className="auth-screen"><section className="login-card"><h1>לא ניתן לטעון את סביבת העבודה</h1><div className="error-banner">{loadError}</div><p>נסו שוב או פנו למנהל המערכת.</p><button className="secondary" onClick={() => window.location.reload()}>ניסיון מחדש</button></section></div>
   if (!loaded) return <div className="app-loading"><span className="ram-logo-shell loading-logo-shell"><img src="/ram-engineering-logo.png" alt="ר.א.ם הנדסה" width="1024" height="276" decoding="async" fetchPriority="high" /></span><span>טוען פרויקטים...</span></div>
 
-  if (selectedProject) return <WorkspaceSaveContext.Provider value={{ save: saveNow, refresh: refreshWorkspace, state: saveState, allowed: canEdit, dirty: dirtyRef.current }}><div className={`app-shell project-mode ${!canEdit ? 'read-only-mode' : ''}`}><Sidebar page={page} setPage={(next) => openPage(next)} workspace={visibleWorkspace} permissions={permissions} open={sidebarOpen} setOpen={setSidebarOpen} user={user} onLogout={() => void logout()} isDeveloper={isDeveloper} canManageUsers={canManageUsers} /><div className="main"><Topbar search={search} setSearch={setSearch} searchResults={searchResults} urgentCount={urgentCount} onMenu={() => setSidebarOpen(true)} onAttention={openUrgent} saveState={saveState} canEdit={canEdit} /><main className="page-wrap project-page-wrap">{saveNotice}<DriveAutoSync workspace={visibleWorkspace} enabled={permissions.files.create} reportsAllowed={permissions.reports.view} ready={saveState !== 'saving' && saveState !== 'error' && saveState !== 'conflict'} />{permissionNotice && <div className="error-banner permission-notice" role="alert">{permissionNotice}</div>}<ProjectWorkspace key={selectedProject} projectId={selectedProject} initialTab={projectTab} workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} orgId={orgId} projectPermissions={permissions.projects} taskPermissions={permissions.tasks} calendarPermissions={permissions.calendar} filePermissions={permissions.files} reportPermissions={permissions.reports} communicationPermissions={permissions.communication} onBack={() => openPage('projects')} onClient={permissions.contacts.view ? openClient : undefined} onTabChange={(tab) => { setProjectTab(tab); writeAppRoute({ page: 'projects', projectId: selectedProject, tab }) }} /></main></div></div></WorkspaceSaveContext.Provider>
+  if (role === 'external') return <WorkspaceSaveContext.Provider value={{ save: saveNow, refresh: refreshWorkspace, state: saveState, allowed: canEdit, dirty: dirtyRef.current }}>{saveNotice}<ExternalTaskPage workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} orgId={orgId} taskId={selectedTask} onTask={openTask} onLogout={() => void logout()} /></WorkspaceSaveContext.Provider>
 
-  return <WorkspaceSaveContext.Provider value={{ save: saveNow, refresh: refreshWorkspace, state: saveState, allowed: canEdit, dirty: dirtyRef.current }}><div className={`app-shell ${!canEdit ? 'read-only-mode' : ''}`}>
+  if (selectedProject) return <WorkspaceSaveContext.Provider value={{ save: saveNow, refresh: refreshWorkspace, state: saveState, allowed: canEdit, dirty: dirtyRef.current }}><DisplayContext.Provider value={displayPreferences}><div className={`app-shell project-mode ${!canEdit ? 'read-only-mode' : ''}`}><Sidebar page={page} setPage={(next) => openPage(next)} workspace={visibleWorkspace} permissions={permissions} open={sidebarOpen} setOpen={setSidebarOpen} user={user} onLogout={() => void logout()} isDeveloper={isDeveloper} canManageUsers={canManageUsers} /><div className="main"><Topbar search={search} setSearch={setSearch} searchResults={searchResults} urgentCount={urgentCount} onMenu={() => setSidebarOpen(true)} onAttention={openUrgent} saveState={saveState} canEdit={canEdit} /><main className="page-wrap project-page-wrap">{saveNotice}<DriveAutoSync workspace={visibleWorkspace} enabled={permissions.files.create} reportsAllowed={permissions.reports.view} ready={saveState !== 'saving' && saveState !== 'error' && saveState !== 'conflict'} />{permissionNotice && <div className="error-banner permission-notice" role="alert">{permissionNotice}</div>}<ProjectWorkspace canInviteExternal={canManageUsers} key={selectedProject} initialEmailTask={mailTask?.projectId === selectedProject ? mailTask : null} projectId={selectedProject} initialTab={projectTab} workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} orgId={orgId} projectPermissions={permissions.projects} taskPermissions={permissions.tasks} calendarPermissions={permissions.calendar} filePermissions={permissions.files} reportPermissions={permissions.reports} communicationPermissions={permissions.communication} onBack={() => openPage('projects')} onClient={permissions.contacts.view ? openClient : undefined} onTabChange={(tab) => { setProjectTab(tab); writeAppRoute({ page: 'projects', projectId: selectedProject, tab }) }} /></main></div></div></DisplayContext.Provider></WorkspaceSaveContext.Provider>
+
+  return <WorkspaceSaveContext.Provider value={{ save: saveNow, refresh: refreshWorkspace, state: saveState, allowed: canEdit, dirty: dirtyRef.current }}><DisplayContext.Provider value={displayPreferences}><div className={`app-shell ${!canEdit ? 'read-only-mode' : ''}`}>
     <Sidebar page={page} setPage={(next) => openPage(next)} workspace={visibleWorkspace} permissions={permissions} open={sidebarOpen} setOpen={setSidebarOpen} user={user} onLogout={() => void logout()} isDeveloper={isDeveloper} canManageUsers={canManageUsers} />
     <div className="main">
       <Topbar search={search} setSearch={setSearch} searchResults={searchResults} urgentCount={urgentCount} onMenu={() => setSidebarOpen(true)} onAttention={openUrgent} saveState={saveState} canEdit={canEdit} />
@@ -524,9 +536,9 @@ export default function App() {
         {permissionNotice && <div className="error-banner permission-notice" role="alert">{permissionNotice}</div>}
         {page === 'overview' && <Dashboard workspace={visibleWorkspace} onProject={openProject} onTask={openTask} onReport={openReport} onPage={(next) => openPage(next)} onCreate={(next) => openPage(next, true)} onUrgent={openUrgent} canView={{ clients: permissions.contacts.view, projects: permissions.projects.view, tasks: permissions.tasks.view, reports: permissions.reports.view, calendar: permissions.calendar.view }} canCreate={{ clients: permissions.contacts.create, projects: permissions.projects.create, tasks: permissions.tasks.create, reports: permissions.reports.create, calendar: permissions.calendar.create }} />}
         {page === 'clients' && <ClientsCenter key={createIntent === 'clients' ? 'new-client' : 'clients'} startCreating={createIntent === 'clients' && permissions.contacts.create} workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} selectedClientId={selectedClient} onSelectClient={(id) => id ? openClient(id) : openPage('clients')} onProject={openProject} canEditContacts={canMutateArea(permissions, 'contacts')} canEditProjects={canMutateArea(permissions, 'projects')} canEditTasks={canMutateArea(permissions, 'tasks')} canEditCommunication={canMutateArea(permissions, 'communication')} canEditFinance={canMutateArea(permissions, 'finance')} contactPermissions={permissions.contacts} projectPermissions={permissions.projects} taskPermissions={permissions.tasks} communicationPermissions={permissions.communication} financePermissions={permissions.finance} calendarPermissions={permissions.calendar} filePermissions={permissions.files} isAdmin={canViewAdminData} actor={user.email || 'משתמש'} />}
-        {page === 'inbox' && <ProjectMail setWorkspace={editableSetWorkspace} canCreateTask={permissions.tasks.create} workspace={visibleWorkspace} orgId={orgId} permissions={permissions.communication} onProject={permissions.projects.view ? (id) => openProject(id, 'mail') : undefined} />}
+        {page === 'inbox' && <ProjectMail setWorkspace={editableSetWorkspace} canCreateTask={permissions.tasks.create} workspace={visibleWorkspace} orgId={orgId} permissions={permissions.communication} onTask={permissions.tasks.view ? openTask : undefined} onProject={permissions.projects.view ? (id) => openProject(id, 'mail') : undefined} />}
         {page === 'projects' && <ProjectsPage key={createIntent === 'projects' ? 'new-project' : 'projects'} startCreating={createIntent === 'projects' && permissions.projects.create} workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} onOpen={openProject} canEdit={permissions.projects.create} />}
-        {page === 'tasks' && <section className="card board-card"><TaskBoard key={createIntent === 'tasks' ? 'new-task' : selectedTask || 'tasks'} startCreating={createIntent === 'tasks' && permissions.tasks.create} workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} permissions={permissions.tasks} focusTaskId={selectedTask} attentionOnly={attentionMode} onClearAttention={() => openPage('tasks')} onProject={permissions.projects.view ? openProject : undefined} onEmail={permissions.communication.view && permissions.projects.view ? (task) => { if (task.projectId) openProject(task.projectId, 'mail') } : undefined} /></section>}
+        {page === 'tasks' && <section className="card board-card"><TaskBoard canInviteExternal={canManageUsers} key={createIntent === 'tasks' ? 'new-task' : selectedTask || 'tasks'} startCreating={createIntent === 'tasks' && permissions.tasks.create} workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} permissions={permissions.tasks} focusTaskId={selectedTask} attentionOnly={attentionMode} onClearAttention={() => openPage('tasks')} onProject={permissions.projects.view ? openProject : undefined} onEmail={permissions.communication.view && permissions.projects.view ? (task) => { if (task.projectId) { setMailTask(task); openProject(task.projectId, 'mail') } } : undefined} /></section>}
         {page === 'calendar' && <CalendarPage key={createIntent === 'calendar' ? 'new-event' : 'calendar'} startCreating={createIntent === 'calendar' && permissions.calendar.create} workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} permissions={permissions.calendar} onProject={permissions.projects.view ? openProject : undefined} onTask={permissions.tasks.view ? openTask : undefined} />}
         {page === 'files' && <FilesPage workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} orgId={orgId} permissions={permissions.files} onProject={permissions.projects.view ? openProject : undefined} onTask={permissions.tasks.view ? openTask : undefined} />}
         {page === 'reports' && <ReportsPage key={createIntent === 'reports' ? 'new-report' : selectedReport || 'reports'} startCreating={createIntent === 'reports' && permissions.reports.create} workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} orgId={orgId} permissions={permissions.reports} canUploadFiles={permissions.files.create} initialReportId={selectedReport} focusItemId={selectedReportItem} onProject={permissions.projects.view ? openProject : undefined} onSelectReport={(id) => id ? openReport(id) : openPage('reports')} />}
@@ -536,10 +548,10 @@ export default function App() {
         {page === 'transcription' && <ModulePlaceholder icon={<AudioLines />} title="תמלול" text="תמלול פגישות והקלטות." />}
         {page === 'team' && canManageUsers && <UserManagement orgId={orgId} canManage={canManageUsers} isDeveloper={isDeveloper} workspace={workspace} setWorkspace={editableSetWorkspace} />}
         {page === 'imports' && permissions.imports.view && <ImportCenter workspace={workspace} setWorkspace={editableSetWorkspace} canImport={permissions.imports.create} />}
-        {page === 'settings' && <SettingsPage user={user} onUserUpdated={setUser} workspace={workspace} setWorkspace={editableSetWorkspace} canViewDrive={permissions.files.view} canManageDrive={permissions.files.create} canConfigureGoogle={permissions.connections.edit} canViewOrganization={permissions.settings.view} canEditOrganization={permissions.settings.edit} isDeveloper={isDeveloper} />}
+        {page === 'settings' && <SettingsPage canViewTasks={permissions.tasks.view} canEditTasks={permissions.tasks.edit} canCreateTasks={permissions.tasks.create} canDeleteTasks={permissions.tasks.delete} user={user} onUserUpdated={setUser} workspace={workspace} setWorkspace={editableSetWorkspace} canViewDrive={permissions.files.view} canManageDrive={permissions.files.create} canConfigureGoogle={permissions.connections.edit} canViewOrganization={permissions.settings.view} canEditOrganization={permissions.settings.edit} isDeveloper={isDeveloper} />}
       </main>
     </div>
-  </div></WorkspaceSaveContext.Provider>
+  </div></DisplayContext.Provider></WorkspaceSaveContext.Provider>
 }
 
 function Sidebar({ page, setPage, workspace, permissions, open, setOpen, user, onLogout, isDeveloper, canManageUsers }: { page: Page; setPage: (page: Page) => void; workspace: Workspace; permissions: PermissionMatrix; open: boolean; setOpen: (value: boolean) => void; user: User; onLogout: () => void; isDeveloper: boolean; canManageUsers: boolean }) {
