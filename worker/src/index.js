@@ -148,11 +148,12 @@ function rolePermissionAllowed(role, permissions, area, action) {
   return false
 }
 
-async function currentMembership(request, env, config, user) {
+async function currentMembership(request, env, config, user, orgId) {
   const auth = request.headers.get('authorization') || ''
   const url = new URL(`${config.supabaseUrl.replace(/\/$/, '')}/rest/v1/memberships`)
   url.searchParams.set('select', 'role,permissions')
   url.searchParams.set('user_id', `eq.${user.id}`)
+  if (orgId) url.searchParams.set('org_id', `eq.${orgId}`)
   const response = await fetch(url.toString(), {
     headers: {
       authorization: auth,
@@ -162,6 +163,12 @@ async function currentMembership(request, env, config, user) {
   })
   const memberships = response.ok ? await response.json() : []
   return Array.isArray(memberships) ? memberships[0] || null : null
+}
+
+async function requireOrgAreaAction(request, env, config, user, orgId, area, actions) {
+  if (!orgId) throw Object.assign(new Error('חסר שיוך לארגון'), { status: 400 })
+  const membership = await currentMembership(request, env, config, user, orgId)
+  if (!membership || !actions.some(action => rolePermissionAllowed(membership.role, membership.permissions, area, action))) throw Object.assign(new Error('אין הרשאה לפעולה בארגון זה'), { status: 403 })
 }
 
 async function requireAreaAction(request, env, config, area, action) {
@@ -1042,6 +1049,7 @@ async function handleDriveSharing(request, env, config) {
   const url = new URL(request.url)
   const body = request.method === 'GET' ? Object.fromEntries(url.searchParams) : await parseBody(request)
   if (!/^[a-zA-Z0-9_-]{1,200}$/.test(body.fileId || '') || !body.projectId) throw Object.assign(new Error('מזהה קובץ לא תקין'), { status: 400 })
+  await requireOrgAreaAction(request, env, config, user, body.orgId, 'files', [request.method === 'GET' ? 'view' : 'edit'])
   // Reuse the filtered workspace RPC to verify project scope before touching Drive.
   await mailProjectContext(request, env, config, user, { orgId: body.orgId, projectId: body.projectId })
   const folder = await projectDriveContent(request, env, config, user, body.projectId, body.fileId)
@@ -1077,6 +1085,7 @@ async function handleDriveRename(request, env, config) {
   const body = await parseBody(request)
   const name = cleanString(body.name)
   if (!/^[a-zA-Z0-9_-]{1,200}$/.test(body.fileId || '') || !name || name.length > 255) throw Object.assign(new Error('שם קובץ או מזהה לא תקינים'), { status: 400 })
+  await requireOrgAreaAction(request, env, config, user, body.orgId, 'files', ['edit'])
   await mailProjectContext(request, env, config, user, body)
   const folder = await projectDriveContent(request, env, config, user, body.projectId, body.fileId)
   if (folder.readOnly || body.fileId === folder.id) throw Object.assign(new Error('לא ניתן לשנות קובץ בתיקייה לקריאה בלבד או את תיקיית הפרויקט'), { status: 403 })
@@ -1089,9 +1098,10 @@ async function handleDriveRename(request, env, config) {
 }
 
 async function handleTaskComments(request, env, config) {
-  const user = request.method === 'POST' ? await requireAnyAreaAction(request, env, config, [{ area: 'tasks', action: 'status' }, { area: 'tasks', action: 'edit' }]) : await requireAreaAction(request, env, config, 'tasks', 'view')
+  const user = await getAuthenticatedUser(request, env, config)
   const body = request.method === 'GET' ? Object.fromEntries(new URL(request.url).searchParams) : await parseBody(request)
   if (!/^[a-zA-Z0-9_-]{1,160}$/.test(body.taskId || '') || !/^[a-zA-Z0-9_-]{1,160}$/.test(body.orgId || '')) throw Object.assign(new Error('שיוך משימה לא תקין'), { status: 400 })
+  await requireOrgAreaAction(request, env, config, user, body.orgId, 'tasks', request.method === 'POST' ? ['status', 'edit'] : ['view'])
   // Use the caller's JWT and filtered RPC, never a service-role document read.
   const response = await fetch(`${config.supabaseUrl.replace(/\/$/, '')}/rest/v1/rpc/get_workspace_state`, { method: 'POST', headers: { authorization: request.headers.get('authorization'), apikey: config.supabaseAnonKey, 'content-type': 'application/json' }, body: JSON.stringify({ target_org: body.orgId }) })
   if (!response.ok) throw Object.assign(new Error('אין גישה למשימה'), { status: 403 })
@@ -1169,7 +1179,7 @@ async function handleDriveUpload(request, env, config) {
   const body = await parseBody(request); const kind = body.kind === 'report' ? 'report' : 'file'
   const user = await requireGoogleAreaAction(request, env, config, 'files', 'create')
   if (kind === 'report') await requireAreaAction(request, env, config, 'reports', 'view')
-  if (body.orgId) await mailProjectContext(request, env, config, user, body)
+  if (body.orgId) { await requireOrgAreaAction(request, env, config, user, body.orgId, 'files', ['create']); await mailProjectContext(request, env, config, user, body) }
   return apiJson(request, await uploadGoogleDriveFile(env, config, user.id, body))
 }
 

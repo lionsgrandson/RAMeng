@@ -1168,3 +1168,19 @@ test('printable tables escape data and retain the chosen project title', async t
   assert.ok(printed); assert.ok(html.includes('פרויקט בדיקה')); assert.ok(html.includes('dir="rtl"'))
   assert.ok(html.includes('&lt;script&gt;bad()&lt;/script&gt;.pdf')); assert.ok(!html.includes('<script>'))
 })
+
+
+for (const path of ['/api/task-comments', '/api/google/drive/rename']) test(`target organization role governs mutation: ${path}`, async t => {
+  const privateEnv = { CONFIG: { get: async key => key === 'rameng:admin-config:v1' ? config : null } }
+  let providerCalls = 0
+  t.mock.method(globalThis, 'fetch', async (target) => {
+    const url = new URL(String(target))
+    if (url.pathname.endsWith('/auth/v1/user')) return Response.json({ id: 'qa', email: 'qa@example.test' })
+    if (url.pathname.endsWith('/memberships')) return Response.json([{ role: url.searchParams.get('org_id') === 'eq.other-org' ? 'viewer' : 'admin' }])
+    providerCalls++; throw new Error('Must deny before provider/workspace access')
+  })
+  t.mock.method(console, 'error', () => undefined)
+  const body = { orgId: 'other-org', taskId: 'assigned', projectId: 'project', fileId: 'file', name: 'file.pdf', body: 'comment' }
+  const response = await worker.fetch(new Request('https://crm.test' + path, { method: path.endsWith('rename') ? 'PATCH' : 'POST', headers: { authorization: 'Bearer qa-token', 'content-type': 'application/json' }, body: JSON.stringify(body) }), privateEnv)
+  assert.equal(response.status, 403); assert.equal(providerCalls, 0)
+})

@@ -12,7 +12,7 @@ export default function TaskContactAssignment({ task, workspace, setWorkspace, o
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const contact = contacts.find(contact => contact.id === contactId)
-  const member = workspace.team.find(member => member.active && member.email.toLowerCase() === contact?.email?.toLowerCase())
+  const member = workspace.team.find(member => member.active && member.email.trim().toLowerCase() === contact?.email?.trim().toLowerCase())
   const assign = async () => {
     if (!contact?.email || !project) return
     setBusy(true); setError('')
