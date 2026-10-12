@@ -44,3 +44,11 @@ The selected files report records selection only; successful Drive sharing remai
 Cloudflare's [version URL documentation](https://developers.cloudflare.com/workers/versions-and-deployments/version-urls/) explains version-only previews and shared bindings. The implementation uses Google's [file update endpoint](https://developers.google.com/workspace/drive/api/reference/rest/v3/files/update) and the existing [Supabase RLS](https://supabase.com/docs/guides/database/postgres/row-level-security) access model.
 
 Pre-existing desktop bridge/package changes, `.gitignore` changes, and the historical release checklist were preserved outside the development commit.
+
+## Final preview identity
+
+- Deployed application code commit: `0374d8fa336f020ae5870a72fbc13776e06b9bc1`.
+- Worker version: `6004631b-a4d2-4b9f-8e89-d605dcb1e4a3`.
+- Immutable preview: https://6004631b-rameng-crm.rameng-crm-worker.workers.dev
+- Final preview HTML and all four initial assets match the build byte for byte. Task-comment, Gmail-thread and Drive-file unauthenticated requests return 401. Chrome displays the login page and preview notice without captured console errors. Production routing was rechecked and remains on the previously deployed version.
+- The final follow-up commit contains only this report identity and a QA-only mock threading correction; deployed application source is unchanged.
