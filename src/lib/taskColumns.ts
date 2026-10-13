@@ -1,7 +1,7 @@
 import type { TaskColumn } from '../types'
 
 export const taskSystemColumns: TaskColumn[] = [
-  { id: 'col-time', key: 'scheduledTime', label: 'שעה (ירושלים)', type: 'time', visible: true, removable: false, width: 110 },
+  { id: 'col-time', key: 'scheduledTime', label: 'שעה', type: 'time', visible: true, removable: false, width: 110 },
   { id: 'col-select', key: '__select', label: 'בחירה לסיכום פגישה', type: 'text', visible: true, removable: false, width: 80 },
   { id: 'col-categories', key: '__categories', label: 'מקצועות', type: 'text', visible: true, removable: false, width: 160 },
   { id: 'col-completed', key: '__completed', label: 'בוצע', type: 'text', visible: true, removable: false, width: 70 },
@@ -14,6 +14,7 @@ export const taskSystemColumns: TaskColumn[] = [
 // the complete order alongside the existing columns in the workspace document.
 export function normalizeTaskColumns(columns: TaskColumn[]) {
   const normalized = columns.map(column => {
+    if (column.key === 'scheduledTime' && ['שעה (ירושלים)', 'שעה (Asia/Jerusalem)'].includes(column.label)) return { ...column, label: 'שעה' }
     if (column.key === 'emailTo' && column.label === 'תיבת מייל') return { ...column, label: 'מייל לקוח' }
     if (column.key === 'followUpDate' && column.label === 'מועד מעקב / סיום') return { ...column, label: 'מועד מעקב' }
     if (column.key === 'dueDate' && column.label === 'תאריך יעד') return { ...column, label: 'תאריך סיום' }
@@ -28,6 +29,14 @@ export function normalizeTaskColumns(columns: TaskColumn[]) {
     return [...missing.filter(column => column.key !== '__actions').map(column => ({ ...column })), ...normalized, ...missing.filter(column => column.key === '__actions').map(column => ({ ...column }))]
   }
   return [...normalized, ...missing.map(column => ({ ...column }))]
+}
+
+// Keep saved proportions, but give controls enough physical space to remain usable.
+export function taskTableMinWidth(columns: TaskColumn[]) {
+  return Math.ceil(Math.max(960, ...columns.map(column => {
+    const minimum = column.key === '__actions' ? 240 : column.type === 'email' ? 250 : column.key === 'title' ? 240 : ['date', 'time'].includes(column.type) ? 145 : ['__completed', '__select'].includes(column.key) ? 65 : 130
+    return minimum * 100 / (column.widthPercent || 100 / Math.max(1, columns.length))
+  })))
 }
 
 export function visibleTaskColumns(columns: TaskColumn[], projectId?: string) {

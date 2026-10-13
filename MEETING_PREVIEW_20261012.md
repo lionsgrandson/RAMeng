@@ -52,3 +52,20 @@ Pre-existing desktop bridge/package changes, `.gitignore` changes, and the histo
 - Immutable preview: https://6004631b-rameng-crm.rameng-crm-worker.workers.dev
 - Final preview HTML and all four initial assets match the build byte for byte. Task-comment, Gmail-thread and Drive-file unauthenticated requests return 401. Chrome displays the login page and preview notice without captured console errors. Production routing was rechecked and remains on the previously deployed version.
 - The final follow-up commit contains only this report identity and a QA-only mock threading correction; deployed application source is unchanged.
+
+
+## Scope recheck and QA — 13 October 2026
+
+This follow-up supersedes the earlier unauthenticated-browser limitation for Gmail reads. Udi's connected Chrome profile (`r-eng.co.il`) was used. The task email selector opened the exact linked Gmail conversation, rendered 20 messages, retained its project/task association and opened the reply-in-thread form. No real reply or share was sent. Opening the conversation updated the unread count from 45 to 42. No captured browser errors were present.
+
+Corrections from this pass:
+- Removed the duplicate 259-contact card list. The configurable contact table is now the single directory, with 25 rows per page, counts and previous/next controls at both ends. Search and exports cover all filtered contacts, across pages.
+- Contact names are visibly underlined, with an explicit open-card action even when the name column is hidden. Project contact pickers have separate open-card and remove-selection controls; contact assignment and financial reports link to the contact card when authorized.
+- Action buttons wrap as intact buttons. The task table preserves configured proportions while ensuring controls have enough space. Hebrew/English names, email/phone values and date/time inputs have explicit directional isolation; long email HTML stays within its own scroller.
+- Renamed the default and legacy system time captions to `שעה`, preserving custom captions.
+- Added missing task dates/time to the customer-card create/edit forms and display. A time requires a valid primary date, using the shared Jerusalem/DST validation.
+- Fixed global task comments and contact assignment using an incorrect fallback organization ID. Organization ID is now required by the task board. View-only users can also open permitted comments; posting remains gated by status/edit permission and server authorization.
+
+QA evidence: 110 regression tests passed; TypeScript and preview build passed. Isolated browser fixtures verified paging (26–50 of 62), searching for contact 62 from another page, opening its card, time-without-date rejection, successful 14:35 scheduling from the customer card, and button overflow measurements. At a measured 390px viewport, document width stayed 390px and task navigation/action controls did not overflow. Existing authorization/provider tests cover external restrictions, threading, cache invalidation and Drive operations.
+
+Live Drive inspection found no connected root folder for the two inspected projects (ויתקין 12 and דבורה הנביאה /יעקב חזן). Their UI correctly asks to connect a folder. No folder was created or linked for testing. Calendar creation, external invitations, actual Gmail delivery and Drive mutation round trips remain unverified live; the original partial statuses for those provider-dependent items still apply. PDF desktop editing remains the documented fallback workflow.

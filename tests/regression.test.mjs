@@ -1184,3 +1184,20 @@ for (const path of ['/api/task-comments', '/api/google/drive/rename']) test(`tar
   const response = await worker.fetch(new Request('https://crm.test' + path, { method: path.endsWith('rename') ? 'PATCH' : 'POST', headers: { authorization: 'Bearer qa-token', 'content-type': 'application/json' }, body: JSON.stringify(body) }), privateEnv)
   assert.equal(response.status, 403); assert.equal(providerCalls, 0)
 })
+
+
+test('legacy time captions normalize without replacing custom names or changing saved proportions', async () => {
+  const { normalizeTaskColumns, percentageTaskColumns, taskTableMinWidth } = await server.ssrLoadModule('/src/lib/taskColumns.ts')
+  const input = [
+    { id: 'clock', key: 'scheduledTime', label: 'שעה (ירושלים)', type: 'time', visible: true, widthPercent: 10 },
+    { id: 'actions', key: '__actions', label: 'פעולות', type: 'text', visible: true, widthPercent: 4 },
+    { id: 'title', key: 'title', label: 'משימה', type: 'text', visible: true, widthPercent: 86 },
+  ]
+  const before = JSON.stringify(input)
+  assert.equal(normalizeTaskColumns(input)[0].label, 'שעה')
+  assert.equal(normalizeTaskColumns([{ ...input[0], label: 'שעת ביקור' }])[0].label, 'שעת ביקור')
+  const columns = percentageTaskColumns(input)
+  const minWidth = taskTableMinWidth(columns)
+  assert.ok(minWidth * columns[1].widthPercent / 100 >= 240)
+  assert.equal(JSON.stringify(input), before)
+})

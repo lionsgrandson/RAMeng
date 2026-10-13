@@ -2,7 +2,7 @@ import TaskComments from './TaskComments'
 import TaskContactAssignment from './TaskContactAssignment'
 import { taskColumnChoices } from '../lib/taskProfession'
 import { jerusalemInstant } from '../lib/taskTime'
-import { percentageTaskColumns, visibleTaskColumns } from '../lib/taskColumns'
+import { percentageTaskColumns, taskTableMinWidth, visibleTaskColumns } from '../lib/taskColumns'
 import { DisplayContext } from './DisplaySettings'
 import { TaskDeliveryStatus } from './TaskNotifications'
 import { CategoryManager, CategoryPicker } from './Categories'
@@ -16,7 +16,7 @@ import { Chip, Field, Modal, dateInput, nowIso, uid } from './common'
 
 type Props = {
   canInviteExternal?: boolean
-  orgId?: string
+  orgId: string
   workspace: Workspace
   setWorkspace: React.Dispatch<React.SetStateAction<Workspace>>
   projectId?: string
@@ -29,6 +29,7 @@ type Props = {
   canEditProject?: boolean
   startCreating?: boolean
   onProject?: (id: string) => void
+  onContact?: (id: string) => void
 }
 
 type TaskView = 'active' | 'archive'
@@ -54,7 +55,7 @@ const fieldValue = (task: Task, column: TaskColumn) => {
   return String((task as unknown as Record<string, unknown>)[column.key] ?? '')
 }
 
-export default function TaskBoard({ canInviteExternal = false, workspace, setWorkspace, projectId, onEmail, onProject, canEdit = true, permissions, focusTaskId, attentionOnly = false, onClearAttention, startCreating = false, orgId = 'local', canEditProject = false }: Props) {
+export default function TaskBoard({ canInviteExternal = false, workspace, setWorkspace, projectId, onEmail, onProject, onContact, canEdit = true, permissions, focusTaskId, attentionOnly = false, onClearAttention, startCreating = false, orgId, canEditProject = false }: Props) {
   const taskPermissions: AreaPermissions = permissions || { view: true, create: canEdit, edit: canEdit, status: canEdit, delete: canEdit }
   const canCreate = taskPermissions.create
   const canUpdate = taskPermissions.edit
@@ -359,7 +360,7 @@ export default function TaskBoard({ canInviteExternal = false, workspace, setWor
     <div className="toolbar task-scroll-controls" aria-label="ניווט אופקי בטבלה"><button type="button" className="secondary" onClick={() => tableRef.current?.scrollBy({ left: 400, behavior: 'smooth' })}>גלילה ימינה →</button><button type="button" className="secondary" onClick={() => tableRef.current?.scrollBy({ left: -400, behavior: 'smooth' })}>← גלילה שמאלה</button>{onEmail && <label>פתיחת מייל למשימה<select aria-label="פתיחת מייל למשימה" value="" onChange={event => { const task = rows.find(row => row.task.id === event.target.value)?.task; if (task) onEmail(task) }}><option value="">בחירת משימה</option>{rows.map(({ task }) => <option key={task.id} value={task.id}>{task.title}</option>)}</select></label>}</div>
     {!visibleColumns.length && <p className="field-help">כל העמודות מוסתרות. ניתן להציג אותן בהגדרות ← תצוגה.</p>}
     <div ref={tableRef} tabIndex={0} aria-label="טבלת משימות — גלילה אופקית" className={`table-scroll task-table-wrap table-density-${density}`}>
-      <table className="data-table task-table task-table-percent" style={{ minWidth: Math.max(960, visibleColumns.length * 140) }}>
+      <table className="data-table task-table task-table-percent" style={{ minWidth: taskTableMinWidth(visibleColumns) }}>
         <colgroup>{visibleColumns.map(column => <col key={column.id} style={{ width: `${column.widthPercent}%` }} />)}</colgroup>
         <thead><tr>{visibleColumns.map(column => <th key={column.id} data-column-key={column.key} className={column.key === '__actions' ? 'actions-col' : column.key === '__completed' ? 'complete-col' : column.key === '__color' ? 'color-col' : ''}>{column.label}{column.key === '__select' && <input type="checkbox" aria-label="בחירת כל המשימות המסוננות לסיכום" checked={rows.length > 0 && rows.every(row => selectedIds.includes(row.task.id))} onChange={event => setSelectedIds(event.target.checked ? rows.map(row => row.task.id) : [])} />}</th>)}</tr></thead>
         <tbody>
@@ -370,7 +371,7 @@ export default function TaskBoard({ canInviteExternal = false, workspace, setWor
                 : column.key === '__completed' ? <input type="checkbox" aria-label={isCompleted(task) ? `שחזור ${task.title} לאזור הפעיל` : `סימון ${task.title} כבוצעה`} checked={isCompleted(task)} disabled={!canStatus} onChange={(e) => toggleTaskCompleted(task, e.target.checked)} />
                 : column.key === '__color' ? <label className="task-color-picker"><span className="color-dot" style={{ backgroundColor: taskColor(task.colorTag).hex }} /><select aria-label={`צבע קטלוג עבור ${task.title}`} disabled={!canUpdate} value={task.colorTag || ''} onChange={(e) => updateTask(task.id, { colorTag: e.target.value || undefined })}>{TASK_COLOR_OPTIONS.map((item) => <option key={item.id || 'none'} value={item.id}>{item.label}</option>)}</select></label>
                 : column.key === '__project' ? <div className="task-project-cell"><select className="cell-input" disabled={!canUpdate} aria-label={`פרויקט עבור ${task.title}`} value={task.projectId || ''} onChange={(e) => changeTaskProject(task.id, e.target.value || undefined)}><option value="">ללא פרויקט</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.name} — {project.address || 'כתובת חסרה'}</option>)}</select>{task.projectId && onProject && <button type="button" className="text-button" onClick={() => onProject(task.projectId!)}>פתיחה</button>}</div>
-                : column.key === '__actions' ? ((canCreate || canDelete || canUpdate) && <div className="task-row-actions"><button className="secondary" onClick={() => setCommentTask(task)}>תגובות</button>{canUpdate && task.projectId && <button className="secondary" onClick={() => setContactTask(task)}>הקצאה לאיש קשר</button>}{canCreate && <button type="button" className="secondary task-action-btn" onClick={() => setCreatingFor({ parentId: task.id })}><Plus /> תת-משימה</button>}{canDelete && <DeleteButton message={`למחוק את המשימה "${task.title}" וכל תתי-המשימות שלה?`} onConfirm={() => removeTask(task.id)} />}</div>)
+                : column.key === '__actions' ? (<div className="task-row-actions"><button className="secondary" onClick={() => setCommentTask(task)}>תגובות</button>{canUpdate && task.projectId && <button className="secondary" onClick={() => setContactTask(task)}>הקצאה לאיש קשר</button>}{canCreate && <button type="button" className="secondary task-action-btn" onClick={() => setCreatingFor({ parentId: task.id })}><Plus /> תת-משימה</button>}{canDelete && <DeleteButton message={`למחוק את המשימה "${task.title}" וכל תתי-המשימות שלה?`} onConfirm={() => removeTask(task.id)} />}</div>)
                 : column.key === 'title' ? <input className="cell-input task-title-input" disabled={!canUpdate} aria-label="שם משימה" style={{ paddingInlineStart: 8 + depth * 22 }} value={task.title} onChange={(e) => updateTask(task.id, { title: e.target.value })} />
                 : column.type === 'status' ? <select className="cell-input" disabled={!canStatus} aria-label={`${column.label} עבור ${task.title}`} value={fieldValue(task, column)} onChange={(e) => editCell(task, column, e.target.value)}>{workspace.taskStatuses.map((status) => <option key={status}>{status}</option>)}</select>
                 : column.type === 'member' ? <select className="cell-input" disabled={!canUpdate} aria-label={`${column.label} עבור ${task.title}`} value={fieldValue(task, column)} onChange={(e) => editCell(task, column, e.target.value)}><option value="">לא משויך</option>{workspace.team.filter((member) => member.active).map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select>
@@ -389,7 +390,7 @@ export default function TaskBoard({ canInviteExternal = false, workspace, setWor
     </div>
 
     {commentTask && <Modal title={`תגובות — ${commentTask.title}`} onClose={() => setCommentTask(null)}><TaskComments orgId={orgId} taskId={commentTask.id} canComment={canStatus} /></Modal>}
-    {contactTask && <TaskContactAssignment task={contactTask} workspace={workspace} setWorkspace={setWorkspace} orgId={orgId} canInvite={canInviteExternal} onClose={() => setContactTask(null)} />}
+    {contactTask && <TaskContactAssignment task={contactTask} workspace={workspace} setWorkspace={setWorkspace} orgId={orgId} canInvite={canInviteExternal} onContact={onContact} onClose={() => setContactTask(null)} />}
     {canCreate && creatingFor && <Modal title={creatingFor.parentId ? 'תת-משימה חדשה' : 'משימה חדשה'} onClose={() => setCreatingFor(null)} wide>
       <form className="form-grid two-col" onSubmit={submitTask}>
         {selectedParent && <div className="task-parent-note full"><strong>תת-משימה של:</strong> {selectedParent.title}</div>}
@@ -400,7 +401,7 @@ export default function TaskBoard({ canInviteExternal = false, workspace, setWor
         <Field label="עדיפות"><select name="priority" defaultValue="רגילה"><option>נמוכה</option><option>רגילה</option><option>גבוהה</option><option>דחופה</option></select></Field>
         <Field label="צבע / קטלוג"><select name="colorTag" defaultValue=""><option value="">ללא צבע</option>{TASK_COLOR_OPTIONS.filter((item) => item.id).map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></Field>
         <Field label="תאריך תחילת משימה"><input name="startDate" type="date" /></Field>
-        <Field label="שעה (Asia/Jerusalem)" hint="השעה חלה על תאריך ההתחלה, או הסיום / המעקב אם לא נקבעה התחלה"><input name="scheduledTime" type="time" /></Field>
+        <Field label="שעה" hint="השעה חלה על תאריך ההתחלה, או הסיום / המעקב אם לא נקבעה התחלה"><input name="scheduledTime" type="time" /></Field>
         <Field label="תאריך סיום"><input name="dueDate" type="date" /></Field>
         <Field label="מועד מעקב"><input name="followUpDate" type="date" /></Field>
         <Field label="מייל לקוח"><input name="emailTo" type="email" placeholder="name@example.com" /></Field>

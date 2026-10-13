@@ -73,3 +73,40 @@
 .preview-notice{position:fixed;bottom:0;inset-inline:0;z-index:10000;padding:10px 16px;background:#fff4d6;color:#4d3600;border-top:1px solid #ddc585;font:14px Arial;text-align:center}@media print{.preview-notice{display:none}}
 
 .task-board-wrap .task-scroll-controls{flex-wrap:wrap;gap:8px}.task-scroll-controls>label{min-width:0;max-width:100%;flex:1 1 220px}.task-scroll-controls select{min-width:0;width:100%}@media(max-width:600px){.task-scroll-controls>label{flex-basis:100%;width:100%}.task-scroll-controls>button{flex:1 1 auto;white-space:normal}}
+
+.contact-table-panel { padding: 16px; background: white; border: 1px solid #dce4dd; border-radius: 12px; min-width: 0; }
+.contact-pagination { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding-block: 14px; }
+.contact-pagination > [role=status] { margin-inline-end: auto; }
+.project-contacts-table { width: 100%; min-width: 1050px; table-layout: auto; text-align: start; }
+.project-contacts-table th { white-space: nowrap; }
+.project-contacts-table td { vertical-align: middle; max-width: 280px; line-height: 1.6; }
+.contact-name-link { background: transparent; border: 0; color: var(--brand-dark, #245439); font: inherit; font-weight: 700; text-decoration: underline; text-underline-offset: 3px; text-align: start; cursor: pointer; padding: 4px 0; }
+.contact-open-button { white-space: nowrap; }
+.contact-name-link:focus-visible, .contact-open-button:focus-visible { outline: 2px solid #245439; outline-offset: 3px; }
+.project-contacts-table tbody tr:hover { background: #f1f7f2; }
+.task-table-percent .task-row-actions { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.task-table-percent .task-row-actions > button { flex: 0 0 auto; white-space: nowrap; min-height: 32px; padding: 6px 9px; font-size: 12px !important; }
+.task-table-percent .email-cell { min-width: 0; flex-wrap: wrap; }
+.task-table-percent .email-cell .cell-input { min-width: 0; flex: 1 1 150px; direction: ltr; text-align: start; }
+.task-table-percent input[type=date], .task-table-percent input[type=time] { direction: ltr; text-align: start; }
+.task-table-percent th, .task-table-percent td { text-align: start; vertical-align: middle; }
+.task-table-percent .complete-cell { text-align: center; }
+.client-identity, .project-title-main, .context-links, .client-picker-copy { min-width: 0; overflow-wrap: anywhere; }
+input[type=email], input[type=tel] { direction: ltr; text-align: start; }
+.contact-thread-body, .contact-thread-list, .mailbox-row > span { min-width: 0; }
+.contact-thread-body bdi, .mailbox-sender { unicode-bidi: plaintext; overflow-wrap: anywhere; }
+body:has(.preview-notice) .page-wrap { padding-bottom: 95px; }
+@media(max-width:600px) { .contact-table-panel { padding: 10px; }.contact-pagination { gap: 8px; }.contact-pagination > [role=status] { width: 100%; }.contact-table-panel > .toolbar { flex-wrap: wrap; } }
+
+.selected-contact-chip { display: inline-flex; align-items: center; gap: 2px; max-width: 100%; }
+.selected-contact-chip bdi { white-space: normal; text-align: start; overflow-wrap: anywhere; }
+.client-picker-option > .contact-name-link { flex-shrink: 0; font-size: 12px; }
+
+.email-html { min-width: 0; max-width: 100%; overflow-x: auto; overflow-wrap: anywhere; }
+.email-html img { max-width: 100%; height: auto; }
+.client-identity h1 { white-space: normal; overflow-wrap: anywhere; line-height: 1.4; }
+.task-table-percent .cell-input { font-size: 12px; }
+
+.project-contacts-table td { font-size: 13px; }
+.project-contacts-table th { font-size: 12px; }
+.contact-table-panel .secondary { font-size: 12px; }
