@@ -69,3 +69,14 @@ Corrections from this pass:
 QA evidence: 110 regression tests passed; TypeScript and preview build passed. Isolated browser fixtures verified paging (26–50 of 62), searching for contact 62 from another page, opening its card, time-without-date rejection, successful 14:35 scheduling from the customer card, and button overflow measurements. At a measured 390px viewport, document width stayed 390px and task navigation/action controls did not overflow. Existing authorization/provider tests cover external restrictions, threading, cache invalidation and Drive operations.
 
 Live Drive inspection found no connected root folder for the two inspected projects (ויתקין 12 and דבורה הנביאה /יעקב חזן). Their UI correctly asks to connect a folder. No folder was created or linked for testing. Calendar creation, external invitations, actual Gmail delivery and Drive mutation round trips remain unverified live; the original partial statuses for those provider-dependent items still apply. PDF desktop editing remains the documented fallback workflow.
+
+
+### Updated preview identity (13 October)
+
+- Application code commit: `4c96723e32b901352589bb6b9709b63b8c475461`, pushed to `codex/meeting-crm-preview`.
+- Worker version: `a431b3da-c30b-4757-b7cb-f6dd25c8b5dd`.
+- Stable preview: https://meeting-crm-rameng-crm.rameng-crm-worker.workers.dev
+- Immutable preview: https://a431b3da-rameng-crm.rameng-crm-worker.workers.dev
+- Stable preview HTML and all four initial assets match the final build byte for byte. Unauthenticated task-comment requests return 401. Production remains 100% on `1fe97240-b02d-4e13-96e8-1493e8c08e66`.
+- Udi's signed-in session is on the previous immutable preview origin. The refreshed stable preview opens its login page correctly and requires a separate sign-in; authenticated checks of the new UI remain pending there. Final UI interactions were verified with isolated browser fixtures, including desktop and 390px layouts, comments and contact assignment/card navigation. No console errors were captured in those checks.
+- Final rerun: all 110 regression tests passed. Evidence is in `artifacts/qa-20261013-*` and `artifacts/qa-*` screenshots (local only).
