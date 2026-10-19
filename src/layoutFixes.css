@@ -1180,6 +1180,9 @@ button svg,.primary svg,.secondary svg,.back-button svg,.upload-button svg{
 .brand{min-height:72px!important;padding:7px 7px 14px!important}
 .brand>img,.auth-brand>img,.app-loading>img{display:none!important}
 .auth-brand{min-height:92px}
+/* Constrain grid items to the padded track, rather than viewport-wide widths. */
+.auth-screen{grid-template-columns:minmax(0,1fr);padding:clamp(12px,4vw,28px)}
+.auth-screen>.auth-brand,.auth-screen>.login-card,.auth-screen>.setup-card{max-width:100%;min-width:0}
 .app-loading{min-height:100vh;gap:12px}
 .app-loading>span:last-child{font-size:12px;font-weight:800;color:#52675a}
 

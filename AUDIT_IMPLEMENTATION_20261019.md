@@ -108,3 +108,12 @@ Existing services: Cloudflare Workers/KV, Supabase database/Auth/Storage, Google
 7. **Mobile/desktop:** changed task interactions pass all seven widths; whole-product certification and native desktop/mobile execution are incomplete.
 8. **Verified production version:** determined by final release record below.
 9. **Broader ERP:** resolve organizational communication, live authorization/provider QA, issued-report policy and recovery verification before broader rollout.
+
+
+## Post-deployment follow-up: 320px authentication layout
+
+The initial application release merged PR #8 (and automatically merged PR #7) and deployed commit `a34b4bc6c815fdb4e06c728f7fff464de0c6b8eb` as Cloudflare version `70c0cef1-92c4-4581-aac0-166d42091664` at `2026-10-19T20:37:44.933Z` (23:37:44 Jerusalem). Fourteen non-mutating production checks passed, including exact HTML/initial asset bytes, correct public database configuration, six unauthenticated API denials and PATCH preflight. Main CI passed: https://github.com/lionsgrandson/RAMeng/actions/runs/39320820985 .
+
+An additional actual production browser smoke check found pre-existing 15px horizontal overflow on the 320px login screen. `.auth-screen` had padding while child cards used viewport widths, exceeding the grid track. The follow-up constrains the padded grid track and child maximum widths in `src/layoutFixes.css`. Seven new browser scenarios exercise login/reset layout and a **mocked** reset request at every required width. `tests/fixtures/auth.html`/`auth.tsx` are explicit QA-only entrypoints; production Vite config does not build them. The expanded suite passes **27/27 locally**, with the prior **127/127** regressions unchanged. CI and final follow-up release identity are recorded in the delivered verification report.
+
+No live password reset or credential change was performed. Database migration application and the organizational email journal remain pending.
