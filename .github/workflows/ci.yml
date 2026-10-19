@@ -37,14 +37,36 @@ jobs:
       - name: Regression tests
         run: npm test
       - name: Worker syntax check
-        run: node --check worker/src/index.js
+        run: |
+          node --check worker/src/index.js
+          node --check desktop/main.cjs
+          node --check desktop/preload.cjs
+          node --check desktop/pdf.cjs
       - name: Production build
         run: npm run build
       - name: Whitespace check
         run: git diff --check
-      - name: Install disposable PostgreSQL runtime
-        run: npm install --prefix "$RUNNER_TEMP/rameng-pg-runner" --no-save embedded-postgres@17.9.0-beta.17 pg
+      - name: Audit production dependencies
+        run: |
+          npm audit --omit=dev --audit-level=high
+          npm audit --prefix worker --omit=dev --audit-level=high
+          npm audit --prefix desktop --audit-level=high
+      - name: Install disposable test runtimes
+        run: npm install --prefix "$RUNNER_TEMP/rameng-pg-runner" --no-save embedded-postgres@17.9.0-beta.17 pg playwright@1.64.1
       - name: Execute database workflows
         run: node tests/run-database.mjs
         env:
           RAMENG_TEST_PG_RUNTIME: ${{ runner.temp }}/rameng-pg-runner
+      - name: Install test browser
+        run: node "$RUNNER_TEMP/rameng-pg-runner/node_modules/playwright/cli.js" install --with-deps chromium
+      - name: Browser workflows with isolated data
+        run: node tests/browser.mjs
+        env:
+          RAMENG_TEST_BROWSER_RUNTIME: ${{ runner.temp }}/rameng-pg-runner
+      - name: Upload browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rameng-browser-qa
+          path: artifacts/audit
+          retention-days: 14

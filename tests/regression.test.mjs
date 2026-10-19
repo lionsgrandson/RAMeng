@@ -10,11 +10,101 @@ after(() => server.close())
 const { normalizePermissions, workspaceMutationError } = await server.ssrLoadModule('/src/lib/permissions.ts')
 const { cloneWorkspace } = await server.ssrLoadModule('/src/seed.ts')
 const backend = await server.ssrLoadModule('/src/lib/backend.ts')
-const { readImportRows, mapContactImportRows, appendUniqueContacts } = await server.ssrLoadModule('/src/lib/imports.ts')
+const { readImportRows, mapContactImportRows, appendUniqueContacts, appendUniqueTasks, resolveTaskProjectReference } = await server.ssrLoadModule('/src/lib/imports.ts')
 const { normalizeContactCategories } = await server.ssrLoadModule('/src/lib/contactCategories.ts')
 const { mailContent } = await import('../worker/src/mailHtml.js')
 const options = { canManageUsers: false, isDeveloper: false }
 const { deleteProject, deleteContact } = await server.ssrLoadModule('/src/lib/records.ts')
+const { createReportFromTasks } = await server.ssrLoadModule('/src/lib/reportTasks.ts')
+
+test('every task column can move and persisted layouts keep their order and visibility', async () => {
+  const { normalizeTaskColumns, moveTaskColumn, visibleTaskColumns, taskSystemColumns } = await server.ssrLoadModule('/src/lib/taskColumns.ts')
+  const legacy = cloneWorkspace().taskColumns
+  const original = JSON.stringify(legacy)
+  const all = normalizeTaskColumns(legacy)
+  assert.equal(JSON.stringify(legacy), original)
+  assert.equal(new Set(all.map(column => column.key)).size, all.length)
+  assert.deepEqual(normalizeTaskColumns(all), all)
+  for (const system of taskSystemColumns) {
+    let moved = all
+    while (moved[0].id !== system.id) moved = moveTaskColumn(moved, system.id, -1)
+    assert.equal(moved[0].key, system.key)
+    while (moved.at(-1).id !== system.id) moved = moveTaskColumn(moved, system.id, 1)
+    assert.equal(moved.at(-1).key, system.key)
+    assert.deepEqual(normalizeTaskColumns(moved), moved)
+  }
+  const customized = all.map(column => column.key === '__completed' ? { ...column, visible: false } : column.key === '__actions' ? { ...column, label: 'טיפול', width: 240 } : column)
+  assert.equal(visibleTaskColumns(customized).some(column => column.key === '__completed'), false)
+  assert.equal(visibleTaskColumns(customized).find(column => column.key === '__actions').width, 240)
+  assert.equal(visibleTaskColumns(customized).some(column => column.key === '__select'), false)
+  assert.equal(visibleTaskColumns(customized, 'p').some(column => column.key === '__select'), true)
+  assert.equal(visibleTaskColumns(customized, 'p').some(column => column.key === '__project'), false)
+})
+
+test('percentage widths preserve legacy proportions and redistribute persisted widths', async () => {
+  const { normalizeTaskColumns, percentageTaskColumns, resizeTaskColumn, visibleTaskColumns } = await server.ssrLoadModule('/src/lib/taskColumns.ts')
+  const legacy = normalizeTaskColumns(cloneWorkspace().taskColumns)
+  const original = JSON.stringify(legacy)
+  const converted = percentageTaskColumns(legacy)
+  const title = converted.find(column => column.key === 'title')
+  const assignee = converted.find(column => column.key === 'assigneeId')
+  assert.ok(Math.abs(title.widthPercent / assignee.widthPercent - title.width / assignee.width) < 1e-9)
+  const resized = resizeTaskColumn(legacy, title.id, 25)
+  assert.equal(resized.find(column => column.id === title.id).widthPercent, 25)
+  assert.ok(Math.abs(resized.reduce((sum, column) => sum + column.widthPercent, 0) - 100) < 1e-9)
+  assert.equal(JSON.stringify(legacy), original)
+  assert.equal(resizeTaskColumn(legacy, title.id, 0), legacy)
+  assert.equal(resizeTaskColumn(legacy, title.id, NaN), legacy)
+  for (const projectId of [undefined, 'p']) {
+    const visible = percentageTaskColumns(visibleTaskColumns(JSON.parse(JSON.stringify(resized)), projectId))
+    assert.ok(Math.abs(visible.reduce((sum, column) => sum + column.widthPercent, 0) - 100) < 1e-9)
+    assert.ok(visible.every(column => Number.isFinite(column.widthPercent) && column.widthPercent > 0))
+  }
+})
+
+test('reordered task headers and row controls match in global and project tables', async () => {
+  const React = await import('react')
+  const { renderToStaticMarkup } = await import('react-dom/server')
+  const { default: TaskBoard } = await server.ssrLoadModule('/src/components/TaskBoard.tsx')
+  const { normalizeTaskColumns } = await server.ssrLoadModule('/src/lib/taskColumns.ts')
+  const workspace = cloneWorkspace()
+  workspace.projects = [{ id: 'p', name: 'Layout project', categoryIds: [] }]
+  workspace.tasks = [{ id: 'layout-task', projectId: 'p', title: 'Layout task', status: 'טרם התחיל', priority: 'רגילה', custom: {}, order: 1, createdAt: '2026-10-12' }]
+  workspace.taskColumns = normalizeTaskColumns(workspace.taskColumns).reverse()
+  for (const projectId of [undefined, 'p']) {
+    const markup = renderToStaticMarkup(React.createElement(TaskBoard, { workspace, projectId, setWorkspace: () => {} }))
+    const head = markup.match(/<thead>([\s\S]*?)<\/thead>/)[1]
+    const widths = [...markup.matchAll(/<col[^>]*style="width:([\d.]+)%"/g)].map(match => Number(match[1]))
+    assert.ok(Math.abs(widths.reduce((sum, width) => sum + width, 0) - 100) < 1e-9)
+    assert.ok(!head.includes('min-width:'))
+    const row = markup.match(/<tr[^>]*data-task-id="layout-task"[^>]*>([\s\S]*?)<\/tr>/)[1]
+    const keys = value => [...value.matchAll(/data-column-key="([^"]+)"/g)].map(match => match[1])
+    assert.deepEqual(keys(row), keys(head))
+    assert.equal(keys(row)[0], '__actions')
+    assert.ok(row.includes('סימון Layout task כבוצעה'))
+    assert.ok(row.includes('שם משימה'))
+    if (projectId) assert.ok(row.includes('בחירת Layout task לסיכום פגישה'))
+  }
+})
+
+test('task calendar includes due, start and follow-up days without UTC shifting', async () => {
+  const { taskCalendarDates } = await server.ssrLoadModule('/src/lib/taskCalendar.ts')
+  const dates = taskCalendarDates({ title: 'חשבון קבלן 1', startDate: '2026-10-12', dueDate: '2026-10-13', followUpDate: '2026-10-14T00:00:00+03:00' })
+  assert.deepEqual(dates.map(item => item.date), ['2026-10-12', '2026-10-13', '2026-10-14'])
+  assert.deepEqual(taskCalendarDates({}), [])
+  assert.deepEqual(taskCalendarDates({ dueDate: '13.10', startDate: '' }), [])
+  assert.equal(taskCalendarDates({ dueDate: '2026-10-13', followUpDate: '2026-10-13' }).filter(item => item.date === '2026-10-13').length, 2)
+})
+
+test('Foxit bridge accepts only signed files from the configured storage origin', async () => {
+  const { default: pdf } = await import('../desktop/pdf.cjs')
+  const origin = 'https://storage.supabase.co'
+  const url = `${origin}/storage/v1/object/sign/crm-files/org/project/plan.pdf?token=test`
+  assert.equal(pdf.validatePdfUrl(url, origin), url)
+  for (const value of ['file:///C:/secret.pdf', 'https://evil.test/plan.pdf', `${origin}/rest/v1/memberships`, `${origin}/storage/v1/object/sign/crm-files/../../secrets`, 'http://storage.supabase.co/storage/v1/object/sign/crm-files/plan.pdf', `https://user:password@storage.supabase.co/storage/v1/object/sign/crm-files/plan.pdf`]) {
+    assert.throws(() => pdf.validatePdfUrl(value, origin))
+  }
+})
 
 test('calendar merge keeps private Google metadata for source filters and deduplicates equivalent timestamps', async () => {
   const { mergeCalendarEvents } = await server.ssrLoadModule('/src/components/CalendarFiles.tsx')
@@ -72,6 +162,35 @@ test('automatic Drive uploads wait for the daily window, replace queued edits, a
   for (const [key, value] of kv) if (key.startsWith('drive-pending:')) value.dueAt = Date.now() - 1
   assert.equal((await runDriveQueue(env, execute)).uploaded, 1)
   assert.equal(uploads, 2)
+})
+
+
+test('selected project tasks generate an editable, traceable report draft without mutating tasks', () => {
+  const workspace = cloneWorkspace()
+  workspace.projects = [{ id: 'project-a', name: 'פרויקט א', address: 'רחוב 10' }, { id: 'project-b', name: 'פרויקט ב', address: 'רחוב 20' }]
+  workspace.categories = [{ id: 'electric', name: 'חשמל' }, { id: 'seal', name: 'איטום' }]
+  workspace.team = [{ id: 'member', name: 'מפקחת בדיקה' }]
+  workspace.tasks = [
+    { id: 't1', projectId: 'project-a', categoryIds: ['electric'], title: 'לוח חשמל', description: 'יש לבדוק', dueDate: '2026-10-24', status: 'בטיפול', assigneeId: 'member' },
+    { id: 't2', projectId: 'project-a', categoryIds: ['seal'], title: 'איטום גג', description: 'הסתיים', status: 'בוצע' },
+    { id: 't3', projectId: 'project-b', categoryIds: ['electric'], title: 'לוח בפרויקט אחר', status: 'בטיפול' },
+  ]
+  const before = structuredClone(workspace.tasks)
+  let n = 0
+  const draft = createReportFromTasks(workspace, 'project-a', ['t1', 't1', 't2', 't3'], { title: 'דוח שבועי', templateId: 'report-table', date: '2026-10-19' }, prefix => `${prefix}-${++n}`)
+  const items = draft.sections.flatMap(section => section.items)
+  assert.equal(draft.projectId, 'project-a')
+  assert.equal(draft.siteAddress, 'רחוב 10')
+  assert.equal(draft.title, 'דוח שבועי')
+  assert.equal(draft.inspectionDate, '2026-10-19')
+  assert.deepEqual(items.map(item => item.sourceTaskId), ['t1', 't2'])
+  assert.deepEqual(items.map(item => item.status), ['פתוח', 'בוצע'])
+  assert.equal(items[0].responsible, 'מפקחת בדיקה')
+  assert.match(items[0].description, /תאריך יעד: 2026-10-24/)
+  assert.equal(draft.sections.find(section => section.title === 'חשמל').items.length, 1)
+  assert.equal(draft.sections.find(section => section.title === 'איטום').items.length, 1)
+  assert.deepEqual(workspace.tasks, before)
+  assert.throws(() => createReportFromTasks(workspace, 'project-b', ['t1'], { title: 'Invalid' }), /יש לבחור משימות/)
 })
 
 test('project deletion preserves dependent business records and removes their project links', () => {
@@ -173,6 +292,45 @@ test('reimport skips exact contact identities but keeps different people at a sh
   assert.equal(result.contacts[0].id, 'existing')
   assert.equal(result.contacts[1].name, 'אדם אחר')
   assert.equal(appendUniqueContacts([contact], [{ ...contact, notes: 'פרטים נוספים' }]).added, 1)
+})
+
+
+test('import reads every data worksheet while ignoring unrelated cover pages', async () => {
+  const XLSX = await import('@e965/xlsx')
+  const book = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([['הוראות'], ['נא לקרוא']]), 'cover')
+  XLSX.utils.book_append_sheet(book, XLSX.utils.json_to_sheet([{ 'משימה': 'חשמל', 'תאריך סיום': '21/10/2026' }]), 'tasks one')
+  XLSX.utils.book_append_sheet(book, XLSX.utils.json_to_sheet([{ 'משימה': 'איטום', 'תאריך סיום': '22/10/2026' }]), 'tasks two')
+  XLSX.utils.book_append_sheet(book, XLSX.utils.json_to_sheet([{ 'שם': 'אדריכלית' }]), 'contacts')
+  const buffer = XLSX.write(book, { type: 'array', bookType: 'xlsx' })
+  const tasks = await readImportRows(buffer, false, 'tasks')
+  const contacts = mapContactImportRows(await readImportRows(buffer, false, 'contacts'))
+  assert.deepEqual(tasks.map(task => task['משימה']), ['חשמל', 'איטום'])
+  assert.deepEqual(tasks.map(task => task['תאריך סיום']), ['2026-10-21', '2026-10-22'])
+  assert.deepEqual(contacts.map(contact => contact.name), ['אדריכלית'])
+})
+
+
+test('task import project links never resolve ambiguous or missing names', () => {
+  const projects = [{ id: 'p1', name: 'דרך הים' }, { id: 'p2', name: 'דרך הים' }, { id: 'p3', name: 'הנשיא 10' }]
+  assert.equal(resolveTaskProjectReference(projects, 'p1'), 'p1')
+  assert.equal(resolveTaskProjectReference(projects, 'הנשיא 10'), 'p3')
+  assert.equal(resolveTaskProjectReference(projects, ''), undefined)
+  assert.throws(() => resolveTaskProjectReference(projects, 'דרך הים'), /מספר פרויקטים/)
+  assert.throws(() => resolveTaskProjectReference(projects, 'פרויקט חסר'), /לא נמצא פרויקט/)
+})
+
+test('reimporting tasks preserves existing records, ignores status edits and rejects within-file duplicates', () => {
+  const original = { id: 'existing', projectId: 'p', title: 'איטום', description: 'בדיקת מרפסת', status: 'בוצע', priority: 'רגילה', dueDate: '2026-10-22', startDate: undefined, followUpDate: undefined, emailTo: undefined, custom: {}, order: 1, createdAt: '2026-10-01' }
+  const duplicate = { ...original, id: 'imported', status: 'טרם התחיל', order: 2 }
+  const changedDate = { ...duplicate, id: 'new', dueDate: '2026-10-23' }
+  const preview = appendUniqueTasks([original], [duplicate, duplicate, changedDate])
+  assert.equal(preview.added, 1)
+  assert.equal(preview.skipped, 2)
+  assert.equal(preview.tasks[0], original)
+  assert.equal(preview.tasks[0].status, 'בוצע')
+  assert.equal(preview.tasks[1].dueDate, '2026-10-23')
+  assert.equal(appendUniqueTasks(preview.tasks, [changedDate]).added, 0)
 })
 
 test('UTF-8 Hebrew CSV without a BOM imports and normalizes Israeli dates', async () => {
@@ -356,7 +514,7 @@ test('linking an existing Drive folder validates and saves an owner-scoped refer
 
 function googleFixture(t, handler, role = 'admin', ancestry = {}) {
   const kv = new Map([['rameng:admin-config:v1', config], ['rameng:google-tokens:v2:qa', { access_token: 'qa-google-token', expires_at: Date.now() + 3600000 }]])
-  const privateEnv = { CONFIG: { get: async (key) => kv.get(key) || null, put: async (key, value) => kv.set(key, JSON.parse(value)), delete: async key => kv.delete(key) } }
+  const privateEnv = { CONFIG: { get: async (key) => kv.get(key) || null, put: async (key, value) => { let parsed; try { parsed = JSON.parse(value) } catch { parsed = value }; kv.set(key, parsed) }, delete: async key => kv.delete(key) } }
   t.mock.method(globalThis, 'fetch', async (url, init = {}) => {
     if (String(url).endsWith('/auth/v1/user')) return Response.json({ id: 'qa', email: 'qa@example.test' })
     if (String(url).includes('/rest/v1/memberships')) return Response.json([{ role, permissions: null }])
@@ -978,4 +1136,274 @@ for (const outcome of ['sent','uncertain','provider-error','revoked-sender','mis
   if(outcome==='interrupted') assert.deepEqual(transitions,['uncertain'])
   else if(attempted) assert.deepEqual(transitions,['sending',['sent','blocked-front'].includes(outcome)?'sent':'uncertain'])
   else assert.deepEqual(transitions,[])
+})
+
+
+test('Jerusalem scheduling converts winter and summer and rejects DST gaps and overlaps', async () => {
+  const { jerusalemInstant, taskCalendarTime, jerusalemDate } = await server.ssrLoadModule('/src/lib/taskTime.ts')
+  assert.equal(jerusalemDate('2026-07-15T21:30:00Z'), '2026-07-16')
+  const task = { startDate: '2026-10-13', dueDate: '2026-10-14', scheduledTime: '14:35' }
+  assert.equal(taskCalendarTime(task, '2026-10-13'), '14:35')
+  assert.equal(taskCalendarTime(task, '2026-10-14'), undefined)
+  assert.equal(jerusalemInstant('2026-01-15', '09:30'), '2026-01-15T07:30:00.000Z')
+  assert.equal(jerusalemInstant('2026-07-15', '09:30'), '2026-07-15T06:30:00.000Z')
+  assert.throws(() => jerusalemInstant('2026-03-27', '02:30'))
+  assert.throws(() => jerusalemInstant('2026-10-25', '01:30'))
+  assert.equal(jerusalemInstant('2026-03-27', '03:30'), '2026-03-27T00:30:00.000Z')
+  assert.equal(jerusalemInstant('2026-10-25', '02:30'), '2026-10-25T00:30:00.000Z')
+  assert.throws(() => jerusalemInstant('2026-02-30', '09:30'))
+  assert.throws(() => jerusalemInstant('2026-01-15', '24:00'))
+})
+
+test('profession normalization requires an explicit configured replacement and preserves other values', async () => {
+  const { professionValues, normalizeProfessionValue, taskColumnChoices } = await server.ssrLoadModule('/src/lib/taskProfession.ts')
+  const state = cloneWorkspace(); state.categories = [{ id: 'cat', name: 'חשמל' }]
+  state.tasks = ['חשמלאי', 'חשמל?', 'חשמל'].map((value, index) => ({ id: String(index), custom: { profession: value, another: 'keep' } }))
+  const column = { key: 'custom.profession', label: 'מקצוע' }; const original = JSON.stringify(state)
+  assert.deepEqual(taskColumnChoices(column, state), ['חשמל'])
+  assert.deepEqual(professionValues(state, column), ['חשמלאי', 'חשמל?'])
+  assert.equal(normalizeProfessionValue(state, column, 'חשמלאי', 'unknown'), state)
+  const next = normalizeProfessionValue(state, column, 'חשמלאי', 'חשמל')
+  assert.deepEqual(next.tasks.map(task => task.custom.profession), ['חשמל', 'חשמל?', 'חשמל'])
+  assert.equal(next.tasks[0].custom.another, 'keep'); assert.equal(JSON.stringify(state), original)
+})
+
+test('report CSV preserves Hebrew and quotes while preventing formula execution', async () => {
+  const { tableCsv, escapeTableHtml } = await server.ssrLoadModule('/src/lib/tableExport.ts')
+  const csv = tableCsv(['שם'], [['חשמל, תוכנית'], ['=HYPERLINK("bad")'], [' @SUM(1)']])
+  assert.ok(csv.startsWith('\uFEFF')); assert.ok(csv.includes('"חשמל, תוכנית"'))
+  assert.ok(csv.includes('"\'=HYPERLINK(""bad"")"')); assert.ok(csv.includes('"\' @SUM(1)"'))
+  assert.equal(escapeTableHtml('<script>"'), '&lt;script&gt;&quot;')
+})
+
+test('opening Gmail threads always reads current provider content and sending invalidates cached reads', async (t) => {
+  let reads = 0
+  const { privateEnv, kv } = googleFixture(t, async (url) => {
+    if (url.pathname.endsWith('/send')) return Response.json({ id: 'sent', threadId: 'thread' })
+    reads++; return Response.json({ messages: [{ id: 'm' + reads, threadId: 'thread', payload: { headers: [], body: {} } }] })
+  })
+  await worker.fetch(request('/api/google/gmail/thread?threadId=thread'), privateEnv)
+  await worker.fetch(request('/api/google/gmail/thread?threadId=thread'), privateEnv)
+  assert.equal(reads, 2)
+  const response = await worker.fetch(request('/api/google/gmail/send', { to: 'client@example.test', subject: 'Reply', body: 'content' }), privateEnv)
+  assert.equal(response.status, 200); assert.ok(kv.get('google-read-epoch:qa'))
+})
+
+for (const allowed of [true, false]) test(`task comments enforce filtered task access: ${allowed}`, async (t) => {
+  const kv = new Map([['rameng:admin-config:v1', config]])
+  const privateEnv = { CONFIG: { get: async key => kv.get(key) || null, put: async (key, value) => kv.set(key, JSON.parse(value)), list: async ({ prefix }) => ({ keys: [...kv.keys()].filter(key => key.startsWith(prefix)).map(name => ({ name })), list_complete: true }) } }
+  t.mock.method(globalThis, 'fetch', async (target, init) => {
+    const url = String(target)
+    if (url.endsWith('/auth/v1/user')) return Response.json({ id: 'qa', email: 'qa@example.test' })
+    if (url.includes('/rest/v1/memberships')) return Response.json([{ role: 'external' }])
+    assert.ok(url.endsWith('/rpc/get_workspace_state')); assert.equal(init.headers.authorization, 'Bearer qa-token')
+    return Response.json([{ data: { tasks: allowed ? [{ id: 'assigned' }] : [] } }])
+  })
+  t.mock.method(console, 'error', () => undefined)
+  const posted = await worker.fetch(request('/api/task-comments', { orgId: 'org', taskId: 'assigned', body: 'תגובה' }), privateEnv)
+  assert.equal(posted.status, allowed ? 200 : 403)
+  const response = await worker.fetch(request('/api/task-comments?orgId=org&taskId=assigned'), privateEnv)
+  assert.equal(response.status, allowed ? 200 : 403)
+  if (allowed) { const { comments } = await response.json(); assert.equal(comments[0].body, 'תגובה'); assert.equal(comments[0].authorId, 'qa') }
+  else assert.equal([...kv.keys()].some(key => key.startsWith('task-comment:')), false)
+})
+
+
+for (const outcome of ['allowed', 'read-only', 'unrelated', 'external']) test(`Drive rename preserves project scope: ${outcome}`, async t => {
+  let renamed = false
+  const { privateEnv, kv } = projectMailFixture(t, async (url, init) => {
+    if (init.method === 'PATCH') { renamed = true; assert.deepEqual(JSON.parse(init.body), { name: 'תכנית מעודכנת.pdf' }); return Response.json({ id: 'plan', name: 'תכנית מעודכנת.pdf', modifiedTime: '2026-10-12T12:00:00Z' }) }
+    return Response.json({ id: url.pathname.split('/').at(-1), parents: outcome === 'unrelated' ? [] : ['folder'] })
+  }, outcome === 'external' ? 'external' : 'admin', false, { plan: ['folder'], folder: [] })
+  kv.set('drive-project-folder:qa:project', { id: 'folder', readOnly: outcome === 'read-only' })
+  const response = await worker.fetch(new Request('https://crm.test/api/google/drive/rename', { method: 'PATCH', headers: { authorization: 'Bearer qa-token', 'content-type': 'application/json' }, body: JSON.stringify({ orgId: 'org', projectId: 'project', fileId: 'plan', name: 'תכנית מעודכנת.pdf' }) }), privateEnv)
+  assert.equal(response.status, outcome === 'allowed' ? 200 : 403)
+  assert.equal(renamed, outcome === 'allowed')
+})
+
+
+test('selected-plan report ties names and modification dates to the project and never claims delivery', async () => {
+  const React = await import('react'); const { renderToStaticMarkup } = await import('react-dom/server')
+  const { default: Report } = await server.ssrLoadModule('/src/components/PlanDeliveryReport.tsx')
+  const html = renderToStaticMarkup(React.createElement(Report, { projectName: 'פרויקט בדיקה', files: [{ id: 'plan', name: 'תכנית <ב>.pdf', modifiedTime: '2026-10-12T10:00:00Z', mimeType: 'application/pdf' }] }))
+  assert.ok(html.includes('תכנית &lt;ב&gt;.pdf')); assert.ok(html.includes('12.10.2026'))
+  assert.ok(html.includes('נבחר לדוח — לא אישור מסירה')); assert.ok(html.includes('יצירת הדוח אינה שולחת קבצים'))
+})
+
+test('printable tables escape data and retain the chosen project title', async t => {
+  const { printTable } = await server.ssrLoadModule('/src/lib/tableExport.ts'); let html = ''; let printed = false
+  t.mock.property(globalThis, 'window', { open: () => ({ document: { write: value => { html = value }, close() {} }, focus() {}, print() { printed = true } }) })
+  printTable('פרויקט בדיקה', ['שם קובץ'], [['<script>bad()</script>.pdf']], 'קבצים נבחרים בלבד')
+  assert.ok(printed); assert.ok(html.includes('פרויקט בדיקה')); assert.ok(html.includes('dir="rtl"'))
+  assert.ok(html.includes('&lt;script&gt;bad()&lt;/script&gt;.pdf')); assert.ok(!html.includes('<script>'))
+})
+
+
+for (const path of ['/api/task-comments', '/api/google/drive/rename']) test(`target organization role governs mutation: ${path}`, async t => {
+  const privateEnv = { CONFIG: { get: async key => key === 'rameng:admin-config:v1' ? config : null } }
+  let providerCalls = 0
+  t.mock.method(globalThis, 'fetch', async (target) => {
+    const url = new URL(String(target))
+    if (url.pathname.endsWith('/auth/v1/user')) return Response.json({ id: 'qa', email: 'qa@example.test' })
+    if (url.pathname.endsWith('/memberships')) return Response.json([{ role: url.searchParams.get('org_id') === 'eq.other-org' ? 'viewer' : 'admin' }])
+    providerCalls++; throw new Error('Must deny before provider/workspace access')
+  })
+  t.mock.method(console, 'error', () => undefined)
+  const body = { orgId: 'other-org', taskId: 'assigned', projectId: 'project', fileId: 'file', name: 'file.pdf', body: 'comment' }
+  const response = await worker.fetch(new Request('https://crm.test' + path, { method: path.endsWith('rename') ? 'PATCH' : 'POST', headers: { authorization: 'Bearer qa-token', 'content-type': 'application/json' }, body: JSON.stringify(body) }), privateEnv)
+  assert.equal(response.status, 403); assert.equal(providerCalls, 0)
+})
+
+
+test('legacy time captions normalize without replacing custom names or changing saved proportions', async () => {
+  const { normalizeTaskColumns, percentageTaskColumns, taskTableMinWidth } = await server.ssrLoadModule('/src/lib/taskColumns.ts')
+  const input = [
+    { id: 'clock', key: 'scheduledTime', label: 'שעה (ירושלים)', type: 'time', visible: true, widthPercent: 10 },
+    { id: 'actions', key: '__actions', label: 'פעולות', type: 'text', visible: true, widthPercent: 4 },
+    { id: 'title', key: 'title', label: 'משימה', type: 'text', visible: true, widthPercent: 86 },
+  ]
+  const before = JSON.stringify(input)
+  assert.equal(normalizeTaskColumns(input)[0].label, 'שעה')
+  assert.equal(normalizeTaskColumns([{ ...input[0], label: 'שעת ביקור' }])[0].label, 'שעת ביקור')
+  const columns = percentageTaskColumns(input)
+  const minWidth = taskTableMinWidth(columns)
+  assert.ok(minWidth * columns[1].widthPercent / 100 >= 240)
+  assert.equal(JSON.stringify(input), before)
+})
+
+
+test('English and padded task headers normalize every mapped field and omit repeated headers', async () => {
+  const csv = ' Task ,Project ID,Status,Start Date,DueDate,Follow Up Date,Email,Description\nבדיקה,project,בטיפול,19/10/2026,2026-10-23,24.10.2026,qa@example.test,פרטים\n Task ,Project ID,Status,Start Date,DueDate,Follow Up Date,Email,Description'
+  const rows = await readImportRows(new TextEncoder().encode(csv).buffer, true)
+  assert.equal(rows.length, 1)
+  assert.deepEqual(rows[0], { 'משימה': 'בדיקה', 'פרויקט': 'project', 'סטטוס': 'בטיפול', 'תאריך התחלה': '2026-10-19', 'תאריך סיום': '2026-10-23', 'מועד מעקב': '2026-10-24', 'מייל': 'qa@example.test', 'הערות': 'פרטים' })
+})
+
+test('conflicting task aliases and invalid English dates reject the entire import', async () => {
+  for (const csv of ['Task,title\nOne,Two', 'Task,Due Date\nOne,31/02/2026']) await assert.rejects(readImportRows(new TextEncoder().encode(csv).buffer, true))
+})
+
+test('file validation rejects unsupported, empty and oversized imports', async () => {
+  const { validateImportFile } = await server.ssrLoadModule('/src/lib/imports.ts')
+  for (const file of [{ name: 'test.exe', size: 100 }, { name: 'test.csv', size: 0 }, { name: 'test.xlsx', size: 10485761 }]) assert.throws(() => validateImportFile(file))
+  assert.doesNotThrow(() => validateImportFile({ name: 'TEST.XLSX', size: 100 }))
+})
+
+test('custom status renaming and retirement preserve task identities and completion timestamps', async () => {
+  const { replaceTaskStatus, coreTaskStatuses } = await server.ssrLoadModule('/src/lib/taskStatuses.ts')
+  const source = cloneWorkspace(); source.taskStatuses.push('בדיקה'); source.tasks = [{ id: 'one', status: 'בדיקה', title: 'משימה', completedAt: 'stale' }, { id: 'other', status: 'בטיפול' }]
+  const renamed = replaceTaskStatus(source, 'בדיקה', 'ממתין לאישור')
+  assert.equal(renamed.tasks[0].status, 'ממתין לאישור'); assert.equal(renamed.tasks[0].completedAt, undefined)
+  assert.equal(renamed.tasks[1], source.tasks[1]); assert.equal(source.tasks[0].status, 'בדיקה')
+  const retired = replaceTaskStatus(renamed, 'ממתין לאישור', 'בוצע', true)
+  assert.equal(retired.taskStatuses.includes('ממתין לאישור'), false)
+  assert.equal(retired.tasks[0].id, 'one'); assert.ok(retired.tasks[0].completedAt)
+  for (const status of coreTaskStatuses) assert.throws(() => replaceTaskStatus(source, status, 'החלפה'))
+  assert.throws(() => replaceTaskStatus(source, 'בדיקה', 'בטיפול'))
+  assert.throws(() => replaceTaskStatus(source, 'בדיקה', 'אינו קיים', true))
+})
+
+test('deep task trees evaluate matches once and include ancestors without recursive stack growth', async () => {
+  const { taskTreeRows } = await server.ssrLoadModule('/src/lib/taskTree.ts')
+  const tasks = Array.from({ length: 10000 }, (_, i) => ({ id: `t${i}`, parentId: i ? `t${i - 1}` : undefined, title: String(i), order: i }))
+  let calls = 0
+  const rows = taskTreeRows(tasks, task => { calls++; return task.id === 't9999' })
+  assert.equal(calls, 10000); assert.equal(rows.length, 10000); assert.equal(rows.at(-1).depth, 9999)
+})
+
+test('cyclic and orphaned task records remain visible once without mutating parent links', async () => {
+  const { taskTreeRows } = await server.ssrLoadModule('/src/lib/taskTree.ts')
+  const tasks = [{ id: 'a', parentId: 'b', order: 1 }, { id: 'b', parentId: 'a', order: 2 }, { id: 'self', parentId: 'self', order: 3 }, { id: 'orphan', parentId: 'missing', order: 4 }]
+  const original = structuredClone(tasks)
+  const rows = taskTreeRows(tasks, () => true)
+  assert.deepEqual(new Set(rows.map(row => row.task.id)), new Set(tasks.map(task => task.id)))
+  assert.equal(rows.length, 4); assert.deepEqual(tasks, original)
+})
+
+test('task report retains the reporting period, exact source status and due date snapshot', () => {
+  const workspace = cloneWorkspace(); workspace.projects = [{ id: 'p', name: 'בדיקה' }]; workspace.tasks = [{ id: 't', projectId: 'p', title: 'פעולה', status: 'דורש מעקב', dueDate: '2026-10-23' }]
+  const report = createReportFromTasks(workspace, 'p', ['t'], { title: 'שבועי', periodStart: '2026-10-18', periodEnd: '2026-10-24' })
+  assert.equal(report.periodStart, '2026-10-18'); assert.equal(report.periodEnd, '2026-10-24')
+  const item = report.sections.flatMap(section => section.items)[0]
+  assert.equal(item.sourceTaskStatus, 'דורש מעקב'); assert.equal(item.dueDate, '2026-10-23')
+  workspace.tasks[0].status = 'בוצע'; assert.equal(item.sourceTaskStatus, 'דורש מעקב')
+  assert.throws(() => createReportFromTasks(workspace, 'p', ['t'], { title: 'bad', periodStart: '2026-10-24', periodEnd: '2026-10-18' }))
+})
+
+test('printable reports include source references, responsible parties, deadlines and escaped notes', async () => {
+  const { renderToStaticMarkup } = await import('react-dom/server'); const { createElement } = await import('react')
+  const { PrintableReport } = await server.ssrLoadModule('/src/components/Reports.tsx')
+  const report = { id: 'r', title: 'בדיקה', siteAddress: 'ירושלים', inspectionDate: '2026-10-19', inspector: 'QA', layout: 'table', periodStart: '2026-10-18', periodEnd: '2026-10-24', notes: '<script>unsafe()</script>', sections: [{ id: 's', title: 'חשמל', items: [{ id: 'i', sourceTaskId: 't', sourceTaskStatus: 'דורש מעקב', description: 'שורה א\nשורה ב', status: 'פתוח', treatment: 'פעולה', responsible: 'אחראי בדיקה', dueDate: '2026-10-23', photos: [] }] }] }
+  const html = renderToStaticMarkup(createElement(PrintableReport, { report, projectName: 'פרויקט', settings: cloneWorkspace().settings }))
+  for (const text of ['אחראי בדיקה', new Intl.DateTimeFormat('he-IL', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date('2026-10-23')), 'משימת מקור:', 'דורש מעקב', 'תקופת דיווח:', 'סיכום והערות']) assert.ok(html.includes(text), text)
+  assert.ok(!html.includes('<script>')); assert.ok(html.includes('&lt;script&gt;'))
+})
+
+
+test('Drive rename CORS preflight permits PATCH without invoking authentication or provider writes', async () => {
+  const response = await worker.fetch(new Request('https://crm.example.test/api/google/drive/rename', { method: 'OPTIONS', headers: { Origin: 'http://localhost:5173', 'Access-Control-Request-Method': 'PATCH' } }), {})
+  assert.equal(response.status, 204)
+  assert.ok(response.headers.get('access-control-allow-methods').split(',').includes('PATCH'))
+})
+
+
+test('unexpected API failures expose neither secrets nor provider message bodies in logs or responses', async t => {
+  const logs = []; t.mock.method(console, 'error', (...args) => logs.push(args))
+  const response = await worker.fetch(new Request('https://crm.example.test/api/public-config?token=private-query'), { CONFIG: { get: async () => { throw new Error('credential-and-private-mail-content') } } })
+  assert.equal(response.status, 500)
+  assert.ok(!(await response.text()).includes('credential'))
+  const recorded = JSON.stringify(logs)
+  assert.ok(!recorded.includes('private-query')); assert.ok(!recorded.includes('private-mail'))
+  assert.ok(recorded.includes('/api/public-config'))
+})
+
+
+test('configured developer cannot manage a client-supplied organization without target membership', async t => {
+  const privateEnv = { CONFIG: { get: async () => ({ ...config, developerEmails: ['qa@example.test'] }) } }
+  let checked = false
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    if (String(url).endsWith('/auth/v1/user')) return Response.json({ id: 'qa', email: 'qa@example.test' })
+    if (String(url).endsWith('/rpc/is_org_admin')) { checked = true; assert.equal(JSON.parse(init.body).target_org, 'unrelated'); return Response.json(false) }
+    throw new Error('Unexpected privileged operation')
+  })
+  t.mock.method(console, 'error', () => undefined)
+  const response = await worker.fetch(request('/api/users/password-reset', { orgId: 'unrelated', userId: 'target' }), privateEnv)
+  assert.equal(response.status, 403); assert.equal(checked, true)
+})
+
+test('organization user deletion cannot cascade into a different organization', async t => {
+  const privateEnv = { SUPABASE_SECRET_KEY: 'sb_secret_synthetic_test_only', CONFIG: { get: async () => config } }
+  let deleted = false; const calls = []
+  t.mock.method(globalThis, 'fetch', async (input, supplied) => {
+    calls.push(String(input)); const url = new URL(typeof input === 'string' || input instanceof URL ? input : input.url)
+    const method = supplied?.method || (typeof input === 'object' ? input.method : 'GET')
+    if (url.pathname.endsWith('/auth/v1/user')) return Response.json({ id: 'qa', email: 'qa@example.test' })
+    if (url.pathname.endsWith('/rpc/is_org_admin')) return Response.json(true)
+    if (url.pathname.endsWith('/rest/v1/memberships')) {
+      if (url.searchParams.get('select') === 'org_id') { assert.equal(url.searchParams.get('org_id'), 'neq.org'); return Response.json([{ org_id: 'other-org' }]) }
+      return Response.json({ user_id: '10000000-0000-4000-8000-000000000099', role: 'viewer' })
+    }
+    if (url.pathname.endsWith('/auth/v1/admin/users/10000000-0000-4000-8000-000000000099')) {
+      if (method === 'DELETE') deleted = true
+      return Response.json({ id: '10000000-0000-4000-8000-000000000099', email: 'target@example.test' })
+    }
+    throw new Error('Unexpected outbound operation')
+  })
+  t.mock.method(console, 'error', () => undefined)
+  const response = await worker.fetch(request('/api/users/delete', { orgId: 'org', userId: '10000000-0000-4000-8000-000000000099' }), privateEnv)
+  assert.equal(response.status, 409, (await response.text()) + JSON.stringify(calls)); assert.equal(deleted, false)
+})
+
+
+test('edit without delete cannot omit, null or replace nested report entities', () => {
+  const before = cloneWorkspace(); before.reports = [{ id: 'r', sections: [{ id: 's', items: [{ id: 'i', photos: [{ id: 'photo', url: 'private' }] }] }] }]
+  const permissions = normalizePermissions('viewer', { reports: { edit: true } })
+  for (const replacement of [undefined, null, {}, [], 'invalid']) {
+    const after = structuredClone(before)
+    if (replacement === undefined) delete after.reports[0].sections[0].items[0].photos
+    else after.reports[0].sections[0].items[0].photos = replacement
+    assert.match(workspaceMutationError(before, after, permissions, options), /מחיקה/)
+  }
+  const after = structuredClone(before); delete after.reports[0].sections
+  assert.match(workspaceMutationError(before, after, permissions, options), /מחיקה/)
 })

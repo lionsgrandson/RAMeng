@@ -1,8 +1,35 @@
-import type { Contact } from '../types'
+import type { Contact, Project, Task } from '../types'
 import { normalizeContactCategories } from './contactCategories'
 
 const dateColumns = ['תאריך התחלה', 'תאריך סיום', 'מועד מעקב']
 const cleanText = (value: unknown) => String(value ?? '').replace(/[\u200e\u200f\u202a-\u202e\ufeff]/g, '').trim()
+const taskAliases: Record<string, string[]> = {
+  'משימה': ['משימה', 'title', 'task'],
+  'פרויקט': ['פרויקט', 'שם פרויקט', 'project', 'projectid', 'project id'],
+  'סטטוס': ['סטטוס', 'status'],
+  'הערות': ['הערות', 'notes', 'description'],
+  'תאריך התחלה': ['תאריך התחלה', 'start date', 'startdate'],
+  'תאריך סיום': ['תאריך סיום', 'תאריך יעד', 'due date', 'duedate'],
+  'מועד מעקב': ['מועד מעקב', 'follow up date', 'followupdate'],
+  'מייל': ['מייל', 'email', 'emailto'],
+}
+
+export function validateImportFile(file: { name: string; size: number }) {
+  if (!/\.(xlsx?|csv)$/i.test(file.name)) throw new Error('יש לבחור קובץ Excel או CSV')
+  if (!file.size) throw new Error('הקובץ ריק')
+  if (file.size > 10 * 1024 * 1024) throw new Error('גודל קובץ מרבי לייבוא: 10 MB')
+}
+
+function normalizeTaskRow(row: Record<string, unknown>) {
+  const result: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(row)) {
+    const normalized = cleanText(key).toLowerCase()
+    const canonical = Object.keys(taskAliases).find(name => taskAliases[name].includes(normalized)) || cleanText(key)
+    if (result[canonical] !== undefined && result[canonical] !== '' && value !== '' && String(result[canonical]) !== String(value)) throw new Error(`עמודות סותרות: ${canonical}`)
+    if (value !== '' || result[canonical] === undefined) result[canonical] = value
+  }
+  return result
+}
 const aliases = {
   name: ['שם', 'שם מלא', 'name'], company: ['חברה', 'שם חברה', 'company'],
   phone: ['טלפון', 'phone'], mobile: ['נייד', 'mobile'], email: ['מייל', 'email'],
@@ -38,22 +65,69 @@ export function appendUniqueContacts(existing: Contact[], incoming: Contact[]): 
   return { contacts: [...existing, ...added], added: added.length, skipped: incoming.length - added.length }
 }
 
+
+/** Resolve only unambiguous existing projects; never silently attach a task to the wrong site. */
+export function resolveTaskProjectReference(projects: Pick<Project, 'id' | 'name'>[], reference: unknown): string | undefined {
+  const query = cleanText(reference)
+  if (!query) return undefined
+  const matches = projects.filter((project) => project.id === query || cleanText(project.name) === query)
+  if (matches.length !== 1) throw new Error(matches.length ? `נמצאו מספר פרויקטים בשם "${query}"` : `לא נמצא פרויקט בשם או מזהה "${query}"`)
+  return matches[0].id
+}
+
+/** Match only stable imported task fields, not mutable status or assignment.
+ * Existing tasks retain their IDs, history and current status on repeated imports.
+ */
+export function appendUniqueTasks(existing: Task[], incoming: Task[]): { tasks: Task[]; added: number; skipped: number } {
+  const normalized = (value: unknown) => cleanText(value).replace(/\s+/g, ' ').toLocaleLowerCase()
+  const identity = (task: Task) => JSON.stringify([
+    normalized(task.projectId), normalized(task.title), normalized(task.description),
+    normalized(task.startDate), normalized(task.dueDate), normalized(task.followUpDate),
+    normalized(task.emailTo),
+  ])
+  const seen = new Set(existing.map(identity))
+  const added: Task[] = []
+  for (const task of incoming) {
+    if (!task.title.trim()) continue
+    const key = identity(task)
+    if (seen.has(key)) continue
+    seen.add(key)
+    added.push(task)
+  }
+  return { tasks: [...existing, ...added], added: added.length, skipped: incoming.length - added.length }
+}
+
 export async function readImportRows(buffer: ArrayBuffer, csv: boolean, kind: 'contacts' | 'tasks' = 'tasks'): Promise<Record<string, unknown>[]> {
   const XLSX = await import('@e965/xlsx')
   const workbook = csv
     ? XLSX.read(new TextDecoder('utf-8').decode(buffer), { type: 'string', raw: true })
     : XLSX.read(buffer, { type: 'array', cellDates: true })
-  const firstName = workbook.SheetNames[0]
-  if (!firstName) throw new Error('הקובץ לא מכיל גיליון נתונים')
-  const sheet = workbook.Sheets[firstName]
-  let headerRow = 0
-  if (kind === 'contacts') {
+  // Skip cover/instructions sheets and collect valid rows from every data worksheet.
+  // A file with no recognized column headers is rejected rather than silently imported.
+  const rows: Record<string, unknown>[] = []
+  let recognizedSheets = 0
+  for (const sheetName of workbook.SheetNames) {
+    const sheet = workbook.Sheets[sheetName]
+    if (!sheet?.['!ref']) continue
     const grid = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '' })
-    headerRow = grid.findIndex((row) => row.some((value) => (aliases.name as readonly string[]).includes(cleanText(value).toLowerCase())))
-    if (headerRow < 0) throw new Error('לא נמצאה שורת כותרות עם עמודת שם או Name')
-    headerRow += XLSX.utils.decode_range(sheet['!ref'] || 'A1').s.r
+    const headers: readonly string[] = kind === 'contacts' ? aliases.name : ['משימה', 'title', 'task']
+    const firstHeader = grid.findIndex((line) => line.some((cell) => headers.includes(cleanText(cell).toLowerCase())))
+    if (firstHeader < 0) continue
+    recognizedSheets++
+    const headerRow = firstHeader + XLSX.utils.decode_range(sheet['!ref']).s.r
+    const parsed = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '', range: headerRow })
+    for (const original of parsed) {
+      const row = kind === 'tasks' ? normalizeTaskRow(original) : original
+      if (kind === 'tasks') {
+        const title = cleanText(row['משימה'])
+        if (!title || taskAliases['משימה'].includes(title.toLowerCase())) continue
+        row['משימה'] = title
+      }
+      rows.push(row)
+      if (rows.length > 20000) throw new Error('ניתן לייבא עד 20,000 רשומות בכל פעם')
+    }
   }
-  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '', ...(kind === 'contacts' ? { range: headerRow } : {}) })
+  if (!recognizedSheets) throw new Error(kind === 'contacts' ? 'לא נמצאה שורת כותרות עם עמודת שם או Name' : 'לא נמצאה עמודת משימה, title או Task')
   if (!rows.length) throw new Error('לא נמצאו שורות לייבוא')
   for (const row of rows) {
     for (const column of kind === 'tasks' ? dateColumns : []) {

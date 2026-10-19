@@ -1,15 +1,23 @@
+import { taskTreeRows } from '../lib/taskTree'
+import TaskComments from './TaskComments'
+import TaskContactAssignment from './TaskContactAssignment'
+import { taskColumnChoices } from '../lib/taskProfession'
+import { jerusalemInstant } from '../lib/taskTime'
+import { percentageTaskColumns, taskTableMinWidth, visibleTaskColumns } from '../lib/taskColumns'
+import { DisplayContext } from './DisplaySettings'
 import { TaskDeliveryStatus } from './TaskNotifications'
 import { CategoryManager, CategoryPicker } from './Categories'
 import MeetingSummaries from './MeetingSummaries'
 import DeleteButton from './RecordDelete'
-import { Fragment, useEffect, useMemo, useState, type FormEvent } from 'react'
-import { ChevronDown, ChevronUp, Columns3, Mail, Plus, Settings2, Trash2 } from 'lucide-react'
-import type { ChecklistTemplateItem, Priority, Task, TaskColumn, TaskColumnType, Workspace } from '../types'
+import { Fragment, useContext, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { Mail, Plus, Settings2 } from 'lucide-react'
+import type { ChecklistTemplateItem, Priority, Task, TaskColumn, Workspace } from '../types'
 import type { AreaPermissions } from '../lib/permissions'
-import { Chip, Field, Modal, confirmDelete, dateInput, nowIso, uid } from './common'
+import { Chip, Field, Modal, dateInput, nowIso, uid } from './common'
 
 type Props = {
-  orgId?: string
+  canInviteExternal?: boolean
+  orgId: string
   workspace: Workspace
   setWorkspace: React.Dispatch<React.SetStateAction<Workspace>>
   projectId?: string
@@ -22,6 +30,8 @@ type Props = {
   canEditProject?: boolean
   startCreating?: boolean
   onProject?: (id: string) => void
+  onCreateReportFromTasks?: (taskIds: string[], options: { title: string; templateId: string; periodStart?: string; periodEnd?: string }) => void
+  onContact?: (id: string) => void
 }
 
 type TaskView = 'active' | 'archive'
@@ -47,14 +57,19 @@ const fieldValue = (task: Task, column: TaskColumn) => {
   return String((task as unknown as Record<string, unknown>)[column.key] ?? '')
 }
 
-export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail, onProject, canEdit = true, permissions, focusTaskId, attentionOnly = false, onClearAttention, startCreating = false, orgId = 'local', canEditProject = false }: Props) {
+export default function TaskBoard({ canInviteExternal = false, workspace, setWorkspace, projectId, onEmail, onProject, onContact, canEdit = true, permissions, focusTaskId, attentionOnly = false, onClearAttention, startCreating = false, orgId, canEditProject = false, onCreateReportFromTasks }: Props) {
   const taskPermissions: AreaPermissions = permissions || { view: true, create: canEdit, edit: canEdit, status: canEdit, delete: canEdit }
   const canCreate = taskPermissions.create
   const canUpdate = taskPermissions.edit
   const canStatus = taskPermissions.status || taskPermissions.edit
   const canDelete = taskPermissions.delete
+  const [commentTask, setCommentTask] = useState<Task | null>(null)
+  const [contactTask, setContactTask] = useState<Task | null>(null)
+  const tableRef = useRef<HTMLDivElement>(null)
+  const [columnFilters, setColumnFilters] = useState<Record<string, string>>({})
+  const [scheduleError, setScheduleError] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('')
-  const [groupBy, setGroupBy] = useState<'none' | 'assignee' | 'project'>('none')
+  const { groupBy, density } = useContext(DisplayContext)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [newCategories, setNewCategories] = useState<string[]>([])
   const [search, setSearch] = useState('')
@@ -70,52 +85,12 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
   const [dateTo, setDateTo] = useState('')
   const [view, setView] = useState<TaskView>('active')
   const [creatingFor, setCreatingFor] = useState<{ parentId?: string } | null>(startCreating && canCreate ? {} : null)
-  const [showColumns, setShowColumns] = useState(false)
-  const [newColumn, setNewColumn] = useState('')
-  const [newColumnType, setNewColumnType] = useState<TaskColumnType>('text')
-  const [newStatus, setNewStatus] = useState('')
-
-  const taskColumns = useMemo(() => {
-    const normalized = workspace.taskColumns.map((column) => {
-      if (column.key === 'emailTo' && column.label === 'תיבת מייל') return { ...column, label: 'מייל לקוח' }
-      if (column.key === 'followUpDate' && column.label === 'מועד מעקב / סיום') return { ...column, label: 'מועד מעקב' }
-      if (column.key === 'dueDate' && column.label === 'תאריך יעד') return { ...column, label: 'תאריך סיום' }
-      return column
-    })
-    if (!normalized.some((column) => column.key === 'dueDate')) {
-      const followIndex = normalized.findIndex((column) => column.key === 'followUpDate')
-      const dueColumn: TaskColumn = { id: 'col-due', label: 'תאריך סיום', key: 'dueDate', type: 'date', visible: true, removable: false, width: 145 }
-      if (followIndex >= 0) normalized.splice(followIndex, 0, dueColumn)
-      else normalized.push(dueColumn)
-    }
-    return normalized
-  }, [workspace.taskColumns])
-  const visibleColumns = taskColumns.filter((column) => column.visible)
-
-  useEffect(() => {
-    if (!canUpdate) return
-    const needsEmailRename = workspace.taskColumns.some((column) => column.key === 'emailTo' && column.label === 'תיבת מייל')
-    const needsFollowRename = workspace.taskColumns.some((column) => column.key === 'followUpDate' && column.label === 'מועד מעקב / סיום')
-    const needsDueRename = workspace.taskColumns.some((column) => column.key === 'dueDate' && column.label === 'תאריך יעד')
-    const needsDueColumn = !workspace.taskColumns.some((column) => column.key === 'dueDate')
-    if (!needsEmailRename && !needsFollowRename && !needsDueRename && !needsDueColumn) return
-    setWorkspace((current) => {
-      const columns = current.taskColumns.map((column) => {
-        if (column.key === 'emailTo' && column.label === 'תיבת מייל') return { ...column, label: 'מייל לקוח' }
-        if (column.key === 'followUpDate' && column.label === 'מועד מעקב / סיום') return { ...column, label: 'מועד מעקב' }
-        if (column.key === 'dueDate' && column.label === 'תאריך יעד') return { ...column, label: 'תאריך סיום' }
-        return column
-      })
-      if (!columns.some((column) => column.key === 'dueDate')) {
-        const followIndex = columns.findIndex((column) => column.key === 'followUpDate')
-        const dueColumn: TaskColumn = { id: 'col-due', label: 'תאריך סיום', key: 'dueDate', type: 'date', visible: true, removable: false, width: 145 }
-        if (followIndex >= 0) columns.splice(followIndex, 0, dueColumn)
-        else columns.push(dueColumn)
-      }
-      return { ...current, taskColumns: columns }
-    })
-  }, [canUpdate, setWorkspace, workspace.taskColumns])
-
+  const [creatingTaskReport, setCreatingTaskReport] = useState(false)
+  const [taskReportTitle, setTaskReportTitle] = useState('')
+  const [periodStart, setPeriodStart] = useState('')
+  const [periodEnd, setPeriodEnd] = useState('')
+  const [taskReportTemplate, setTaskReportTemplate] = useState(workspace.reportTemplates[0]?.id || '')
+  const visibleColumns = useMemo(() => percentageTaskColumns(visibleTaskColumns(workspace.taskColumns, projectId)).map(column => ({ ...column, options: taskColumnChoices(column, workspace) })), [workspace.taskColumns, workspace.categories, projectId])
   const activeCount = workspace.tasks.filter((task) => {
     if (projectId && task.projectId !== projectId) return false
     return !isCompleted(task)
@@ -126,6 +101,7 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
   }).length
 
   const filteredTasks = workspace.tasks.filter((task) => {
+    if (Object.entries(columnFilters).some(([key, value]) => { const column = visibleColumns.find(item => item.key === key); return value && column && !fieldValue(task, column).toLowerCase().includes(value.toLowerCase()) })) return false
     if (projectId && task.projectId !== projectId) return false
     if (categoryFilter && !task.categoryIds?.includes(categoryFilter)) return false
     if (!projectId && addressFilter.trim()) {
@@ -170,23 +146,7 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
   }
 
   const rows = useMemo(() => {
-    const byParent = new Map<string, Task[]>()
-    const filteredIds = new Set(filteredTasks.map((task) => task.id))
-    filteredTasks.forEach((task) => {
-      const key = task.parentId && filteredIds.has(task.parentId) ? task.parentId : 'root'
-      byParent.set(key, [...(byParent.get(key) || []), task].sort((a, b) => a.order - b.order))
-    })
-    const result: { task: Task; depth: number }[] = []
-    const hasMatchingDescendant = (id: string): boolean => (byParent.get(id) || []).some((child) => matches(child) || hasMatchingDescendant(child.id))
-    const walk = (parent: string, depth: number) => {
-      for (const task of byParent.get(parent) || []) {
-        if (matches(task) || hasMatchingDescendant(task.id)) {
-          result.push({ task, depth })
-          walk(task.id, depth + 1)
-        }
-      }
-    }
-    walk('root', 0)
+    const result = taskTreeRows(filteredTasks, matches)
     if (groupBy !== 'none') result.sort((a, b) => (groupBy === 'assignee' ? a.task.assigneeId || '' : a.task.projectId || '').localeCompare(groupBy === 'assignee' ? b.task.assigneeId || '' : b.task.projectId || ''))
     return result
   }, [groupBy, filteredTasks, search, statusFilter, workspace.projects, workspace.team])
@@ -195,6 +155,7 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
     if (!focusTaskId) return
     const target = workspace.tasks.find((task) => task.id === focusTaskId)
     if (!target) return
+    setColumnFilters({})
     setSearch('')
     setStatusFilter('הכל')
     setAssigneeFilter('הכל')
@@ -274,17 +235,20 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
       assigneeId: String(data.get('assigneeId') || '') || undefined,
       status,
       priority: String(data.get('priority') || 'רגילה') as Priority,
+      scheduledTime: String(data.get('scheduledTime') || '') || undefined,
       startDate: String(data.get('startDate') || '') || undefined,
       dueDate: String(data.get('dueDate') || '') || undefined,
       followUpDate: String(data.get('followUpDate') || '') || undefined,
       emailTo: String(data.get('emailTo') || '') || undefined,
       colorTag: String(data.get('colorTag') || '') || undefined,
-      custom: {},
+      custom: Object.fromEntries(workspace.taskColumns.filter(column => column.key.startsWith('custom.')).map(column => [column.key.slice(7), String(data.get(column.key) || '')])),
       order: workspace.tasks.length + 1,
       createdAt: nowIso(),
       completedAt: COMPLETED_STATUSES.includes(status) ? nowIso() : undefined,
     }
     if (!task.title) return
+    try { if (task.scheduledTime) jerusalemInstant(task.startDate || task.dueDate || task.followUpDate || '', task.scheduledTime) } catch (error) { setScheduleError((error as Error).message); return }
+    setScheduleError('')
     setWorkspace((current) => ({ ...current, tasks: [...current.tasks, task] }))
     setCreatingFor(null); setNewCategories([])
     setView(isCompleted(task) ? 'archive' : 'active')
@@ -330,6 +294,11 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
   }
 
   const editCell = (task: Task, column: TaskColumn, value: string) => {
+    if (['scheduledTime', 'startDate', 'dueDate', 'followUpDate'].includes(column.key)) {
+      const next = { ...task, [column.key]: value }
+      try { if (next.scheduledTime) jerusalemInstant(next.startDate || next.dueDate || next.followUpDate || '', next.scheduledTime) } catch (error) { setScheduleError((error as Error).message); return }
+      setScheduleError('')
+    }
     if (column.key === 'status') {
       updateTaskStatus(task.id, value)
       return
@@ -341,26 +310,6 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
       updateTask(task.id, { [column.key]: value } as Partial<Task>)
     }
   }
-
-  const addColumn = () => {
-    const label = newColumn.trim()
-    if (!label) return
-    const id = uid('col')
-    setWorkspace((current) => ({
-      ...current,
-      taskColumns: [...current.taskColumns, { id, label, key: `custom.${id}`, type: newColumnType, visible: true, removable: true, width: 160 }],
-    }))
-    setNewColumn('')
-  }
-
-  const moveColumn = (id: string, direction: -1 | 1) => setWorkspace((current) => {
-    const list = [...current.taskColumns]
-    const index = list.findIndex((column) => column.id === id)
-    const next = index + direction
-    if (index < 0 || next < 0 || next >= list.length) return current
-    ;[list[index], list[next]] = [list[next], list[index]]
-    return { ...current, taskColumns: list }
-  })
 
   const selectedParent = creatingFor?.parentId ? workspace.tasks.find((task) => task.id === creatingFor.parentId) : undefined
   const defaultProjectId = selectedParent?.projectId || projectId || (projectFilter !== 'הכל' && projectFilter !== '__none__' ? projectFilter : '')
@@ -378,9 +327,32 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
     <div className="toolbar task-overview-counts">{(() => { const all = workspace.tasks.filter(task => !projectId || task.projectId === projectId); const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jerusalem', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()); return <><span>סה״כ: {all.length}</span><span>פתוחות: {all.filter(task => !isCompleted(task)).length}</span><span>בטיפול: {all.filter(task => task.status === 'בטיפול').length}</span><span>הושלמו: {all.filter(isCompleted).length}</span><span>באיחור: {all.filter(task => !isCompleted(task) && task.dueDate && task.dueDate < today).length}</span></> })()}</div>
     {canUpdate && <CategoryManager workspace={workspace} setWorkspace={setWorkspace} projectId={projectId && canEditProject ? projectId : undefined} canEdit={canUpdate} canDelete={canDelete} />}
     {projectId && <MeetingSummaries workspace={workspace} setWorkspace={setWorkspace} projectId={projectId} selectedTaskIds={selectedIds.filter(id => rows.some(row => row.task.id === id))} canEdit={canCreate && canUpdate} canDelete={canDelete} />}
+    {projectId && onCreateReportFromTasks && selectedIds.some((id) => rows.some((row) => row.task.id === id)) && <button className="secondary" type="button" onClick={() => {
+      setTaskReportTitle(`דוח משימות - ${workspace.projects.find((project) => project.id === projectId)?.name || ''}`)
+      setCreatingTaskReport(true)
+    }}>יצירת טיוטת דוח פיקוח מהמשימות שנבחרו</button>}
+    {projectId && creatingTaskReport && onCreateReportFromTasks && <Modal wide title="דוח פיקוח ממשימות הפרויקט" onClose={() => setCreatingTaskReport(false)}>
+      <form className="form-grid" onSubmit={(event) => {
+        event.preventDefault()
+        const taskIds = selectedIds.filter((id) => rows.some((row) => row.task.id === id))
+        if (!taskIds.length) { setCreatingTaskReport(false); return }
+        onCreateReportFromTasks(taskIds, { title: taskReportTitle, templateId: taskReportTemplate, periodStart, periodEnd })
+        setCreatingTaskReport(false)
+      }}>
+        <p>ייווצר דוח טיוטה ניתן לעריכה. רק המשימות המסומנות יועתקו; המשימות המקוריות לא ישונו. יש לבדוק את הממצאים לפני שליחת הדוח.</p>
+        <Field label="כותרת דוח"><input required value={taskReportTitle} onChange={(event) => setTaskReportTitle(event.target.value)} /></Field>
+        <Field label="תבנית"><select value={taskReportTemplate} onChange={(event) => setTaskReportTemplate(event.target.value)}>
+          {workspace.reportTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
+        </select></Field>
+        <Field label="תחילת תקופת הדיווח"><input type="date" value={periodStart} onChange={event => setPeriodStart(event.target.value)} /></Field><Field label="סיום תקופת הדיווח"><input type="date" min={periodStart || undefined} value={periodEnd} onChange={event => setPeriodEnd(event.target.value)} /></Field><p>התבנית היא טיוטה לעריכה ולאישור מקצועי. התקופה מתארת את הדוח; רק המשימות המסומנות ייכללו.</p><p>{selectedIds.filter((id) => rows.some((row) => row.task.id === id)).length} משימות נבחרו:</p>
+        <ul>{selectedIds.filter((id) => rows.some((row) => row.task.id === id)).map((id) => <li key={id}>{workspace.tasks.find((task) => task.id === id)?.title}</li>)}</ul>
+        <div className="form-actions"><button type="button" className="secondary" onClick={() => setCreatingTaskReport(false)}>ביטול</button>
+          <button type="submit" className="primary">יצירת טיוטה ופתיחת הדוח</button></div>
+      </form>
+    </Modal>}
     <div className="toolbar board-toolbar">
       <label className="task-filter-field"><span>מקצוע</span><select aria-label="סינון משימות לפי מקצוע" value={categoryFilter} onChange={event => setCategoryFilter(event.target.value)}><option value="">כל המקצועות</option>{workspace.categories.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
-      <label className="task-filter-field"><span>קיבוץ</span><select aria-label="קיבוץ משימות" value={groupBy} onChange={event => setGroupBy(event.target.value as typeof groupBy)}><option value="none">ללא קיבוץ</option><option value="assignee">לפי אחראי</option><option value="project">לפי פרויקט</option></select></label>
+
       <label className="task-filter-field toolbar-grow"><span>חיפוש</span><input className="search-input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="משימה, פרויקט, כתובת, אחראי או מייל" aria-label="חיפוש משימות" /></label>
       {!projectId && <label className="task-filter-field address-task-filter"><span>כתובת</span><input value={addressFilter} onChange={(e) => setAddressFilter(e.target.value)} placeholder="רחוב, עיר או כתובת" aria-label="סינון משימות לפי כתובת פרויקט" /></label>}
       {!projectId && <label className="task-filter-field"><span>פרויקט</span><select aria-label="סינון לפי פרויקט" value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)}><option value="הכל">כל הפרויקטים</option><option value="__none__">ללא פרויקט</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.name} — {project.address || 'כתובת חסרה'}</option>)}</select></label>}
@@ -392,65 +364,63 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
       <label className="task-filter-field"><span>תאריך לפי</span><select value={dateField} onChange={(e) => setDateField(e.target.value as 'start' | 'due' | 'follow' | 'created' | 'completed')}><option value="start">תאריך התחלה</option><option value="due">תאריך סיום</option><option value="follow">מועד מעקב</option><option value="created">תאריך יצירה</option><option value="completed">תאריך השלמה</option></select></label>
       <label className="task-filter-field"><span>מתאריך</span><input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} /></label>
       <label className="task-filter-field"><span>עד תאריך</span><input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} /></label>
-      <button type="button" className="secondary compact-filter-clear" onClick={() => { setSearch(''); setStatusFilter('הכל'); setProjectFilter('הכל'); setAddressFilter(''); setAssigneeFilter('הכל'); setColorFilter('הכל'); setPriorityFilter('הכל'); setClientFilter('הכל'); setDateFrom(''); setDateTo('') }}>ניקוי סינון</button>
+      <button type="button" className="secondary compact-filter-clear" onClick={() => { setColumnFilters({}); setSearch(''); setStatusFilter('הכל'); setProjectFilter('הכל'); setAddressFilter(''); setAssigneeFilter('הכל'); setColorFilter('הכל'); setPriorityFilter('הכל'); setClientFilter('הכל'); setDateFrom(''); setDateTo(''); setCategoryFilter('') }}>ניקוי סינון</button>
       {canCreate && projectId && <label className="task-filter-field"><span>תבנית</span><select aria-label="החלת צ׳ק ליסט" defaultValue="" onChange={(e) => { const template = workspace.checklistTemplates.find((item) => item.id === e.target.value); if (template) applyTemplate(template.items); e.target.value = '' }}><option value="">בחירת צ׳ק ליסט</option>{workspace.checklistTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}</select></label>}
-      {canUpdate && <button type="button" className="secondary board-settings-button" aria-expanded={showColumns} onClick={() => setShowColumns((value) => !value)}><Settings2 /> הגדרות תצוגה</button>}
+
     </div>
 
-    {canUpdate && showColumns && <div className="board-config card-soft">
-      <div className="config-title"><Columns3 /><strong>עמודות וסטטוסים</strong></div>
-      <div className="column-list">{taskColumns.map((column, index) => <div key={column.id} className="column-config-row">
-        <input type="checkbox" aria-label={`הצגת עמודה ${column.label}`} checked={column.visible} onChange={(e) => setWorkspace((current) => ({ ...current, taskColumns: current.taskColumns.map((item) => item.id === column.id ? { ...item, visible: e.target.checked } : item) }))} />
-        <input aria-label="שם עמודה" value={column.label} onChange={(e) => setWorkspace((current) => ({ ...current, taskColumns: current.taskColumns.map((item) => item.id === column.id ? { ...item, label: e.target.value } : item) }))} />
-        <span>{column.type}</span>
-        <button type="button" className="icon-btn" aria-label="הזזת עמודה למעלה" disabled={index === 0} onClick={() => moveColumn(column.id, -1)}><ChevronUp /></button>
-        <button type="button" className="icon-btn" aria-label="הזזת עמודה למטה" disabled={index === taskColumns.length - 1} onClick={() => moveColumn(column.id, 1)}><ChevronDown /></button>
-        {column.removable && <button type="button" className="icon-btn danger" aria-label={`מחיקת עמודה ${column.label}`} onClick={() => { if (confirmDelete(`העמודה "${column.label}"`)) setWorkspace((current) => ({ ...current, taskColumns: current.taskColumns.filter((item) => item.id !== column.id) })) }}><Trash2 /></button>}
-      </div>)}</div>
-      <div className="config-add"><label className="inline-control-label"><span>שם עמודה</span><input value={newColumn} onChange={(e) => setNewColumn(e.target.value)} placeholder="שם עמודה חדשה" /></label><label className="inline-control-label"><span>סוג עמודה</span><select value={newColumnType} onChange={(e) => setNewColumnType(e.target.value as TaskColumnType)}><option value="text">טקסט</option><option value="date">תאריך</option><option value="status">סטטוס</option><option value="member">אחראי</option><option value="email">מייל</option><option value="priority">עדיפות</option></select></label><button type="button" className="secondary" onClick={addColumn}>הוספת עמודה</button></div>
-      <div className="status-config"><strong>סטטוסים:</strong>{workspace.taskStatuses.map((status) => <Chip key={status} tone="brand">{status}</Chip>)}<label className="inline-control-label"><span>סטטוס חדש</span><input value={newStatus} onChange={(e) => setNewStatus(e.target.value)} placeholder="שם הסטטוס" /></label><button type="button" className="secondary" onClick={() => { const value = newStatus.trim(); if (value && !workspace.taskStatuses.includes(value)) setWorkspace((current) => ({ ...current, taskStatuses: [...current.taskStatuses, value] })); setNewStatus('') }}>הוספת סטטוס</button></div>
-    </div>}
-
-    <div className="table-scroll task-table-wrap">
-      <table className="data-table task-table">
-        <thead><tr>{projectId && <th><input type="checkbox" aria-label="בחירת כל המשימות המסוננות לסיכום" checked={rows.length > 0 && rows.every(row => selectedIds.includes(row.task.id))} onChange={event => setSelectedIds(event.target.checked ? rows.map(row => row.task.id) : [])} /></th>}<th>מקצועות</th><th className="complete-col">בוצע</th><th className="color-col">קטלוג</th>{!projectId && <th style={{ minWidth: 180 }}>פרויקט</th>}{visibleColumns.map((column) => <th key={column.id} style={{ minWidth: column.width }}>{column.label}</th>)}<th className="actions-col">פעולות</th></tr></thead>
+    {scheduleError && <div className="error-banner" role="alert">{scheduleError}</div>}
+    <details className="card"><summary>סינון לפי עמודות מוצגות</summary><div className="toolbar">{visibleColumns.filter(column => !column.key.startsWith('__')).map(column => <label key={column.key}>{column.label}<input aria-label={`סינון עמודה ${column.label}`} value={columnFilters[column.key] || ''} onChange={event => setColumnFilters(current => ({ ...current, [column.key]: event.target.value }))} /></label>)}</div></details>
+    <div className="toolbar task-scroll-controls" aria-label="ניווט אופקי בטבלה"><button type="button" className="secondary" onClick={() => tableRef.current?.scrollBy({ left: 400, behavior: 'smooth' })}>גלילה ימינה →</button><button type="button" className="secondary" onClick={() => tableRef.current?.scrollBy({ left: -400, behavior: 'smooth' })}>← גלילה שמאלה</button>{onEmail && <label>פתיחת מייל למשימה<select aria-label="פתיחת מייל למשימה" value="" onChange={event => { const task = rows.find(row => row.task.id === event.target.value)?.task; if (task) onEmail(task) }}><option value="">בחירת משימה</option>{rows.map(({ task }) => <option key={task.id} value={task.id}>{task.title}</option>)}</select></label>}</div>
+    {!visibleColumns.length && <p className="field-help">כל העמודות מוסתרות. ניתן להציג אותן בהגדרות ← תצוגה.</p>}
+    <div ref={tableRef} tabIndex={0} aria-label="טבלת משימות — גלילה אופקית" className={`table-scroll task-table-wrap table-density-${density}`}>
+      <table className="data-table task-table task-table-percent" style={{ minWidth: taskTableMinWidth(visibleColumns) }}>
+        <colgroup>{visibleColumns.map(column => <col key={column.id} style={{ width: `${column.widthPercent}%` }} />)}</colgroup>
+        <thead><tr>{visibleColumns.map(column => <th key={column.id} data-column-key={column.key} className={column.key === '__actions' ? 'actions-col' : column.key === '__completed' ? 'complete-col' : column.key === '__color' ? 'color-col' : ''}>{column.label}{column.key === '__select' && <input type="checkbox" aria-label="בחירת כל המשימות המסוננות לסיכום" checked={rows.length > 0 && rows.every(row => selectedIds.includes(row.task.id))} onChange={event => setSelectedIds(event.target.checked ? rows.map(row => row.task.id) : [])} />}</th>)}</tr></thead>
         <tbody>
-          {rows.map(({ task, depth }, index) => <Fragment key={task.id}>{groupBy !== 'none' && (index === 0 || (groupBy === 'assignee' ? rows[index - 1].task.assigneeId !== task.assigneeId : rows[index - 1].task.projectId !== task.projectId)) && <tr className="task-group-row"><th colSpan={visibleColumns.length + (projectId ? 5 : 5)}>{groupBy === 'assignee' ? workspace.team.find(member => member.id === task.assigneeId)?.name || 'ללא אחראי' : workspace.projects.find(project => project.id === task.projectId)?.name || 'ללא פרויקט'} · {rows.filter(row => groupBy === 'assignee' ? row.task.assigneeId === task.assigneeId : row.task.projectId === task.projectId).length}</th></tr>}<tr key={task.id} data-task-id={task.id} className={`${task.parentId ? 'subtask-row' : ''} ${isCompleted(task) ? 'completed-row' : ''} ${focusTaskId === task.id ? 'focused-task-row' : ''}`} style={{ borderInlineStartColor: task.colorTag ? taskColor(task.colorTag).hex : 'transparent' }}>
-            {projectId && <td><input type="checkbox" aria-label={`בחירת ${task.title} לסיכום פגישה`} checked={selectedIds.includes(task.id)} onChange={event => setSelectedIds(current => event.target.checked ? [...current, task.id] : current.filter(id => id !== task.id))} /></td>}
-            <td><CategoryPicker workspace={workspace} projectId={task.projectId} value={task.categoryIds || []} disabled={!canUpdate || !task.projectId} onChange={categoryIds => updateTask(task.id, { categoryIds })} /></td>
-            <td className="complete-cell"><input type="checkbox" aria-label={isCompleted(task) ? `שחזור ${task.title} לאזור הפעיל` : `סימון ${task.title} כבוצעה`} checked={isCompleted(task)} disabled={!canStatus} onChange={(e) => toggleTaskCompleted(task, e.target.checked)} /></td>
-            <td className="color-cell"><label className="task-color-picker"><span className="color-dot" style={{ backgroundColor: taskColor(task.colorTag).hex }} /><select aria-label={`צבע קטלוג עבור ${task.title}`} disabled={!canUpdate} value={task.colorTag || ''} onChange={(e) => updateTask(task.id, { colorTag: e.target.value || undefined })}>{TASK_COLOR_OPTIONS.map((item) => <option key={item.id || 'none'} value={item.id}>{item.label}</option>)}</select></label></td>
-            {!projectId && <td><div className="task-project-cell"><select className="cell-input" disabled={!canUpdate} aria-label={`פרויקט עבור ${task.title}`} value={task.projectId || ''} onChange={(e) => changeTaskProject(task.id, e.target.value || undefined)}><option value="">ללא פרויקט</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.name} — {project.address || 'כתובת חסרה'}</option>)}</select>{task.projectId && onProject && <button type="button" className="text-button" onClick={() => onProject(task.projectId!)}>פתיחה</button>}</div></td>}
-            {visibleColumns.map((column) => <td key={column.id}>
-              {column.key === 'title' ? <input className="cell-input task-title-input" disabled={!canUpdate} aria-label="שם משימה" style={{ paddingInlineStart: 8 + depth * 22 }} value={task.title} onChange={(e) => updateTask(task.id, { title: e.target.value })} />
+          {rows.map(({ task, depth }, index) => <Fragment key={task.id}>{groupBy !== 'none' && (index === 0 || (groupBy === 'assignee' ? rows[index - 1].task.assigneeId !== task.assigneeId : rows[index - 1].task.projectId !== task.projectId)) && <tr className="task-group-row"><th colSpan={Math.max(1, visibleColumns.length)}>{groupBy === 'assignee' ? workspace.team.find(member => member.id === task.assigneeId)?.name || 'ללא אחראי' : workspace.projects.find(project => project.id === task.projectId)?.name || 'ללא פרויקט'} · {rows.filter(row => groupBy === 'assignee' ? row.task.assigneeId === task.assigneeId : row.task.projectId === task.projectId).length}</th></tr>}<tr key={task.id} data-task-id={task.id} className={`${task.parentId ? 'subtask-row' : ''} ${isCompleted(task) ? 'completed-row' : ''} ${focusTaskId === task.id ? 'focused-task-row' : ''}`} style={{ borderInlineStartColor: task.colorTag ? taskColor(task.colorTag).hex : 'transparent' }}>
+            {visibleColumns.map((column) => <td key={column.id} data-column-key={column.key} className={column.key === '__completed' ? 'complete-cell' : column.key === '__color' ? 'color-cell' : column.key === '__actions' ? 'task-actions-cell' : ''}>
+              {column.key === '__select' ? <input type="checkbox" aria-label={`בחירת ${task.title} לסיכום פגישה`} checked={selectedIds.includes(task.id)} onChange={event => setSelectedIds(current => event.target.checked ? [...current, task.id] : current.filter(id => id !== task.id))} />
+                : column.key === '__categories' ? <CategoryPicker workspace={workspace} projectId={task.projectId} value={task.categoryIds || []} disabled={!canUpdate || !task.projectId} onChange={categoryIds => updateTask(task.id, { categoryIds })} />
+                : column.key === '__completed' ? <input type="checkbox" aria-label={isCompleted(task) ? `שחזור ${task.title} לאזור הפעיל` : `סימון ${task.title} כבוצעה`} checked={isCompleted(task)} disabled={!canStatus} onChange={(e) => toggleTaskCompleted(task, e.target.checked)} />
+                : column.key === '__color' ? <label className="task-color-picker"><span className="color-dot" style={{ backgroundColor: taskColor(task.colorTag).hex }} /><select aria-label={`צבע קטלוג עבור ${task.title}`} disabled={!canUpdate} value={task.colorTag || ''} onChange={(e) => updateTask(task.id, { colorTag: e.target.value || undefined })}>{TASK_COLOR_OPTIONS.map((item) => <option key={item.id || 'none'} value={item.id}>{item.label}</option>)}</select></label>
+                : column.key === '__project' ? <div className="task-project-cell"><select className="cell-input" disabled={!canUpdate} aria-label={`פרויקט עבור ${task.title}`} value={task.projectId || ''} onChange={(e) => changeTaskProject(task.id, e.target.value || undefined)}><option value="">ללא פרויקט</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.name} — {project.address || 'כתובת חסרה'}</option>)}</select>{task.projectId && onProject && <button type="button" className="text-button" onClick={() => onProject(task.projectId!)}>פתיחה</button>}</div>
+                : column.key === '__actions' ? (<div className="task-row-actions"><button className="secondary" onClick={() => setCommentTask(task)}>תגובות</button>{canUpdate && task.projectId && <button className="secondary" onClick={() => setContactTask(task)}>הקצאה לאיש קשר</button>}{canCreate && <button type="button" className="secondary task-action-btn" onClick={() => setCreatingFor({ parentId: task.id })}><Plus /> תת-משימה</button>}{canDelete && <DeleteButton message={`למחוק את המשימה "${task.title}" וכל תתי-המשימות שלה?`} onConfirm={() => removeTask(task.id)} />}</div>)
+                : column.key === 'title' ? <input className="cell-input task-title-input" disabled={!canUpdate} aria-label="שם משימה" style={{ paddingInlineStart: 8 + Math.min(depth, 8) * 22 }} value={task.title} onChange={(e) => updateTask(task.id, { title: e.target.value })} />
                 : column.type === 'status' ? <select className="cell-input" disabled={!canStatus} aria-label={`${column.label} עבור ${task.title}`} value={fieldValue(task, column)} onChange={(e) => editCell(task, column, e.target.value)}>{workspace.taskStatuses.map((status) => <option key={status}>{status}</option>)}</select>
                 : column.type === 'member' ? <select className="cell-input" disabled={!canUpdate} aria-label={`${column.label} עבור ${task.title}`} value={fieldValue(task, column)} onChange={(e) => editCell(task, column, e.target.value)}><option value="">לא משויך</option>{workspace.team.filter((member) => member.active).map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select>
+                : column.type === 'time' ? <input className="cell-input" type="time" disabled={!canUpdate} aria-label={`${column.label} עבור ${task.title}`} value={fieldValue(task, column)} onChange={event => editCell(task, column, event.target.value)} />
+                : column.options !== undefined ? <select className="cell-input" disabled={!canUpdate} value={fieldValue(task, column)} aria-label={`${column.label} עבור ${task.title}`} onChange={event => editCell(task, column, event.target.value)}><option value="">ללא</option>{fieldValue(task, column) && !column.options.includes(fieldValue(task, column)) && <option>{fieldValue(task, column)}</option>}{column.options.map(value => <option key={value}>{value}</option>)}</select>
                 : column.type === 'date' ? <input className="cell-input" disabled={!canUpdate} aria-label={`${column.label} עבור ${task.title}`} type="date" value={dateInput(fieldValue(task, column))} onChange={(e) => editCell(task, column, e.target.value)} />
                 : column.type === 'priority' ? <select className="cell-input" disabled={!canUpdate} aria-label={`${column.label} עבור ${task.title}`} value={fieldValue(task, column)} onChange={(e) => editCell(task, column, e.target.value)}><option>נמוכה</option><option>רגילה</option><option>גבוהה</option><option>דחופה</option></select>
                 : column.type === 'email' ? <div className="email-cell"><input className="cell-input" disabled={!canUpdate} aria-label={`${column.label} עבור ${task.title}`} type="email" value={fieldValue(task, column)} onChange={(e) => editCell(task, column, e.target.value)} placeholder="name@example.com" />{onEmail && <button type="button" className="secondary task-action-btn" title="פתיחת התכתבות" aria-label="פתיחת התכתבות" onClick={() => onEmail(task)}><Mail /> מייל</button>}</div>
                 : <input className="cell-input" disabled={!canUpdate} aria-label={`${column.label} עבור ${task.title}`} value={fieldValue(task, column)} onChange={(e) => editCell(task, column, e.target.value)} />}
             </td>)}
-            <td className="row-actions">{(canCreate || canDelete) && <div className="task-row-actions">{canCreate && <button type="button" className="secondary task-action-btn" onClick={() => setCreatingFor({ parentId: task.id })}><Plus /> תת-משימה</button>}{canDelete && <DeleteButton message={`למחוק את המשימה "${task.title}" וכל תתי-המשימות שלה?`} onConfirm={() => removeTask(task.id)} />}</div>}</td>
+
           </tr></Fragment>)}
-          {!rows.length && <tr><td colSpan={visibleColumns.length + 5}><div className="table-empty">{view === 'archive' ? 'אין משימות שהושלמו.' : 'אין משימות פעילות שמתאימות לסינון.'}</div></td></tr>}
+          {!rows.length && <tr><td colSpan={Math.max(1, visibleColumns.length)}><div className="table-empty">{view === 'archive' ? 'אין משימות שהושלמו.' : 'אין משימות פעילות שמתאימות לסינון.'}</div></td></tr>}
         </tbody>
       </table>
     </div>
 
+    {commentTask && <Modal title={`תגובות — ${commentTask.title}`} onClose={() => setCommentTask(null)}><TaskComments orgId={orgId} taskId={commentTask.id} canComment={canStatus} /></Modal>}
+    {contactTask && <TaskContactAssignment task={contactTask} workspace={workspace} setWorkspace={setWorkspace} orgId={orgId} canInvite={canInviteExternal} onContact={onContact} onClose={() => setContactTask(null)} />}
     {canCreate && creatingFor && <Modal title={creatingFor.parentId ? 'תת-משימה חדשה' : 'משימה חדשה'} onClose={() => setCreatingFor(null)} wide>
       <form className="form-grid two-col" onSubmit={submitTask}>
         {selectedParent && <div className="task-parent-note full"><strong>תת-משימה של:</strong> {selectedParent.title}</div>}
         <Field label="שם המשימה"><input name="title" required autoFocus /></Field>
         {!projectId && !selectedParent && <Field label="פרויקט"><select name="projectId" defaultValue={defaultProjectId}><option value="">ללא פרויקט</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></Field>}
-        <Field label="אחראי"><select name="assigneeId"><option value="">לא משויך</option>{workspace.team.filter((member) => member.active).map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select></Field>
+        <Field label="אחראי" hint="אנשי קשר משויכים זמינים לאחר הזמנה ואישור גישה מוגבלת דרך משתמשים והרשאות. בחירה אינה מעניקה גישה חדשה."><select name="assigneeId"><option value="">לא משויך</option>{workspace.team.filter((member) => member.active).map((member) => <option key={member.id} value={member.id}>{member.name}{workspace.contacts.some(contact => [...(workspace.projects.find(project => project.id === defaultProjectId)?.contactIds || []), ...(workspace.projects.find(project => project.id === defaultProjectId)?.clientIds || [])].includes(contact.id) && contact.email?.toLowerCase() === member.email.toLowerCase()) ? ' — איש קשר בפרויקט' : ''}</option>)}</select></Field>
         <Field label="סטטוס"><select name="status" defaultValue={workspace.taskStatuses[0] || 'טרם התחיל'}>{workspace.taskStatuses.map((status) => <option key={status}>{status}</option>)}</select></Field>
         <Field label="עדיפות"><select name="priority" defaultValue="רגילה"><option>נמוכה</option><option>רגילה</option><option>גבוהה</option><option>דחופה</option></select></Field>
         <Field label="צבע / קטלוג"><select name="colorTag" defaultValue=""><option value="">ללא צבע</option>{TASK_COLOR_OPTIONS.filter((item) => item.id).map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></Field>
         <Field label="תאריך תחילת משימה"><input name="startDate" type="date" /></Field>
+        <Field label="שעה" hint="השעה חלה על תאריך ההתחלה, או הסיום / המעקב אם לא נקבעה התחלה"><input name="scheduledTime" type="time" /></Field>
         <Field label="תאריך סיום"><input name="dueDate" type="date" /></Field>
         <Field label="מועד מעקב"><input name="followUpDate" type="date" /></Field>
         <Field label="מייל לקוח"><input name="emailTo" type="email" placeholder="name@example.com" /></Field>
         <div className="field"><span>מקצועות</span><CategoryPicker workspace={workspace} projectId={projectId || selectedParent?.projectId} value={newCategories} onChange={setNewCategories} /></div>
+        {workspace.taskColumns.filter(column => column.key.startsWith('custom.')).map(column => <Field key={column.id} label={column.label}>{taskColumnChoices(column, workspace) !== undefined ? <select name={column.key}><option value="">ללא</option>{taskColumnChoices(column, workspace)!.map(value => <option key={value}>{value}</option>)}</select> : <input name={column.key} />}</Field>)}
         <Field label="תיאור"><textarea name="description" rows={4} /></Field>
         <div className="form-actions full"><button type="button" className="secondary" onClick={() => setCreatingFor(null)}>ביטול</button><button className="primary"><Plus /> יצירת {creatingFor.parentId ? 'תת-משימה' : 'משימה'}</button></div>
       </form>

@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 // Only this explicitly selected development config uses fixtures. Production
 // builds continue to use vite.config.ts and the real authenticated backend.
 export default defineConfig({
+  define: { 'import.meta.env.VITE_QA_FIXTURES': '"true"', 'import.meta.env.VITE_APP_PREVIEW': '"true"' },
   plugins: [react(), {
     name: 'disposable-qa-fixtures',
     enforce: 'pre',

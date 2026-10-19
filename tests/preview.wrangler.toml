@@ -1,0 +1,9 @@
+# Synthetic QA build only. No production bindings, secrets, routes or cron jobs.
+name = "rameng-crm-audit-preview"
+account_id = "45834d92b0992b24644537fc864542e4"
+compatibility_date = "2026-09-01"
+workers_dev = true
+
+[assets]
+directory = "../artifacts/audit/preview"
+not_found_handling = "single-page-application"

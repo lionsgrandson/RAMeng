@@ -1,4 +1,5 @@
 name = "rameng-crm"
+account_id = "45834d92b0992b24644537fc864542e4"
 main = "src/index.js"
 compatibility_date = "2026-09-01"
 workers_dev = true

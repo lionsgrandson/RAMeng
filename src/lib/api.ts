@@ -27,6 +27,9 @@ export interface MailProjectContext { orgId: string; projectId: string; taskId?:
 export interface MailSendResult { id: string; threadId: string; associationSaved?: boolean; subject?: string }
 export interface ProjectMailLink extends MailProjectContext { threadId: string; subject: string; from: string; to: string; date: string; snippet: string; incoming?: boolean; unread?: boolean }
 export const integrationsApi = {
+  taskComments: (orgId: string, taskId: string, cursor = '') => request<{ comments: { id: string; body: string; authorId: string; at: string }[]; cursor: string }>(`/api/task-comments?orgId=${encodeURIComponent(orgId)}&taskId=${encodeURIComponent(taskId)}&cursor=${encodeURIComponent(cursor)}`),
+  addTaskComment: (orgId: string, taskId: string, body: string) => request<{ comment: { id: string; body: string; authorId: string; at: string } }>('/api/task-comments', { method: 'POST', body: JSON.stringify({ orgId, taskId, body }) }),
+  renameDrive: (payload: { orgId: string; projectId: string; fileId: string; name: string }) => request<{ file: GoogleDriveFile }>('/api/google/drive/rename', { method: 'PATCH', body: JSON.stringify(payload) }),
   driveCategory: (payload: { orgId: string; projectId: string; folderId: string; categoryId: string; name: string }) => request<{ id: string; name: string }>('/api/google/drive/category', { method: 'POST', body: JSON.stringify(payload) }),
   driveSharing: (orgId: string, projectId: string, fileId: string) => request<{ permissions: { id: string; emailAddress?: string; role: string; canRevoke: boolean }[] }>(`/api/google/drive/sharing?orgId=${encodeURIComponent(orgId)}&projectId=${encodeURIComponent(projectId)}&fileId=${encodeURIComponent(fileId)}`),
   shareDrive: (payload: { orgId: string; projectId: string; fileId: string; email: string; role: string }) => request<{ id: string }>('/api/google/drive/sharing', { method: 'POST', body: JSON.stringify(payload) }),
@@ -67,7 +70,7 @@ export const integrationsApi = {
   drivePicker: () => request<{ token: string; apiKey: string; appId: string; email: string }>('/api/google/drive/picker'),
   driveSettings: () => request<DriveSettings>('/api/google/drive/settings'),
   saveDriveSettings: (settings: DriveSettings) => request<DriveSettings>('/api/google/drive/settings', { method: 'PUT', body: JSON.stringify(settings) }),
-  uploadDrive: (payload: { projectId: string; recordId: string; kind: 'file' | 'report'; file: MailAttachment; automatic?: boolean }) => request<{ id?: string; webViewLink?: string; skipped?: boolean; reason?: string; queued?: boolean }>('/api/google/drive/upload', { method: 'POST', body: JSON.stringify(payload) }),
+  uploadDrive: (payload: { orgId?: string; projectId: string; recordId: string; kind: 'file' | 'report'; file: MailAttachment; automatic?: boolean }) => request<{ id?: string; webViewLink?: string; skipped?: boolean; reason?: string; queued?: boolean }>('/api/google/drive/upload', { method: 'POST', body: JSON.stringify(payload) }),
   addressSuggestions: (query: string) => request<{ suggestions: { label: string; value: string }[] }>(`/api/address/suggest?q=${encodeURIComponent(query)}`),
   rewrite: (text: string, mode = 'inspection') => request<{ text: string }>('/api/ai/rewrite', { method: 'POST', body: JSON.stringify({ text, mode }) }),
   inviteUser: (payload: { orgId: string; email: string; name?: string; role: string }) => request<{ ok: true; invited: boolean; existing: boolean; email: string; userId: string }>('/api/users/invite', { method: 'POST', body: JSON.stringify(payload) }),

@@ -113,5 +113,26 @@ reset role;
 rollback to removed_sender;
 select pg_temp.assert_true((select bool_and(relrowsecurity) from pg_class where oid in ('public.project_collaborators'::regclass,'public.task_notifications'::regclass)),'new exposed tables have RLS');
 select pg_temp.assert_true(not has_table_privilege('anon','public.task_notifications','SELECT') and not has_function_privilege('anon','public.set_project_collaborator(uuid,text,uuid,boolean)','EXECUTE'),'anonymous access revoked');
+
+-- Nested collection omission/replacement is deletion, even when the key disappears.
+savepoint nested_deletion;
+update public.memberships set permissions='{"reports":{"view":true,"edit":true,"delete":false}}' where user_id='10000000-0000-0000-0000-000000000004';
+update public.workspace_state set data=jsonb_set(data,'{reports}','[{"id":"r","sections":[{"id":"s","items":[{"id":"i","photos":[{"id":"photo","url":"private"}]}]}]}]') where org_id='20000000-0000-0000-0000-000000000001';
+set local role authenticated;
+select set_config('request.jwt.claim.sub','10000000-0000-0000-0000-000000000004',true);
+select pg_temp.expect_denied($q$select public.save_workspace_state('20000000-0000-0000-0000-000000000001', (select data from public.get_workspace_state('20000000-0000-0000-0000-000000000001')) #- '{reports,0,sections,0,items,0,photos}', (select version from public.get_workspace_state('20000000-0000-0000-0000-000000000001')))$q$);
+select pg_temp.expect_denied($q$select public.save_workspace_state('20000000-0000-0000-0000-000000000001', jsonb_set((select data from public.get_workspace_state('20000000-0000-0000-0000-000000000001')),'{reports,0,sections}','null'), (select version from public.get_workspace_state('20000000-0000-0000-0000-000000000001')))$q$);
+reset role;
+select pg_temp.assert_true(public.jsonb_has_nested_entity_deletion('{"children":[{"id":"a"}]}','{}'),'omitted nested entity collection detected');
+select pg_temp.assert_true(not public.jsonb_has_nested_entity_deletion('{"tags":["a","b"]}','{"tags":["a"]}'),'ordinary scalar-list editing remains editing');
+rollback to nested_deletion;
+
+savepoint status_integrity;
+set local role authenticated;
+select set_config('request.jwt.claim.sub','10000000-0000-0000-0000-000000000001',true);
+select pg_temp.expect_denied($q$select public.save_workspace_state('20000000-0000-0000-0000-000000000001',jsonb_set((select data from public.get_workspace_state('20000000-0000-0000-0000-000000000001')),'{taskStatuses}','["בטיפול","בוצע"]'), (select version from public.get_workspace_state('20000000-0000-0000-0000-000000000001')))$q$);
+select pg_temp.expect_denied($q$select public.save_workspace_state('20000000-0000-0000-0000-000000000001',jsonb_set((select data from public.get_workspace_state('20000000-0000-0000-0000-000000000001')),'{tasks,0,status}','"UNKNOWN"'), (select version from public.get_workspace_state('20000000-0000-0000-0000-000000000001')))$q$);
+reset role;
+rollback to status_integrity;
 rollback;
 \echo Udi V3 database workflow and permission checks passed.

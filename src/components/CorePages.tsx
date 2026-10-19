@@ -1,9 +1,9 @@
 import { useMemo, useState, type FormEvent } from 'react'
 import { AlertTriangle, ArrowLeft, ArrowRight, BriefcaseBusiness, CalendarDays, CircleDollarSign, FileSpreadsheet, ListChecks, Plus, Search, Sparkles, Upload, UsersRound } from 'lucide-react'
-import type { Contact, Deal, DealStage, Quote, TeamMember, Workspace } from '../types'
+import type { Contact, Deal, DealStage, Quote, Task, TeamMember, Workspace } from '../types'
 import { integrationsApi } from '../lib/api'
 import { ContactTags, ContactFields, contactFormDetails } from './ContactFields'
-import { appendUniqueContacts, mapContactImportRows, readImportRows } from '../lib/imports'
+import { appendUniqueContacts, appendUniqueTasks, mapContactImportRows, readImportRows, validateImportFile, resolveTaskProjectReference } from '../lib/imports'
 import { Chip, EmptyState, Field, Modal, dateLabel, money, nowIso, uid } from './common'
 
 type DashboardPage = 'clients' | 'projects' | 'tasks' | 'calendar' | 'reports'
@@ -76,6 +76,7 @@ export function ImportCenter({ workspace, setWorkspace, canImport }: { workspace
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [pending, setPending] = useState<{ contacts: Contact[]; files: string[] } | null>(null)
+  const [pendingTasks, setPendingTasks] = useState<{ tasks: Task[]; fileName: string } | null>(null)
 
   const importFile = async (file: File, kind: 'contacts' | 'tasks') => {
     if (!canImport || busy) return
@@ -83,6 +84,7 @@ export function ImportCenter({ workspace, setWorkspace, canImport }: { workspace
     setError('')
     setBusy(true)
     try {
+      validateImportFile(file)
       const buffer = await file.arrayBuffer()
       const rows = await readImportRows(buffer, /\.csv$/i.test(file.name), kind)
 
@@ -91,10 +93,28 @@ export function ImportCenter({ workspace, setWorkspace, canImport }: { workspace
         if (!contacts.length) throw new Error('לא נמצאה עמודת שם תקינה')
         setPending({ contacts, files: [file.name] })
       } else {
-        const tasks = rows.map((row, index) => ({ id: uid('task'), projectId: String(row['projectId'] || '') || undefined, title: String(row['משימה'] || row.title || row.Task || ''), description: String(row['הערות'] || row.notes || ''), status: String(row['סטטוס'] || 'טרם התחיל'), priority: 'רגילה' as const, startDate: String(row['תאריך התחלה'] || '') || undefined, dueDate: String(row['תאריך סיום'] || '') || undefined, followUpDate: String(row['מועד מעקב'] || '') || undefined, emailTo: String(row['מייל'] || '') || undefined, custom: {}, order: workspace.tasks.length + index + 1, createdAt: nowIso() })).filter((item) => item.title)
-        if (!tasks.length) throw new Error('לא נמצאה עמודת משימה תקינה')
-        setWorkspace((current) => ({ ...current, tasks: [...current.tasks, ...tasks] }))
-        setMessage(`יובאו ${tasks.length} משימות`)
+        const tasks: Task[] = rows.map((row, index): Task | null => {
+          const title = String(row['משימה'] || row.title || row.Task || '').trim()
+          if (!title) return null
+          const projectReference = row['projectId'] || row['פרויקט'] || row['שם פרויקט'] || row['project'] || ''
+          let projectId: string | undefined
+          try { projectId = resolveTaskProjectReference(workspace.projects, projectReference) }
+          catch (e) { throw new Error(`רשומה ${index + 1}: ${e instanceof Error ? e.message : 'פרויקט לא תקין'}`) }
+          const status = String(row['סטטוס'] || 'טרם התחיל').trim()
+          if (!workspace.taskStatuses.includes(status)) throw new Error(`רשומה ${index + 1}: הסטטוס "${status}" אינו מוגדר. יש להוסיף אותו בהגדרות המשימות לפני הייבוא.`)
+          return {
+            id: uid('task'), projectId, title,
+            description: String(row['הערות'] || row.notes || ''),
+            status, priority: 'רגילה',
+            startDate: String(row['תאריך התחלה'] || '') || undefined,
+            dueDate: String(row['תאריך סיום'] || '') || undefined,
+            followUpDate: String(row['מועד מעקב'] || '') || undefined,
+            emailTo: String(row['מייל'] || '') || undefined, custom: {},
+            order: workspace.tasks.length + index + 1, createdAt: nowIso(),
+          }
+        }).filter((task): task is Task => task !== null)
+        if (!tasks.length) throw new Error('לא נמצאו משימות תקינות')
+        setPendingTasks({ tasks, fileName: file.name })
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'ייבוא הקובץ נכשל')
@@ -108,6 +128,7 @@ export function ImportCenter({ workspace, setWorkspace, canImport }: { workspace
     if (kind === 'tasks') { void importFile(files[0], kind); return }
     setMessage(''); setError(''); setPending(null); setBusy(true)
     void Promise.all(files.map(async (file) => {
+      validateImportFile(file)
       const rows = await readImportRows(await file.arrayBuffer(), /\.csv$/i.test(file.name), 'contacts')
       const contacts = mapContactImportRows(rows).map((contact) => ({ ...contact, id: uid('contact'), createdAt: nowIso() }))
       if (!contacts.length) throw new Error(`${file.name}: לא נמצאו אנשי קשר לייבוא`)
@@ -118,13 +139,30 @@ export function ImportCenter({ workspace, setWorkspace, canImport }: { workspace
   }
 
   const preview = pending ? appendUniqueContacts(workspace.contacts, pending.contacts) : null
+  const taskPreview = pendingTasks ? appendUniqueTasks(workspace.tasks, pendingTasks.tasks) : null
 
   return <div className="import-grid">
     {!canImport && <div className="info-banner"><FileSpreadsheet /> קיימת הרשאת צפייה בלבד. כדי לייבא קבצים נדרשת גם הרשאת הוספה.</div>}
     <section className="card import-card"><span><UsersRound /></span><h2>ייבוא לקוחות</h2><p>Excel או CSV, כולל רשימות עורכי דין ואנשי קשר. הכותרות מזוהות אוטומטית גם אחרי שורות כותרת. ניתן לבחור כמה קבצים יחד.</p><label className="upload-button" aria-disabled={!canImport}><Upload /> בחירת קובץ<input disabled={!canImport || busy} aria-label="ייבוא קובץ לקוחות" multiple type="file" accept=".xlsx,.xls,.csv" onChange={(e) => onPick(e, 'contacts')} /></label></section>
-    <section className="card import-card"><span><ListChecks /></span><h2>ייבוא משימות</h2><p>Excel או CSV עם משימה, סטטוס, תאריכים, הערות ומייל.</p><label className="upload-button" aria-disabled={!canImport}><FileSpreadsheet /> בחירת קובץ<input disabled={!canImport || busy} aria-label="ייבוא קובץ משימות" type="file" accept=".xlsx,.xls,.csv" onChange={(e) => onPick(e, 'tasks')} /></label></section>
+    <section className="card import-card"><span><ListChecks /></span><h2>ייבוא משימות</h2><p>Excel או CSV מכל הגיליונות, עם משימה, פרויקט (שם מדויק או ID), סטטוס, תאריכים והערות. לפני הייבוא תוצג בדיקת כפילויות.</p><label className="upload-button" aria-disabled={!canImport}><FileSpreadsheet /> בחירת קובץ<input disabled={!canImport || busy} aria-label="ייבוא קובץ משימות" type="file" accept=".xlsx,.xls,.csv" onChange={(e) => onPick(e, 'tasks')} /></label></section>
     {busy && <div className="info-banner" role="status">קורא את הקבצים...</div>}
     {pending && preview && <Modal wide title="תצוגה מקדימה של ייבוא לקוחות" onClose={() => setPending(null)}><p>{pending.files.join(', ')}</p><p>{preview.added} אנשי קשר חדשים · {preview.skipped} כפילויות ידולגו</p><p>פרטי התפקיד, החברה, הטלפונים, הכתובת והעמודות הנוספות יישמרו בכרטיס הלקוח. שמות פרויקטים נשמרים כהפניות ללא יצירת פרויקטים.</p><div className="table-scroll"><table className="data-table"><thead><tr><th>שם</th><th>חברה</th><th>תפקיד</th><th>טלפון</th><th>נייד</th><th>מייל</th></tr></thead><tbody>{pending.contacts.slice(0, 10).map((contact) => <tr key={contact.id}><td>{contact.name}</td><td>{contact.company}</td><td>{contact.role}</td><td dir="ltr">{contact.phone}</td><td dir="ltr">{contact.mobile}</td><td>{contact.email}</td></tr>)}</tbody></table></div>{pending.contacts.length > 10 && <p>מוצגות 10 הרשומות הראשונות מתוך {pending.contacts.length}.</p>}<div className="form-actions"><button type="button" className="secondary" onClick={() => setPending(null)}>ביטול</button><button type="button" className="primary" disabled={!canImport || !preview.added} onClick={() => { if (!canImport) return; setWorkspace((current) => ({ ...current, contacts: appendUniqueContacts(current.contacts, pending.contacts).contacts })); setMessage(`יובאו ${preview.added} לקוחות; דולגו ${preview.skipped} כפילויות`); setPending(null) }}>ייבוא {preview.added} לקוחות</button></div></Modal>}
+    {pendingTasks && taskPreview && <Modal wide title="תצוגה מקדימה של ייבוא משימות" onClose={() => setPendingTasks(null)}>
+      <p>{pendingTasks.fileName}</p>
+      <p>{taskPreview.added} משימות חדשות · {taskPreview.skipped} כפילויות ידולגו</p>
+      <p>הייבוא אינו משנה משימות קיימות. פרויקטים חייבים להיות קיימים ובעלי שם חד-משמעי. ניתן לייבא מחדש ללא שכפול משימות זהות.</p>
+      <div className="table-scroll"><table className="data-table"><thead><tr><th>משימה</th><th>פרויקט</th><th>סטטוס</th><th>תאריך יעד</th></tr></thead>
+        <tbody>{taskPreview.tasks.slice(workspace.tasks.length, workspace.tasks.length + 10).map((task) => <tr key={task.id}><td>{task.title}</td><td>{workspace.projects.find((project) => project.id === task.projectId)?.name || 'ללא פרויקט'}</td><td>{task.status}</td><td>{task.dueDate || ''}</td></tr>)}</tbody>
+      </table></div>
+      <div className="form-actions"><button type="button" className="secondary" onClick={() => setPendingTasks(null)}>ביטול</button>
+        <button type="button" className="primary" disabled={!canImport || !taskPreview.added} onClick={() => {
+          if (!canImport) return
+          const result = appendUniqueTasks(workspace.tasks, pendingTasks.tasks)
+          setWorkspace((current) => ({ ...current, tasks: appendUniqueTasks(current.tasks, pendingTasks.tasks).tasks }))
+          setMessage(`יובאו ${result.added} משימות; דולגו ${result.skipped} כפילויות`)
+          setPendingTasks(null)
+        }}>ייבוא {taskPreview.added} משימות</button></div>
+    </Modal>}
     {message && <div className="success-banner" role="status">{message}</div>}
     {error && <div className="error-banner" role="alert">{error}</div>}
   </div>

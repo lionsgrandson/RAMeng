@@ -1,3 +1,4 @@
+import DisplaySettings from './DisplaySettings'
 import { lazy, Suspense, useEffect, useState } from 'react'
 import type { User } from '@supabase/supabase-js'
 import { Cloud, RefreshCw, Save, UserRound } from 'lucide-react'
@@ -9,13 +10,17 @@ import { Chip, Field } from './common'
 import { DriveSettingsPanel } from './DriveConnection'
 const RichTextEditor = lazy(() => import('./RichTextEditor'))
 
-type SettingsTab = 'profile' | 'google' | 'organization' | 'system'
+type SettingsTab = 'profile' | 'display' | 'google' | 'organization' | 'system'
 
 export default function SettingsPage({
   user,
   onUserUpdated,
   workspace,
   setWorkspace,
+  canViewTasks,
+  canEditTasks,
+  canCreateTasks,
+  canDeleteTasks,
   canConfigureGoogle,
   canViewDrive,
   canManageDrive,
@@ -27,6 +32,10 @@ export default function SettingsPage({
   onUserUpdated: (user: User) => void
   workspace: Workspace
   setWorkspace: React.Dispatch<React.SetStateAction<Workspace>>
+  canViewTasks: boolean
+  canEditTasks: boolean
+  canCreateTasks: boolean
+  canDeleteTasks: boolean
   canConfigureGoogle: boolean
   canViewDrive: boolean
   canManageDrive: boolean
@@ -39,12 +48,14 @@ export default function SettingsPage({
   return <div className="settings-layout">
     <aside className="settings-nav card" role="tablist" aria-label="הגדרות">
       <button type="button" role="tab" aria-selected={tab === 'profile'} className={tab === 'profile' ? 'active' : ''} onClick={() => setTab('profile')}>הפרופיל שלי</button>
+      <button type="button" role="tab" aria-selected={tab === 'display'} className={tab === 'display' ? 'active' : ''} onClick={() => setTab('display')}>תצוגה</button>
       <button type="button" role="tab" aria-selected={tab === 'google'} className={tab === 'google' ? 'active' : ''} onClick={() => setTab('google')}>Google Workspace</button>
       {canViewOrganization && <button type="button" role="tab" aria-selected={tab === 'organization'} className={tab === 'organization' ? 'active' : ''} onClick={() => setTab('organization')}>חברה</button>}
       {isDeveloper && <button type="button" role="tab" aria-selected={tab === 'system'} className={tab === 'system' ? 'active' : ''} onClick={() => setTab('system')}>הגדרות מערכת</button>}
     </aside>
     <main>
       {tab === 'profile' && <PersonalSettings user={user} onUserUpdated={onUserUpdated} />}
+      {tab === 'display' && <DisplaySettings workspace={workspace} setWorkspace={setWorkspace} canViewTasks={canViewTasks} canEditTasks={canEditTasks} canCreateTasks={canCreateTasks} canDeleteTasks={canDeleteTasks} />}
       {tab === 'google' && <><GoogleWorkspaceSettings canConfigure={canConfigureGoogle} />{canViewDrive && <section className="card settings-card"><DriveSettingsPanel canEdit={canManageDrive} /></section>}</>}
       {tab === 'organization' && canViewOrganization && <OrganizationSettings workspace={workspace} setWorkspace={setWorkspace} canEdit={canEditOrganization} />}
       {tab === 'system' && isDeveloper && <SystemSettings />}
