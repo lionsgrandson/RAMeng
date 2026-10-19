@@ -18,7 +18,7 @@
     "upload:preview": "npm run build:preview && npx --prefix worker wrangler versions upload --config worker/wrangler.toml --preview-alias meeting-crm"
   },
   "dependencies": {
-    "@capacitor/android": "^8.4.2",
+    "@capacitor/android": "^8.5.3",
     "@capacitor/core": "^8.4.2",
     "@capacitor/local-notifications": "^8.0.0",
     "@e965/xlsx": "^0.20.3",
