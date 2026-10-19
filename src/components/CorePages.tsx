@@ -92,7 +92,7 @@ export function ImportCenter({ workspace, setWorkspace, canImport }: { workspace
         if (!contacts.length) throw new Error('לא נמצאה עמודת שם תקינה')
         setPending({ contacts, files: [file.name] })
       } else {
-        const tasks: Task[] = rows.map((row, index) => {
+        const tasks: Task[] = rows.map((row, index): Task | null => {
           const title = String(row['משימה'] || row.title || row.Task || '').trim()
           if (!title) return null
           const projectReference = String(row['projectId'] || row['פרויקט'] || row['שם פרויקט'] || row['project'] || '').trim()
