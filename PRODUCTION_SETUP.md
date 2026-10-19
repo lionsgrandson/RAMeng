@@ -122,3 +122,13 @@ deploy.cmd
 ```
 
 For database updates, back up the workspace and apply pending incremental migrations before testing the new functionality. Do not rerun the baseline on an already migrated database.
+
+
+## Audit release, 19 October 2026
+
+- Production Worker config is pinned to RAM's account `45834d92b0992b24644537fc864542e4`. Use the `rameng` Wrangler profile. Deploy commands retain dashboard vars with `--keep-vars`; secrets remain on Cloudflare.
+- `deploy.cmd` and `npm run deploy:cloudflare` now run TypeScript/regression checks before building and deploying. The full CI gate additionally runs disposable PostgreSQL and browser workflows.
+- `tests/preview.wrangler.toml` targets a separate synthetic-only static QA Worker. Build with `npx vite build --config tests/qa.config.mjs --outDir artifacts/audit/preview`. It has no production KV, database, Google or cron binding.
+- Migration `20261019202318_enforce_nested_entity_delete_permissions.sql` is incremental and changes authorization/integrity functions only. It preserves records. It is **not applied automatically by the application deploy**. Verify target, take an approved private backup, apply and verify it separately. Do not apply it to StudentTranscribe.
+- The current code is compatible with the previous schema, so unrelated application fixes can be released while database access is pending. The new database security protections must be reported as pending until applied and verified.
+- See `AUDIT_IMPLEMENTATION_20261019.md` and the final release record for executed evidence and remaining gaps. Production readiness must not be inferred from the synthetic preview.

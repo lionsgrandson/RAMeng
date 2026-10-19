@@ -37,10 +37,10 @@ if errorlevel 1 (
 
 echo.
 echo [3/8] Checking Cloudflare login...
-call npx wrangler whoami >nul 2>nul
+call npx wrangler deployments list --profile rameng >nul 2>nul
 if errorlevel 1 (
   echo Cloudflare login is required. Your browser will open now.
-  call npx wrangler login
+  call npx wrangler login --profile rameng
   if errorlevel 1 (
     popd
     goto :fail
@@ -62,7 +62,7 @@ if errorlevel 1 goto :fail
 echo.
 echo [5/8] Deploying to Cloudflare...
 pushd worker
-call npx wrangler deploy --profile rameng
+call npx wrangler deploy --profile rameng --keep-vars
 if errorlevel 1 (
   popd
   goto :fail

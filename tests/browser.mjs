@@ -13,7 +13,7 @@ const base = process.env.RAMENG_QA_BASE_URL || 'http://127.0.0.1:4176'
 if (!['http://127.0.0.1:4176', 'https://rameng-crm-audit-preview.rameng-crm-worker.workers.dev'].includes(base)) throw new Error('Browser mutations are allowed only against isolated QA fixtures')
 const server = process.env.RAMENG_QA_BASE_URL ? null : await createServer({ configFile: 'tests/qa.config.mjs', server: { port: 4176 } })
 await server?.listen()
-const browser = await chromium.launch({ headless: true, ...(process.env.RAMENG_TEST_CHROMIUM ? { executablePath: process.env.RAMENG_TEST_CHROMIUM } : {}) })
+const browser = await chromium.launch({ headless: true, ...(process.env.RAMENG_TEST_HTTP1 === 'true' ? { args: ['--disable-http2'] } : {}), ...(process.env.RAMENG_TEST_CHROMIUM ? { executablePath: process.env.RAMENG_TEST_CHROMIUM } : {}) })
 await mkdir('artifacts/audit', { recursive: true })
 const results = []
 async function scenario(name, action, query = '', route = 'tasks') {
