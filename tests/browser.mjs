@@ -25,14 +25,14 @@ async function scenario(name, action, query = '', route = 'tasks') {
   // Fixtures must not make any requests to production or Google services.
   await page.route('**/*', request => new URL(request.request().url()).origin === base ? request.continue() : request.abort())
   try {
-    await page.goto(`${base}/${query}#app?page=${route}`)
+    await page.goto(`${base}/${query}#app?page=${route}`, { waitUntil: 'domcontentloaded' })
     await page.locator('.topbar, .external-task-page').waitFor({ state: 'visible' })
     await action(page)
     assert.deepEqual(errors, [])
     results.push({ name, passed: true }); console.log(`PASS ${name}`)
   } catch (error) {
     results.push({ name, passed: false, error: String(error) }); console.error(`FAIL ${name}: ${error}`)
-    await page.screenshot({ path: `artifacts/audit/failure-${results.length}.png`, fullPage: true })
+    await page.screenshot({ path: `artifacts/audit/failure-${results.length}.png`, fullPage: true }).catch(() => undefined)
   } finally { await context.close() }
 }
 try {

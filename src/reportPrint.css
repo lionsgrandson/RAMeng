@@ -24,7 +24,7 @@
 
   .print-header{display:grid;grid-template-columns:1fr 1.5fr 1fr;gap:12px;align-items:start;padding-bottom:12px;margin-bottom:16px;border-bottom:3px solid #75927c}
   .print-brand{display:flex;align-items:center;gap:8px}
-  .print-logo-image{width:112px;height:auto;max-height:52px;object-fit:contain;background:#fff;border-radius:4px;padding:2px}
+  .print-logo-image{width:112px;height:auto;max-height:52px;object-fit:contain;background:#263c2d;border-radius:4px;padding:2px}
   .print-brand>div:last-child{display:flex;flex-direction:column}
   .print-brand strong{font-size:13px}
   .print-brand span{font-size:8px;color:#68756b;margin-top:2px}
@@ -36,7 +36,7 @@
 
   .print-section{margin:0 0 16px;break-inside:auto}
   .print-section h2{margin:0 0 7px;padding:5px 8px;background:#eef3ef;border-right:4px solid #75927c;color:#314538;font-size:12px;break-after:avoid}
-  .print-report table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:8.2px;line-height:1.35}
+  .print-report table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:10px;line-height:1.35}
   .print-report thead{display:table-header-group}
   .print-report tr{break-inside:avoid}
   .print-report th,.print-report td{border:1px solid #aeb8b0;padding:5px;vertical-align:top;text-align:right;overflow-wrap:anywhere}
