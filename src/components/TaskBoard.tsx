@@ -22,6 +22,7 @@ type Props = {
   canEditProject?: boolean
   startCreating?: boolean
   onProject?: (id: string) => void
+  onCreateReportFromTasks?: (taskIds: string[], options: { title: string; templateId: string }) => void
 }
 
 type TaskView = 'active' | 'archive'
@@ -47,7 +48,7 @@ const fieldValue = (task: Task, column: TaskColumn) => {
   return String((task as unknown as Record<string, unknown>)[column.key] ?? '')
 }
 
-export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail, onProject, canEdit = true, permissions, focusTaskId, attentionOnly = false, onClearAttention, startCreating = false, orgId = 'local', canEditProject = false }: Props) {
+export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail, onProject, canEdit = true, permissions, focusTaskId, attentionOnly = false, onClearAttention, startCreating = false, orgId = 'local', canEditProject = false, onCreateReportFromTasks }: Props) {
   const taskPermissions: AreaPermissions = permissions || { view: true, create: canEdit, edit: canEdit, status: canEdit, delete: canEdit }
   const canCreate = taskPermissions.create
   const canUpdate = taskPermissions.edit
@@ -76,6 +77,9 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
   const [newStatus, setNewStatus] = useState('')
   const [editingStatus, setEditingStatus] = useState('')
   const [renamedStatus, setRenamedStatus] = useState('')
+  const [creatingTaskReport, setCreatingTaskReport] = useState(false)
+  const [taskReportTitle, setTaskReportTitle] = useState('')
+  const [taskReportTemplate, setTaskReportTemplate] = useState(workspace.reportTemplates[0]?.id || '')
   const coreStatuses = new Set(['טרם התחיל', 'בטיפול', 'ממתין לגורם חיצוני', 'דורש מעקב', 'בוצע חלקית', 'בוצע', 'סגור'])
 
   const taskColumns = useMemo(() => {
@@ -381,6 +385,29 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
     <div className="toolbar task-overview-counts">{(() => { const all = workspace.tasks.filter(task => !projectId || task.projectId === projectId); const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jerusalem', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()); return <><span>סה״כ: {all.length}</span><span>פתוחות: {all.filter(task => !isCompleted(task)).length}</span><span>בטיפול: {all.filter(task => task.status === 'בטיפול').length}</span><span>הושלמו: {all.filter(isCompleted).length}</span><span>באיחור: {all.filter(task => !isCompleted(task) && task.dueDate && task.dueDate < today).length}</span></> })()}</div>
     {canUpdate && <CategoryManager workspace={workspace} setWorkspace={setWorkspace} projectId={projectId && canEditProject ? projectId : undefined} canEdit={canUpdate} canDelete={canDelete} />}
     {projectId && <MeetingSummaries workspace={workspace} setWorkspace={setWorkspace} projectId={projectId} selectedTaskIds={selectedIds.filter(id => rows.some(row => row.task.id === id))} canEdit={canCreate && canUpdate} canDelete={canDelete} />}
+    {projectId && onCreateReportFromTasks && selectedIds.some((id) => rows.some((row) => row.task.id === id)) && <button className="secondary" type="button" onClick={() => {
+      setTaskReportTitle(`דוח משימות - ${workspace.projects.find((project) => project.id === projectId)?.name || ''}`)
+      setCreatingTaskReport(true)
+    }}>יצירת טיוטת דוח פיקוח מהמשימות שנבחרו</button>}
+    {projectId && creatingTaskReport && onCreateReportFromTasks && <Modal wide title="דוח פיקוח ממשימות הפרויקט" onClose={() => setCreatingTaskReport(false)}>
+      <form className="form-grid" onSubmit={(event) => {
+        event.preventDefault()
+        const taskIds = selectedIds.filter((id) => rows.some((row) => row.task.id === id))
+        if (!taskIds.length) { setCreatingTaskReport(false); return }
+        onCreateReportFromTasks(taskIds, { title: taskReportTitle, templateId: taskReportTemplate })
+        setCreatingTaskReport(false)
+      }}>
+        <p>ייווצר דוח טיוטה ניתן לעריכה. רק המשימות המסומנות יועתקו; המשימות המקוריות לא ישונו. יש לבדוק את הממצאים לפני שליחת הדוח.</p>
+        <Field label="כותרת דוח"><input required value={taskReportTitle} onChange={(event) => setTaskReportTitle(event.target.value)} /></Field>
+        <Field label="תבנית"><select value={taskReportTemplate} onChange={(event) => setTaskReportTemplate(event.target.value)}>
+          {workspace.reportTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
+        </select></Field>
+        <p>{selectedIds.filter((id) => rows.some((row) => row.task.id === id)).length} משימות נבחרו:</p>
+        <ul>{selectedIds.filter((id) => rows.some((row) => row.task.id === id)).map((id) => <li key={id}>{workspace.tasks.find((task) => task.id === id)?.title}</li>)}</ul>
+        <div className="form-actions"><button type="button" className="secondary" onClick={() => setCreatingTaskReport(false)}>ביטול</button>
+          <button type="submit" className="primary">יצירת טיוטה ופתיחת הדוח</button></div>
+      </form>
+    </Modal>}
     <div className="toolbar board-toolbar">
       <label className="task-filter-field"><span>מקצוע</span><select aria-label="סינון משימות לפי מקצוע" value={categoryFilter} onChange={event => setCategoryFilter(event.target.value)}><option value="">כל המקצועות</option>{workspace.categories.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
       <label className="task-filter-field"><span>קיבוץ</span><select aria-label="קיבוץ משימות" value={groupBy} onChange={event => setGroupBy(event.target.value as typeof groupBy)}><option value="none">ללא קיבוץ</option><option value="assignee">לפי אחראי</option><option value="project">לפי פרויקט</option></select></label>
