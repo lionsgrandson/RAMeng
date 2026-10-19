@@ -22,7 +22,7 @@
     "@capacitor/core": "^8.4.2",
     "@capacitor/local-notifications": "^8.0.0",
     "@e965/xlsx": "^0.20.3",
-    "@supabase/supabase-js": "^2.90.0",
+    "@supabase/supabase-js": "^2.118.0",
     "@tiptap/extension-image": "3.31.4",
     "@tiptap/extension-text-align": "3.31.4",
     "@tiptap/extension-text-style": "3.31.4",
