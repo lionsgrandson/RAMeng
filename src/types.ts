@@ -161,6 +161,7 @@ export interface InspectionPhoto {
 
 export interface InspectionItem {
   id: ID
+  sourceTaskId?: ID
   description: string
   status: string
   treatment: string
