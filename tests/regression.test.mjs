@@ -10,7 +10,7 @@ after(() => server.close())
 const { normalizePermissions, workspaceMutationError } = await server.ssrLoadModule('/src/lib/permissions.ts')
 const { cloneWorkspace } = await server.ssrLoadModule('/src/seed.ts')
 const backend = await server.ssrLoadModule('/src/lib/backend.ts')
-const { readImportRows, mapContactImportRows, appendUniqueContacts, appendUniqueTasks } = await server.ssrLoadModule('/src/lib/imports.ts')
+const { readImportRows, mapContactImportRows, appendUniqueContacts, appendUniqueTasks, resolveTaskProjectReference } = await server.ssrLoadModule('/src/lib/imports.ts')
 const { normalizeContactCategories } = await server.ssrLoadModule('/src/lib/contactCategories.ts')
 const { mailContent } = await import('../worker/src/mailHtml.js')
 const options = { canManageUsers: false, isDeveloper: false }
@@ -189,6 +189,16 @@ test('import reads every data worksheet while ignoring unrelated cover pages', a
   assert.deepEqual(tasks.map(task => task['משימה']), ['חשמל', 'איטום'])
   assert.deepEqual(tasks.map(task => task['תאריך סיום']), ['2026-10-21', '2026-10-22'])
   assert.deepEqual(contacts.map(contact => contact.name), ['אדריכלית'])
+})
+
+
+test('task import project links never resolve ambiguous or missing names', () => {
+  const projects = [{ id: 'p1', name: 'דרך הים' }, { id: 'p2', name: 'דרך הים' }, { id: 'p3', name: 'הנשיא 10' }]
+  assert.equal(resolveTaskProjectReference(projects, 'p1'), 'p1')
+  assert.equal(resolveTaskProjectReference(projects, 'הנשיא 10'), 'p3')
+  assert.equal(resolveTaskProjectReference(projects, ''), undefined)
+  assert.throws(() => resolveTaskProjectReference(projects, 'דרך הים'), /מספר פרויקטים/)
+  assert.throws(() => resolveTaskProjectReference(projects, 'פרויקט חסר'), /לא נמצא פרויקט/)
 })
 
 test('reimporting tasks preserves existing records, ignores status edits and rejects within-file duplicates', () => {
