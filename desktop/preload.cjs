@@ -4,4 +4,5 @@ contextBridge.exposeInMainWorld('ramengDesktop', {
   getConfig: () => ipcRenderer.invoke('desktop:get-config'),
   testServer: (serverUrl) => ipcRenderer.invoke('desktop:test-server', serverUrl),
   saveServer: (serverUrl) => ipcRenderer.invoke('desktop:set-server-url', serverUrl),
+  openPdfInFoxit: (url, name) => ipcRenderer.invoke('desktop:open-pdf', url, name),
 })

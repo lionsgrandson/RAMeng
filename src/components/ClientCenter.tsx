@@ -1,3 +1,6 @@
+import { jerusalemInstant } from '../lib/taskTime'
+import { taskColumnChoices } from '../lib/taskProfession'
+import ContactTable from './ContactTable'
 import { contactOptions, normalizeWorkspaceCategories } from '../lib/contactCategories'
 import { useMemo, useState, type Dispatch, type FormEvent, type SetStateAction } from 'react'
 import { ArrowRight, BarChart3, CalendarDays, ExternalLink, FileText, FolderKanban, LayoutDashboard, ListChecks, Mail, Plus, Search, Settings2 } from 'lucide-react'
@@ -124,21 +127,7 @@ function ClientDirectory({ workspace, setWorkspace, onSelectClient, canEditConta
       <button type="button" className="secondary compact-filter-clear" onClick={() => { setQuery(''); setStatusFilter('הכל'); setTagFilter('הכל'); setRoleFilter('הכל'); setCompanyTypeFilter('הכל'); setProjectFilter('הכל'); setDateFrom(''); setDateTo('') }}>ניקוי סינון</button>
       <span className="filter-count">{rows.length} מתוך {workspace.contacts.length} לקוחות</span>
     </div>
-    <div className="client-card-grid">
-      {rows.map((contact) => {
-        const projects = workspace.projects.filter((project) => (project.clientIds.includes(contact.id) || project.contactIds?.includes(contact.id)))
-        const projectIds = new Set(projects.map((project) => project.id))
-        const openTasks = workspace.tasks.filter((task) => task.projectId && projectIds.has(task.projectId) && !['בוצע', 'סגור'].includes(task.status)).length
-        return <button type="button" className="client-card card" key={contact.id} onClick={() => onSelectClient(contact.id)}>
-          <div className="client-card-top"><span className="avatar large">{contact.name.slice(0, 2)}</span><Chip tone={contact.status === 'פעיל' ? 'good' : contact.status === 'ליד' ? 'brand' : 'neutral'}>{contact.status}</Chip></div>
-          <h3>{contact.name}</h3>
-          <p>{[contact.company, contact.role].filter(Boolean).join(' · ') || 'לקוח פרטי'}</p>
-          <div className="client-contact-lines"><span>{contact.mobile || contact.phone || 'ללא טלפון'}</span><span>{contact.email || 'ללא מייל'}</span></div>
-          <div className="client-card-stats">{(projectPermissions?.view ?? true) && <span><b>{projects.length}</b> פרויקטים</span>}{(taskPermissions?.view ?? true) && <span><b>{openTasks}</b> משימות פתוחות</span>}</div>
-        </button>
-      })}
-      {!rows.length && <div className="card client-empty"><EmptyState title="אין לקוחות להצגה" text={query ? 'לא נמצאה התאמה לחיפוש.' : 'הוסיפו לקוח כדי להתחיל לרכז את כל הפעילות שלו במקום אחד.'} /></div>}
-    </div>
+    <ContactTable contacts={rows} onContact={onSelectClient} />
     {adding && <Modal title="לקוח חדש" onClose={() => setAdding(false)}><form className="form-grid" onSubmit={createClient}>
       <Field label="שם"><input name="name" required autoFocus /></Field>
       <Field label="חברה"><input name="company" /></Field>
@@ -180,6 +169,7 @@ function ClientWorkspace({ workspace, setWorkspace, onSelectClient, onProject, c
   const [addingNoteKind, setAddingNoteKind] = useState<ClientNote['kind'] | null>(null)
   const [editingNote, setEditingNote] = useState<ClientNote | null>(null)
   const [editingTask, setEditingTask] = useState<Task | null>(null)
+  const [scheduleError, setScheduleError] = useState('')
   const canEditAnything = canUpdateContacts || canStatusContacts || canCreateProjects || canUpdateProjects || canStatusProjects || canCreateTasks || canUpdateTasks || canStatusTasks || canCreateCommunication || canUpdateCommunication || canDeleteCommunication || canUpdateFinance || canStatusFinance
   const contact = workspace.contacts.find((item) => item.id === clientId)
 
@@ -269,12 +259,19 @@ function ClientWorkspace({ workspace, setWorkspace, onSelectClient, onProject, c
       assigneeId: String(data.get('assigneeId') || '') || undefined,
       status: String(data.get('status') || workspace.taskStatuses[0] || 'טרם התחיל'),
       priority: String(data.get('priority') || 'רגילה') as Task['priority'],
+      startDate: String(data.get('startDate') || '') || undefined,
+      dueDate: String(data.get('dueDate') || '') || undefined,
+      scheduledTime: String(data.get('scheduledTime') || '') || undefined,
       followUpDate: String(data.get('followUpDate') || '') || undefined,
       colorTag: String(data.get('colorTag') || '') || undefined,
       custom: {},
       order: workspace.tasks.length + 1,
       createdAt: nowIso(),
     }
+    if (task.scheduledTime) {
+      try { jerusalemInstant(task.startDate || task.dueDate || task.followUpDate || '', task.scheduledTime) } catch (e) { setScheduleError((e as Error).message); return }
+    }
+    setScheduleError('')
     setWorkspace((current) => audit({ ...current, tasks: [...current.tasks, task] }, 'יצירת משימה מכרטיס לקוח', 'משימה', task.id))
     setAddingTask(false)
   }
@@ -331,11 +328,16 @@ function ClientWorkspace({ workspace, setWorkspace, onSelectClient, onProject, c
       startDate: String(data.get('startDate') || '') || undefined,
       dueDate: String(data.get('dueDate') || '') || undefined,
       followUpDate: String(data.get('followUpDate') || '') || undefined,
+      scheduledTime: String(data.get('scheduledTime') || '') || undefined,
       emailTo: String(data.get('emailTo') || '') || undefined,
       colorTag: String(data.get('colorTag') || '') || undefined,
       custom,
       completedAt: ['בוצע', 'סגור'].includes(status) ? (editingTask.completedAt || nowIso()) : undefined,
     }
+    if (next.scheduledTime) {
+      try { jerusalemInstant(next.startDate || next.dueDate || next.followUpDate || '', next.scheduledTime) } catch (e) { setScheduleError((e as Error).message); return }
+    }
+    setScheduleError('')
     setWorkspace((current) => audit({ ...current, tasks: current.tasks.map((task) => task.id === editingTask.id ? { ...task, ...next } : task) }, 'עריכת משימה מכרטיס לקוח', 'משימה', editingTask.id))
     setEditingTask(null)
   }
@@ -366,7 +368,7 @@ function ClientWorkspace({ workspace, setWorkspace, onSelectClient, onProject, c
     <header className="client-workspace-header card">
       <button type="button" className="back-button" onClick={() => onSelectClient(null)}><ArrowRight /> לקוחות</button>
       <div className="client-title-row">
-        <div className="client-identity"><span className="avatar large">{contact.name.slice(0, 2)}</span><div><h1>{contact.name}</h1><p>{contact.company || 'לקוח פרטי'} · {contact.phone || 'ללא טלפון'} · {contact.email || 'ללא מייל'}</p></div></div>
+        <div className="client-identity"><span className="avatar large">{contact.name.slice(0, 2)}</span><div><h1><bdi>{contact.name}</bdi></h1><p><bdi>{contact.company || 'לקוח פרטי'}</bdi> · <bdi dir="ltr">{contact.phone || 'ללא טלפון'}</bdi> · <bdi dir="ltr">{contact.email || 'ללא מייל'}</bdi></p></div></div>
         <div className="client-header-actions">{contactAccess.delete && <DeleteButton label="מחיקת לקוח" message={`למחוק את הלקוח "${contact.name}"? ההודעות הפנימיות שלו יימחקו. פרויקטים והצעות יישמרו ללא שיוך ללקוח.`} onConfirm={() => setWorkspace((current) => deleteContact(current, contact.id))} />}{canUpdateContacts && <SaveButton />}{canStatusContacts ? <select className="compact-select" aria-label="סטטוס לקוח" value={contact.status} onChange={(e) => patchContact({ status: e.target.value })}><option>ליד</option><option>פעיל</option><option>בהמתנה</option><option>לא פעיל</option></select> : <Chip tone={contact.status === 'פעיל' ? 'good' : contact.status === 'ליד' ? 'brand' : 'neutral'}>{contact.status}</Chip>}{canUpdateContacts && <button type="button" className="primary client-edit-button" onClick={() => setEditingClient(true)}><Settings2 /> עריכת לקוח</button>}</div>
       </div>
       {!canEditAnything && <div className="read-only-banner">צפייה בלבד</div>}
@@ -395,7 +397,7 @@ function ClientWorkspace({ workspace, setWorkspace, onSelectClient, onProject, c
     </article>)}{!projects.length && <EmptyState title="אין פרויקטים" text="הלקוח עדיין לא משויך לפרויקט." />}</div></section>}
 
     {tab === 'tasks' && taskAccess.view && <section className="card"><div className="card-head"><h2>משימות</h2>{canCreateTasks && projects.length > 0 && <button type="button" className="primary" onClick={() => setAddingTask(true)}><Plus /> משימה חדשה</button>}</div><div className="client-task-table">{tasks.map((task) => <article key={task.id} style={{ borderInlineStartColor: clientTaskColor(task.colorTag).hex }}>
-      <div className="client-task-title"><span>שם משימה</span>{canUpdateTasks ? <input aria-label={`שם משימה ${task.title}`} value={task.title} onChange={(e) => patchTask(task.id, { title: e.target.value })} /> : <strong>{task.title}</strong>}<small>{workspace.projects.find((project) => project.id === task.projectId)?.name || 'ללא פרויקט'}</small><button type="button" className="text-button" onClick={() => setEditingTask(task)}>כל הפרטים</button></div>
+      <div className="client-task-title"><span>שם משימה{task.scheduledTime && <> · שעה <bdi dir="ltr">{task.scheduledTime}</bdi></>}</span>{canUpdateTasks ? <input aria-label={`שם משימה ${task.title}`} value={task.title} onChange={(e) => patchTask(task.id, { title: e.target.value })} /> : <strong>{task.title}</strong>}<small>{workspace.projects.find((project) => project.id === task.projectId)?.name || 'ללא פרויקט'}</small><button type="button" className="text-button" onClick={() => setEditingTask(task)}>כל הפרטים</button></div>
       <label className="inline-control-label"><span>סטטוס</span>{canStatusTasks ? <select value={task.status} onChange={(e) => patchTask(task.id, { status: e.target.value })}>{workspace.taskStatuses.map((status) => <option key={status}>{status}</option>)}</select> : <Chip tone={task.status === 'דורש מעקב' ? 'bad' : 'brand'}>{task.status}</Chip>}</label>
       <label className="inline-control-label"><span>אחראי</span>{canUpdateTasks ? <select value={task.assigneeId || ''} onChange={(e) => patchTask(task.id, { assigneeId: e.target.value || undefined })}><option value="">ללא אחראי</option>{workspace.team.filter((member) => member.active).map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select> : <span>{workspace.team.find((member) => member.id === task.assigneeId)?.name || 'ללא אחראי'}</span>}</label>
       <label className="inline-control-label"><span>מעקב</span>{canUpdateTasks ? <input type="date" value={task.followUpDate || ''} onChange={(e) => patchTask(task.id, { followUpDate: e.target.value || undefined })} /> : <span>{dateLabel(task.followUpDate || task.dueDate)}</span>}</label>
@@ -440,10 +442,14 @@ function ClientWorkspace({ workspace, setWorkspace, onSelectClient, onProject, c
     {canCreateTasks && addingTask && <Modal title="משימה חדשה" onClose={() => setAddingTask(false)}><form className="form-grid" onSubmit={createTask}>
       <Field label="פרויקט"><select name="projectId" required><option value="">בחירת פרויקט</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name} — {project.address || 'כתובת חסרה'}</option>)}</select></Field>
       <Field label="משימה"><input name="title" required /></Field>
-      <ContactFields contacts={workspace.contacts} /><Field label="סטטוס"><select name="status">{workspace.taskStatuses.map((status) => <option key={status}>{status}</option>)}</select></Field>
+      <Field label="סטטוס"><select name="status">{workspace.taskStatuses.map((status) => <option key={status}>{status}</option>)}</select></Field>
       <Field label="עדיפות"><select name="priority"><option>נמוכה</option><option>רגילה</option><option>גבוהה</option><option>דחופה</option></select></Field>
       <Field label="צבע / קטלוג"><select name="colorTag"><option value="">ללא צבע</option>{CLIENT_TASK_COLORS.filter((item) => item.id).map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></Field>
       <Field label="אחראי"><select name="assigneeId"><option value="">ללא אחראי</option>{workspace.team.filter((member) => member.active).map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select></Field>
+      <Field label="תאריך התחלה"><input name="startDate" type="date" /></Field>
+      <Field label="תאריך סיום"><input name="dueDate" type="date" /></Field>
+      <Field label="שעה"><input name="scheduledTime" type="time" /></Field>
+      {scheduleError && <p role="alert">{scheduleError}</p>}
       <Field label="מועד מעקב"><input name="followUpDate" type="date" /></Field>
       <Field label="תיאור"><textarea name="description" rows={4} /></Field>
       <div className="form-actions"><button className="secondary" type="button" onClick={() => setAddingTask(false)}>ביטול</button><button className="primary">שמירה</button></div>
@@ -459,8 +465,10 @@ function ClientWorkspace({ workspace, setWorkspace, onSelectClient, onProject, c
       <Field label="תאריך התחלה"><input name="startDate" type="date" defaultValue={editingTask.startDate || ''} disabled={!canUpdateTasks} /></Field>
       <Field label="יעד"><input name="dueDate" type="date" defaultValue={editingTask.dueDate || ''} disabled={!canUpdateTasks} /></Field>
       <Field label="מועד מעקב"><input name="followUpDate" type="date" defaultValue={editingTask.followUpDate || ''} disabled={!canUpdateTasks} /></Field>
+      <Field label="שעה"><input name="scheduledTime" type="time" defaultValue={editingTask.scheduledTime || ''} disabled={!canUpdateTasks} /></Field>
+      {scheduleError && <p role="alert">{scheduleError}</p>}
       <Field label="מייל"><input name="emailTo" type="email" defaultValue={editingTask.emailTo || ''} disabled={!canUpdateTasks} /></Field>
-      {workspace.taskColumns.filter((column) => column.key.startsWith('custom.')).map((column) => <Field key={column.id} label={column.label}><input name={`custom-${column.id}`} defaultValue={editingTask.custom[column.key.slice(7)] || ''} disabled={!canUpdateTasks} /></Field>)}
+      {workspace.taskColumns.filter((column) => column.key.startsWith('custom.')).map((column) => <Field key={column.id} label={column.label}>{taskColumnChoices(column, workspace) !== undefined ? <select name={`custom-${column.id}`} defaultValue={editingTask.custom[column.key.slice(7)] || ''} disabled={!canUpdateTasks}><option value="">ללא</option>{editingTask.custom[column.key.slice(7)] && !taskColumnChoices(column, workspace)!.includes(editingTask.custom[column.key.slice(7)]) && <option>{editingTask.custom[column.key.slice(7)]}</option>}{taskColumnChoices(column, workspace)!.map(value => <option key={value}>{value}</option>)}</select> : <input name={`custom-${column.id}`} defaultValue={editingTask.custom[column.key.slice(7)] || ''} disabled={!canUpdateTasks} />}</Field>)}
       <Field label="תיאור"><textarea name="description" rows={5} defaultValue={editingTask.description || ''} disabled={!canUpdateTasks} /></Field>
       <div className="form-actions full"><button type="button" className="secondary" onClick={() => setEditingTask(null)}>סגירה</button>{(canUpdateTasks || canStatusTasks) && <button className="primary">שמירת שינויים</button>}</div>
     </form></Modal>}

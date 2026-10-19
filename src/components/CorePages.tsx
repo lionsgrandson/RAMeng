@@ -3,7 +3,7 @@ import { AlertTriangle, ArrowLeft, ArrowRight, BriefcaseBusiness, CalendarDays, 
 import type { Contact, Deal, DealStage, Quote, Task, TeamMember, Workspace } from '../types'
 import { integrationsApi } from '../lib/api'
 import { ContactTags, ContactFields, contactFormDetails } from './ContactFields'
-import { appendUniqueContacts, appendUniqueTasks, mapContactImportRows, readImportRows, resolveTaskProjectReference } from '../lib/imports'
+import { appendUniqueContacts, appendUniqueTasks, mapContactImportRows, readImportRows, validateImportFile, resolveTaskProjectReference } from '../lib/imports'
 import { Chip, EmptyState, Field, Modal, dateLabel, money, nowIso, uid } from './common'
 
 type DashboardPage = 'clients' | 'projects' | 'tasks' | 'calendar' | 'reports'
@@ -84,6 +84,7 @@ export function ImportCenter({ workspace, setWorkspace, canImport }: { workspace
     setError('')
     setBusy(true)
     try {
+      validateImportFile(file)
       const buffer = await file.arrayBuffer()
       const rows = await readImportRows(buffer, /\.csv$/i.test(file.name), kind)
 
@@ -127,6 +128,7 @@ export function ImportCenter({ workspace, setWorkspace, canImport }: { workspace
     if (kind === 'tasks') { void importFile(files[0], kind); return }
     setMessage(''); setError(''); setPending(null); setBusy(true)
     void Promise.all(files.map(async (file) => {
+      validateImportFile(file)
       const rows = await readImportRows(await file.arrayBuffer(), /\.csv$/i.test(file.name), 'contacts')
       const contacts = mapContactImportRows(rows).map((contact) => ({ ...contact, id: uid('contact'), createdAt: nowIso() }))
       if (!contacts.length) throw new Error(`${file.name}: לא נמצאו אנשי קשר לייבוא`)

@@ -16,7 +16,7 @@ const json = (data, status = 200, extraHeaders = {}) => new Response(JSON.string
 const normalizeOrigin = (request) => request.headers.get('origin') || '*'
 const corsHeaders = (request) => ({
   'access-control-allow-origin': normalizeOrigin(request),
-  'access-control-allow-methods': 'GET,POST,PUT,DELETE,OPTIONS',
+  'access-control-allow-methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
   'access-control-allow-headers': 'authorization,content-type',
   'access-control-max-age': '86400',
   vary: 'Origin',
@@ -148,11 +148,12 @@ function rolePermissionAllowed(role, permissions, area, action) {
   return false
 }
 
-async function currentMembership(request, env, config, user) {
+async function currentMembership(request, env, config, user, orgId) {
   const auth = request.headers.get('authorization') || ''
   const url = new URL(`${config.supabaseUrl.replace(/\/$/, '')}/rest/v1/memberships`)
   url.searchParams.set('select', 'role,permissions')
   url.searchParams.set('user_id', `eq.${user.id}`)
+  if (orgId) url.searchParams.set('org_id', `eq.${orgId}`)
   const response = await fetch(url.toString(), {
     headers: {
       authorization: auth,
@@ -162,6 +163,12 @@ async function currentMembership(request, env, config, user) {
   })
   const memberships = response.ok ? await response.json() : []
   return Array.isArray(memberships) ? memberships[0] || null : null
+}
+
+async function requireOrgAreaAction(request, env, config, user, orgId, area, actions) {
+  if (!orgId) throw Object.assign(new Error('חסר שיוך לארגון'), { status: 400 })
+  const membership = await currentMembership(request, env, config, user, orgId)
+  if (!membership || !actions.some(action => rolePermissionAllowed(membership.role, membership.permissions, area, action))) throw Object.assign(new Error('אין הרשאה לפעולה בארגון זה'), { status: 403 })
 }
 
 async function requireAreaAction(request, env, config, area, action) {
@@ -457,7 +464,7 @@ async function handleGmailThread(request, env, config) {
   const user = await requireGoogleAreaAction(request, env, config, 'communication', 'view')
   const threadId = new URL(request.url).searchParams.get('threadId') || ''
   if (!threadId) throw Object.assign(new Error('לא נמצאה התכתבות.'), { status: 400 })
-  const response = await googleFetch(env, config, user.id, `https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(threadId)}?format=full`)
+  const response = await googleFetch(env, { ...config, dailyGoogleRead: false }, user.id, `https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(threadId)}?format=full`)
   const body = await response.json()
   if (!response.ok) throw Object.assign(new Error(localizedExternalError(body.error?.message, 'טעינת שרשור Gmail נכשלה')), { status: response.status })
   return apiJson(request, { messages: (body.messages || []).map(normalizeGmailMessage) })
@@ -774,6 +781,8 @@ async function handleGmailSend(request, env, config) {
   })
   const result = await response.json()
   if (!response.ok) throw Object.assign(new Error(localizedExternalError(result.error?.message, 'שליחת Gmail נכשלה')), { status: response.status })
+  // Delivery already succeeded: cache failures must never invite a duplicate send.
+  try { await env.CONFIG.put(`google-read-epoch:${user.id}`, crypto.randomUUID()) } catch { console.error('Sent Gmail cache invalidation pending') }
   let associationSaved = !projectContext
   if (projectContext) {
     try {
@@ -1040,6 +1049,7 @@ async function handleDriveSharing(request, env, config) {
   const url = new URL(request.url)
   const body = request.method === 'GET' ? Object.fromEntries(url.searchParams) : await parseBody(request)
   if (!/^[a-zA-Z0-9_-]{1,200}$/.test(body.fileId || '') || !body.projectId) throw Object.assign(new Error('מזהה קובץ לא תקין'), { status: 400 })
+  await requireOrgAreaAction(request, env, config, user, body.orgId, 'files', [request.method === 'GET' ? 'view' : 'edit'])
   // Reuse the filtered workspace RPC to verify project scope before touching Drive.
   await mailProjectContext(request, env, config, user, { orgId: body.orgId, projectId: body.projectId })
   const folder = await projectDriveContent(request, env, config, user, body.projectId, body.fileId)
@@ -1068,6 +1078,46 @@ async function handleDriveSharing(request, env, config) {
   if (request.method === 'POST') await env.CONFIG.put(`drive-share:${user.id}:${body.fileId}:${result.id}`, JSON.stringify({ projectId: body.projectId, at: new Date().toISOString() }))
   if (request.method === 'GET') result.permissions = await Promise.all((result.permissions || []).map(async permission => ({ ...permission, canRevoke: Boolean(await env.CONFIG.get(`drive-share:${user.id}:${body.fileId}:${permission.id}`, 'json')) && !(permission.permissionDetails || []).some(detail => detail.inherited) })))
   return apiJson(request, result)
+}
+
+async function handleDriveRename(request, env, config) {
+  const user = await requireGoogleAreaAction(request, env, config, 'files', 'edit')
+  const body = await parseBody(request)
+  const name = cleanString(body.name)
+  if (!/^[a-zA-Z0-9_-]{1,200}$/.test(body.fileId || '') || !name || name.length > 255) throw Object.assign(new Error('שם קובץ או מזהה לא תקינים'), { status: 400 })
+  await requireOrgAreaAction(request, env, config, user, body.orgId, 'files', ['edit'])
+  await mailProjectContext(request, env, config, user, body)
+  const folder = await projectDriveContent(request, env, config, user, body.projectId, body.fileId)
+  if (folder.readOnly || body.fileId === folder.id) throw Object.assign(new Error('לא ניתן לשנות קובץ בתיקייה לקריאה בלבד או את תיקיית הפרויקט'), { status: 403 })
+  await assertDriveWritable(env, config, user.id, body.fileId)
+  const response = await googleFetch(env, config, user.id, `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(body.fileId)}?supportsAllDrives=true&fields=id,name,mimeType,modifiedTime,webViewLink,size`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name }) })
+  if (!response.ok) throw Object.assign(new Error('שינוי שם הקובץ ב-Drive נכשל. בדקו הרשאת עריכה לקובץ'), { status: response.status })
+  const file = await response.json()
+  try { await env.CONFIG.put(`google-read-epoch:${user.id}`, crypto.randomUUID()) } catch { console.error('Drive rename cache invalidation pending') }
+  return apiJson(request, { file })
+}
+
+async function handleTaskComments(request, env, config) {
+  const user = await getAuthenticatedUser(request, env, config)
+  const body = request.method === 'GET' ? Object.fromEntries(new URL(request.url).searchParams) : await parseBody(request)
+  if (!/^[a-zA-Z0-9_-]{1,160}$/.test(body.taskId || '') || !/^[a-zA-Z0-9_-]{1,160}$/.test(body.orgId || '')) throw Object.assign(new Error('שיוך משימה לא תקין'), { status: 400 })
+  await requireOrgAreaAction(request, env, config, user, body.orgId, 'tasks', request.method === 'POST' ? ['status', 'edit'] : ['view'])
+  // Use the caller's JWT and filtered RPC, never a service-role document read.
+  const response = await fetch(`${config.supabaseUrl.replace(/\/$/, '')}/rest/v1/rpc/get_workspace_state`, { method: 'POST', headers: { authorization: request.headers.get('authorization'), apikey: config.supabaseAnonKey, 'content-type': 'application/json' }, body: JSON.stringify({ target_org: body.orgId }) })
+  if (!response.ok) throw Object.assign(new Error('אין גישה למשימה'), { status: 403 })
+  const rows = await response.json(); const state = (Array.isArray(rows) ? rows[0] : rows)?.data
+  if (!state?.tasks?.some(task => task.id === body.taskId)) throw Object.assign(new Error('אין גישה למשימה'), { status: 403 })
+  const prefix = `task-comment:${body.orgId}:${body.taskId}:`
+  if (request.method === 'POST') {
+    const text = cleanString(body.body)
+    if (!text || text.length > 4000) throw Object.assign(new Error('תגובה נדרשת, עד 4000 תווים'), { status: 400 })
+    const comment = { id: crypto.randomUUID(), body: text, authorId: user.id, at: new Date().toISOString() }
+    await env.CONFIG.put(prefix + comment.at + ':' + comment.id, JSON.stringify(comment))
+    return apiJson(request, { comment })
+  }
+  const page = await env.CONFIG.list({ prefix, limit: 100, ...(body.cursor ? { cursor: body.cursor } : {}) })
+  const comments = (await Promise.all(page.keys.map(key => env.CONFIG.get(key.name, 'json')))).filter(Boolean)
+  return apiJson(request, { comments, cursor: page.list_complete ? '' : page.cursor })
 }
 
 async function handleDriveCategory(request, env, config) {
@@ -1129,6 +1179,7 @@ async function handleDriveUpload(request, env, config) {
   const body = await parseBody(request); const kind = body.kind === 'report' ? 'report' : 'file'
   const user = await requireGoogleAreaAction(request, env, config, 'files', 'create')
   if (kind === 'report') await requireAreaAction(request, env, config, 'reports', 'view')
+  if (body.orgId) { await requireOrgAreaAction(request, env, config, user, body.orgId, 'files', ['create']); await mailProjectContext(request, env, config, user, body) }
   return apiJson(request, await uploadGoogleDriveFile(env, config, user.id, body))
 }
 
@@ -1503,6 +1554,7 @@ async function routeApi(request, env) {
   if (request.method === 'GET' && ['/api/google/gmail/thread', '/api/google/gmail/search', '/api/google/gmail/contacts', '/api/google/calendar/contacts', '/api/google/calendar/events', '/api/google/drive/files', '/api/google/drive/folders'].includes(path)) config = { ...config, dailyGoogleRead: true, forceGoogleRead: url.searchParams.get('force') === 'true' }
 
   if (path === '/api/public-config' && request.method === 'GET') return apiJson(request, publicConfig(config))
+  if (path === '/api/task-comments' && ['GET', 'POST'].includes(request.method)) return handleTaskComments(request, env, config)
   if (path === '/api/admin/bootstrap' && request.method === 'POST') return handleAdminBootstrap(request, env)
   if (path === '/api/google/callback' && request.method === 'GET') return handleGoogleCallback(request, env, config)
   if (path === '/api/admin/config') return handleAdminConfig(request, env, config)
@@ -1542,6 +1594,7 @@ async function routeApi(request, env) {
   if (path === '/api/google/drive/project-folder' && ['GET', 'DELETE'].includes(request.method)) return handleDriveProjectFolderRead(request, env, config)
   if (path === '/api/google/drive/project-folder' && request.method === 'POST') return handleDriveProjectFolder(request, env, config)
   if (path === '/api/google/drive/files' && request.method === 'GET') return handleDriveFiles(request, env, config)
+  if (path === '/api/google/drive/rename' && request.method === 'PATCH') return handleDriveRename(request, env, config)
   if (path === '/api/google/drive/sharing' && ['GET','POST','DELETE'].includes(request.method)) return handleDriveSharing(request, env, config)
   if (path === '/api/google/drive/category' && request.method === 'POST') return handleDriveCategory(request, env, config)
   if (path === '/api/google/drive/folders' && request.method === 'GET') return handleDriveFolders(request, env, config)
@@ -1603,9 +1656,11 @@ export default {
       if (env.ASSETS) return env.ASSETS.fetch(request)
       return new Response('RAMeng CRM', { status: 200 })
     } catch (error) {
-      console.error(error)
-      const status = Number(error?.status || 500)
-      const message = error instanceof Error ? error.message : 'הפעולה נכשלה.'
+      const requestedStatus = Number(error?.status || 500)
+      const status = Number.isInteger(requestedStatus) && requestedStatus >= 400 && requestedStatus <= 599 ? requestedStatus : 500
+      // Provider exceptions can contain tokens or message content. Log metadata only.
+      console.error('API request failed', { status, path: new URL(request.url).pathname })
+      const message = status === 500 ? 'הפעולה נכשלה. נסו שוב מאוחר יותר.' : error instanceof Error ? error.message : 'הפעולה נכשלה.'
       return apiJson(request, { error: message }, status)
     }
   },

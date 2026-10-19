@@ -1,6 +1,7 @@
 const { app, BrowserWindow, Menu, ipcMain, net, shell } = require('electron')
 const fs = require('node:fs')
 const path = require('node:path')
+const { openPdfInFoxit } = require('./pdf.cjs')
 
 let mainWindow = null
 
@@ -137,6 +138,14 @@ function createWindow() {
 }
 
 ipcMain.handle('desktop:get-config', () => readConfig())
+ipcMain.handle('desktop:open-pdf', async (event, url, name) => {
+  const configured = readConfig().serverUrl
+  if (!configured || !event.senderFrame || new URL(event.senderFrame.url).origin !== new URL(configured).origin) throw new Error('הפעולה מותרת רק מתוך מערכת ה-CRM')
+  const response = await net.fetch(`${configured}/api/public-config`)
+  if (!response.ok) throw new Error('לא ניתן לאמת את שרת הקבצים')
+  const config = await response.json()
+  await openPdfInFoxit({ url, name, storageOrigin: config.supabaseUrl, directory: path.join(app.getPath('userData'), 'pdf-cache'), fetch: net.fetch })
+})
 ipcMain.handle('desktop:test-server', async (event, serverUrl) => {
   if (!senderIsSetup(event)) throw new Error('הפעולה מותרת רק ממסך ההגדרה')
   return testServer(serverUrl)

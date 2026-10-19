@@ -5,6 +5,8 @@ export interface TaskReportOptions {
   templateId?: string
   inspector?: string
   date?: string
+  periodStart?: string
+  periodEnd?: string
 }
 
 /** Create an editable, attributed snapshot from explicitly selected project tasks.
@@ -19,6 +21,7 @@ export function createReportFromTasks(
 ): InspectionReport {
   const project = workspace.projects.find((item) => item.id === projectId)
   if (!project) throw new Error('הפרויקט אינו קיים')
+  if (options.periodStart && options.periodEnd && options.periodStart > options.periodEnd) throw new Error('תאריך סיום התקופה חייב להיות אחרי תאריך ההתחלה')
   const taskIds = [...new Set(selectedIds)]
   const tasks = taskIds.map((id) => workspace.tasks.find((item) => item.id === id && item.projectId === projectId)).filter((task) => task !== undefined)
   if (!tasks.length) throw new Error('יש לבחור משימות מהפרויקט')
@@ -43,6 +46,8 @@ export function createReportFromTasks(
     section.items.push({
       id: generateId('issue'),
       sourceTaskId: task.id,
+      sourceTaskStatus: task.status,
+      dueDate: task.dueDate,
       description: details,
       status: ['בוצע', 'סגור'].includes(task.status) ? 'בוצע' : task.status === 'בוצע חלקית' ? 'בוצע חלקית' : 'פתוח',
       treatment: '',
@@ -59,6 +64,8 @@ export function createReportFromTasks(
     updatedAt: new Date().toISOString(),
     inspector: options.inspector || workspace.settings.defaultInspector || '',
     layout: template?.layout || 'table',
+    periodStart: options.periodStart || undefined,
+    periodEnd: options.periodEnd || undefined,
     sections,
   }
 }

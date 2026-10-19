@@ -5,7 +5,7 @@ export type ContactStatus = 'ליד' | 'פעיל' | 'בהמתנה' | 'לא פע�
 export type DealStage = 'חדש' | 'פגישה' | 'הצעה' | 'משא ומתן' | 'זכייה' | 'נסגר'
 export type QuoteStatus = 'טיוטה' | 'נשלחה' | 'אושרה' | 'נדחתה' | 'שולמה חלקית' | 'שולמה'
 export type ReportLayout = 'table' | 'cards' | 'photo'
-export type TaskColumnType = 'text' | 'date' | 'status' | 'member' | 'email' | 'priority'
+export type TaskColumnType = 'text' | 'date' | 'time' | 'status' | 'member' | 'email' | 'priority'
 
 export interface Contact {
   id: ID
@@ -69,6 +69,7 @@ export interface Task {
   status: string
   priority: Priority
   startDate?: string
+  scheduledTime?: string
   dueDate?: string
   followUpDate?: string
   emailTo?: string
@@ -103,6 +104,9 @@ export interface FileRecord {
   type?: string
   size?: number
   categoryIds?: ID[]
+  planStatus?: string
+  planUpdatedAt?: string
+  previousVersions?: { name: string; url: string; storagePath?: string; type?: string; size?: number; version: number; uploadedAt: string }[]
   version: number
   uploadedAt: string
 }
@@ -137,6 +141,7 @@ export interface TaskColumn {
   visible: boolean
   removable: boolean
   width?: number
+  widthPercent?: number
   options?: string[]
 }
 
@@ -162,6 +167,8 @@ export interface InspectionPhoto {
 export interface InspectionItem {
   id: ID
   sourceTaskId?: ID
+  sourceTaskStatus?: string
+  dueDate?: string
   description: string
   status: string
   treatment: string
@@ -187,6 +194,8 @@ export interface InspectionReport {
   layout: ReportLayout
   sections: InspectionSection[]
   notes?: string
+  periodStart?: string
+  periodEnd?: string
 }
 
 export interface ReportTemplate {

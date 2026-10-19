@@ -7,7 +7,7 @@ export const uid = (prefix = 'id') => `${prefix}-${Date.now()}-${Math.random().t
 export const nowIso = () => new Date().toISOString()
 export const dateInput = (value?: string) => value ? value.slice(0, 10) : ''
 export const dateLabel = (value?: string) => value ? new Intl.DateTimeFormat('he-IL', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(value)) : 'ללא תאריך'
-export const dateTimeLabel = (value?: string) => value ? new Intl.DateTimeFormat('he-IL', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value)) : ''
+export const dateTimeLabel = (value?: string) => value ? new Intl.DateTimeFormat('he-IL', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Asia/Jerusalem' }).format(new Date(value)) : ''
 export const money = (value = 0) => new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 }).format(value)
 
 export function StoredImage({ photo, alt }: { photo: { url: string; storagePath?: string }; alt: string }) {
@@ -43,14 +43,39 @@ export function StoredFileLink({ file, className, children }: { file: FileRecord
   return <a className={className} href={resolvedUrl} target="_blank" rel="noreferrer" aria-label={`פתיחת הקובץ ${file.name}`}>{children}</a>
 }
 
+export function PdfReaderButton({ file }: { file: FileRecord }) {
+  const [busy, setBusy] = useState(false)
+  const [notice, setNotice] = useState('')
+  const desktop = !!window.ramengDesktop?.openPdfInFoxit
+  if (file.type !== 'application/pdf' && !/\.pdf$/i.test(file.name)) return null
+  return <div className="pdf-reader-action"><button type="button" className="secondary" disabled={busy} onClick={() => {
+    setBusy(true); setNotice('')
+    void (async () => {
+      const url = file.storagePath ? await refreshSignedUrl(file.storagePath) : file.url
+      if (!url) throw new Error('לא ניתן ליצור קישור לקובץ')
+      if (desktop) { await window.ramengDesktop!.openPdfInFoxit!(url, file.name); return }
+      const response = await fetch(url)
+      if (!response.ok) throw new Error('הורדת ה-PDF נכשלה')
+      const blob = await response.blob()
+      if (!(await blob.slice(0, 5).text()).startsWith('%PDF-')) throw new Error('הקישור אינו מכיל קובץ PDF. פתחו את הקובץ בקישור הרגיל להורדה מהמקור.')
+      const objectUrl = URL.createObjectURL(blob)
+      const link = document.createElement('a'); link.href = objectUrl; link.download = file.name; link.click()
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60000)
+      setNotice('הקובץ הורד. פתחו אותו באמצעות Foxit Reader. לפתיחה קבועה ב-Foxit הגדירו אותו כברירת המחדל לקובצי PDF ב-Windows.')
+    })().catch(error => setNotice(error instanceof Error ? error.message : 'פתיחת ה-PDF נכשלה')).finally(() => setBusy(false))
+  }}>{busy ? 'מכין PDF...' : desktop ? 'פתיחה ב-Foxit Reader' : 'הורדת PDF ל-Foxit Reader'}</button>{notice && <small role="status">{notice}</small>}</div>
+}
+
 export function Modal({ title, children, onClose, wide = false }: { title: string; children: ReactNode; onClose: () => void; wide?: boolean }) {
   const titleId = useId()
   const dialogRef = useRef<HTMLElement>(null)
+  // Capture before React applies autoFocus inside the newly mounted dialog.
+  const returnFocusRef = useRef(typeof document !== 'undefined' && document.activeElement instanceof HTMLElement ? document.activeElement : null)
   const onCloseRef = useRef(onClose)
   onCloseRef.current = onClose
 
   useEffect(() => {
-    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const previous = returnFocusRef.current
     const oldOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
     const onKeyDown = (event: KeyboardEvent) => {
@@ -65,12 +90,13 @@ export function Modal({ title, children, onClose, wide = false }: { title: strin
       }
     }
     document.addEventListener('keydown', onKeyDown)
-    window.setTimeout(() => {
+    const focusTimer = window.setTimeout(() => {
       const target = dialogRef.current?.querySelector<HTMLElement>('.modal-content input:not([disabled]):not([type="hidden"]), .modal-content select:not([disabled]), .modal-content textarea:not([disabled]), .modal-content button:not([disabled])')
         || dialogRef.current?.querySelector<HTMLElement>('button:not([disabled])')
       target?.focus()
     }, 0)
     return () => {
+      window.clearTimeout(focusTimer)
       document.removeEventListener('keydown', onKeyDown)
       document.body.style.overflow = oldOverflow
       previous?.focus()

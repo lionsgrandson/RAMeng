@@ -2,7 +2,8 @@ import { cloneWorkspace } from '/src/seed'
 const params = new URLSearchParams(location.search)
 const role = params.get('qaRole') || 'developer'
 const taskCount = params.has('qaTasks') ? Math.min(500, Math.max(0, Number(params.get('qaTasks')) || 0)) : null
-const key = `rameng-qa-${role}${taskCount === null ? '' : `-tasks-${taskCount}`}`
+const contactCount = params.has('qaContacts') ? Math.min(500, Math.max(0, Number(params.get('qaContacts')) || 0)) : null
+const key = `rameng-qa-${role}${taskCount === null ? '' : `-tasks-${taskCount}`}${contactCount === null ? '' : `-contacts-${contactCount}`}`
 const versionKey = `${key}-version`
 let authListener: ((event: string, session: unknown) => void) | undefined
 let failedSave = false
@@ -29,11 +30,18 @@ export async function loadOrganizationWorkspace() {
   const cached = JSON.parse(localStorage.getItem(key) || 'null')
   const workspace = { ...cloneWorkspace(), ...(cached || {}) }
   if (!cached && !workspace.contacts.length) workspace.contacts = [{ id: 'qa-client', name: 'לקוח בדיקה', email: 'client@example.test', status: 'פעיל', tags: [], createdAt: '2026-10-04T09:00:00Z' }]
+  if (!cached && contactCount !== null) workspace.contacts = Array.from({ length: contactCount }, (_, index) => ({ id: index === 0 ? 'qa-client' : `qa-client-${index}`, name: `איש קשר ${index + 1} — English / עברית`, email: `contact-${index + 1}@example.test`, company: 'חברה לבדיקה / QA', phone: '02-1234567', status: 'פעיל', tags: [], createdAt: '2026-10-04T09:00:00Z' }))
   if (!cached && !workspace.projects.length) workspace.projects = [{ id: 'qa-project', name: 'פרויקט בדיקה', address: 'רחוב בדיקה 10, ירושלים', clientIds: ['qa-client'], status: 'בביצוע', progress: 20, createdAt: '2026-10-04T09:00:00Z' }]
   if (!cached && !workspace.tasks.length) workspace.tasks = [{ id: 'qa-task', title: 'משימת בדיקה', projectId: 'qa-project', status: 'דורש מעקב', priority: 'דחופה', custom: {}, order: 1, createdAt: '2026-10-04T09:00:00Z' }]
   if (!cached && taskCount !== null) workspace.tasks = Array.from({ length: taskCount }, (_, index) => ({ id: `qa-stress-${index}`, title: `משימת בדיקה ${index + 1} — Hebrew / English`, projectId: 'qa-project', status: index % 5 === 0 ? 'בוצע' : 'טרם התחיל', priority: 'רגילה', order: index + 1, createdAt: '2026-10-04T09:00:00Z', ...(index % 5 === 0 ? { completedAt: '2026-10-05T09:00:00Z' } : {}) }))
   if (!cached && !workspace.files.length) workspace.files = [{ id: 'qa-file', projectId: 'qa-project', name: 'QA-attachment.txt', url: 'data:text/plain;base64,UkFNIENSTSBkaXNwb3NhYmxlIGF0dGFjaG1lbnQ=', type: 'text/plain', size: 29, version: 1, uploadedAt: '2026-10-05T09:00:00Z' }]
   if (!cached && !workspace.reports.length) workspace.reports = [{ id: 'qa-report', projectId: 'qa-project', title: 'דוח בדיקה', siteAddress: 'רחוב בדיקה 10, ירושלים', inspectionDate: '2026-10-04', updatedAt: '2026-10-04T09:00:00Z', inspector: 'בודק QA', layout: 'table', sections: [{ id: 'qa-section', title: 'בנייה', items: [{ id: 'qa-item', description: 'סעיף בדיקה', status: 'פתוח', treatment: '', photos: [] }] }] }]
+  if (role === 'external') {
+    if (!cached) workspace.tasks = [{ id: 'qa-assigned', title: 'משימה חיצונית לבדיקה', projectId: 'qa-project', assigneeId: 'qa-external', status: 'בטיפול', priority: 'רגילה', custom: {}, order: 1, createdAt: '2026-10-12T09:00:00Z' }]
+    workspace.tasks = workspace.tasks.filter(task => task.assigneeId === 'qa-external')
+    workspace.projects = workspace.projects.filter(project => workspace.tasks.some(task => task.projectId === project.id))
+    workspace.contacts = []; workspace.files = []; workspace.events = []; workspace.reports = []; workspace.quotes = []; workspace.deals = []; workspace.audit = []
+  }
   const permissions = role === 'status' ? { tasks: { status: true }, reports: { status: true } } : role === 'restricted' ? { contacts: { view: false }, projects: { view: false }, finance: { view: false } } : null
   return { orgId: 'qa', role: ['status', 'restricted'].includes(role) ? 'viewer' : role, permissions, workspace, version: Number(localStorage.getItem(versionKey) || 0) }
 }

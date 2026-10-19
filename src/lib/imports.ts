@@ -3,6 +3,33 @@ import { normalizeContactCategories } from './contactCategories'
 
 const dateColumns = ['תאריך התחלה', 'תאריך סיום', 'מועד מעקב']
 const cleanText = (value: unknown) => String(value ?? '').replace(/[\u200e\u200f\u202a-\u202e\ufeff]/g, '').trim()
+const taskAliases: Record<string, string[]> = {
+  'משימה': ['משימה', 'title', 'task'],
+  'פרויקט': ['פרויקט', 'שם פרויקט', 'project', 'projectid', 'project id'],
+  'סטטוס': ['סטטוס', 'status'],
+  'הערות': ['הערות', 'notes', 'description'],
+  'תאריך התחלה': ['תאריך התחלה', 'start date', 'startdate'],
+  'תאריך סיום': ['תאריך סיום', 'תאריך יעד', 'due date', 'duedate'],
+  'מועד מעקב': ['מועד מעקב', 'follow up date', 'followupdate'],
+  'מייל': ['מייל', 'email', 'emailto'],
+}
+
+export function validateImportFile(file: { name: string; size: number }) {
+  if (!/\.(xlsx?|csv)$/i.test(file.name)) throw new Error('יש לבחור קובץ Excel או CSV')
+  if (!file.size) throw new Error('הקובץ ריק')
+  if (file.size > 10 * 1024 * 1024) throw new Error('גודל קובץ מרבי לייבוא: 10 MB')
+}
+
+function normalizeTaskRow(row: Record<string, unknown>) {
+  const result: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(row)) {
+    const normalized = cleanText(key).toLowerCase()
+    const canonical = Object.keys(taskAliases).find(name => taskAliases[name].includes(normalized)) || cleanText(key)
+    if (result[canonical] !== undefined && result[canonical] !== '' && value !== '' && String(result[canonical]) !== String(value)) throw new Error(`עמודות סותרות: ${canonical}`)
+    if (value !== '' || result[canonical] === undefined) result[canonical] = value
+  }
+  return result
+}
 const aliases = {
   name: ['שם', 'שם מלא', 'name'], company: ['חברה', 'שם חברה', 'company'],
   phone: ['טלפון', 'phone'], mobile: ['נייד', 'mobile'], email: ['מייל', 'email'],
@@ -88,7 +115,17 @@ export async function readImportRows(buffer: ArrayBuffer, csv: boolean, kind: 'c
     if (firstHeader < 0) continue
     recognizedSheets++
     const headerRow = firstHeader + XLSX.utils.decode_range(sheet['!ref']).s.r
-    rows.push(...XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '', range: headerRow }))
+    const parsed = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '', range: headerRow })
+    for (const original of parsed) {
+      const row = kind === 'tasks' ? normalizeTaskRow(original) : original
+      if (kind === 'tasks') {
+        const title = cleanText(row['משימה'])
+        if (!title || taskAliases['משימה'].includes(title.toLowerCase())) continue
+        row['משימה'] = title
+      }
+      rows.push(row)
+      if (rows.length > 20000) throw new Error('ניתן לייבא עד 20,000 רשומות בכל פעם')
+    }
   }
   if (!recognizedSheets) throw new Error(kind === 'contacts' ? 'לא נמצאה שורת כותרות עם עמודת שם או Name' : 'לא נמצאה עמודת משימה, title או Task')
   if (!rows.length) throw new Error('לא נמצאו שורות לייבוא')

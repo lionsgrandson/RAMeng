@@ -23,13 +23,13 @@ if errorlevel 1 (
 )
 
 echo [1/8] Installing frontend dependencies...
-call npm install
+call npm ci
 if errorlevel 1 goto :fail
 
 echo.
 echo [2/8] Installing Cloudflare Worker dependencies...
 pushd worker
-call npm install
+call npm ci
 if errorlevel 1 (
   popd
   goto :fail
@@ -50,13 +50,19 @@ popd
 
 echo.
 echo [4/8] Building CRM...
+call npm run lint
+if errorlevel 1 goto :fail
+call npm test
+if errorlevel 1 goto :fail
+node --check worker/src/index.js
+if errorlevel 1 goto :fail
 call npm run build
 if errorlevel 1 goto :fail
 
 echo.
 echo [5/8] Deploying to Cloudflare...
 pushd worker
-call npx wrangler deploy
+call npx wrangler deploy --profile rameng
 if errorlevel 1 (
   popd
   goto :fail
@@ -67,12 +73,12 @@ echo.
 echo [6/8] Checking required Worker secrets...
 pushd worker
 set "SECRET_LIST=%TEMP%\rameng-worker-secrets.txt"
-call npx wrangler secret list > "%SECRET_LIST%" 2>nul
+call npx wrangler secret list --profile rameng > "%SECRET_LIST%" 2>nul
 findstr /I /C:"ADMIN_SETUP_TOKEN" "%SECRET_LIST%" >nul 2>nul
 if errorlevel 1 (
   echo ADMIN_SETUP_TOKEN is not configured yet.
   echo Paste a long random token when Wrangler asks for the value.
-  call npx wrangler secret put ADMIN_SETUP_TOKEN
+  call npx wrangler secret put ADMIN_SETUP_TOKEN --profile rameng
   if errorlevel 1 (
     popd
     goto :fail
@@ -81,7 +87,7 @@ if errorlevel 1 (
   echo [OK] ADMIN_SETUP_TOKEN already exists.
   set /p UPDATE_SETUP="Update ADMIN_SETUP_TOKEN? [Y/N]: "
   if /I "%UPDATE_SETUP%"=="Y" (
-    call npx wrangler secret put ADMIN_SETUP_TOKEN
+    call npx wrangler secret put ADMIN_SETUP_TOKEN --profile rameng
     if errorlevel 1 (
       popd
       goto :fail
@@ -95,7 +101,7 @@ if errorlevel 1 (
   echo SUPABASE_SECRET_KEY is not configured yet.
   echo Paste the Supabase sb_secret_ key from the CLIENT project.
   echo This key stays only in Cloudflare Worker secrets.
-  call npx wrangler secret put SUPABASE_SECRET_KEY
+  call npx wrangler secret put SUPABASE_SECRET_KEY --profile rameng
   if errorlevel 1 (
     popd
     goto :fail
@@ -104,7 +110,7 @@ if errorlevel 1 (
   echo [OK] SUPABASE_SECRET_KEY already exists.
   set /p UPDATE_SUPABASE="Update SUPABASE_SECRET_KEY? [Y/N]: "
   if /I "%UPDATE_SUPABASE%"=="Y" (
-    call npx wrangler secret put SUPABASE_SECRET_KEY
+    call npx wrangler secret put SUPABASE_SECRET_KEY --profile rameng
     if errorlevel 1 (
       popd
       goto :fail
