@@ -25,8 +25,8 @@ async function scenario(name, action, query = '', route = 'tasks') {
   // Fixtures must not make any requests to production or Google services.
   await page.route('**/*', request => new URL(request.request().url()).origin === base ? request.continue() : request.abort())
   try {
-    await page.goto(`${base}/${query}#app?page=${route}`, { waitUntil: 'domcontentloaded' })
-    await page.locator('.topbar, .external-task-page').waitFor({ state: 'visible' })
+    await page.goto(route === '__auth' ? `${base}/tests/fixtures/auth.html` : `${base}/${query}#app?page=${route}`, { waitUntil: 'domcontentloaded' })
+    await page.locator('.topbar, .external-task-page, .auth-screen').waitFor({ state: 'visible' })
     await action(page)
     assert.deepEqual(errors, [])
     results.push({ name, passed: true }); console.log(`PASS ${name}`)
@@ -36,6 +36,17 @@ async function scenario(name, action, query = '', route = 'tasks') {
   } finally { await context.close() }
 }
 try {
+  for (const width of [320, 360, 390, 768, 1024, 1440, 1920]) await scenario(`login and reset layout at ${width}px`, async page => {
+    await page.setViewportSize({ width, height: 950 })
+    await page.getByLabel('מייל', { exact: true }).fill('qa@example.test')
+    await page.getByLabel('סיסמה', { exact: true }).waitFor()
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
+    await page.getByRole('button', { name: 'שכחתי סיסמה', exact: true }).click()
+    await page.getByRole('button', { name: 'שליחת קישור', exact: true }).click()
+    await page.getByText('אם קיים חשבון עם המייל הזה, נשלח אליו קישור להגדרת סיסמה חדשה.', { exact: true }).waitFor()
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
+    await page.screenshot({ path: `artifacts/audit/auth-${width}.png`, fullPage: true })
+  }, '', '__auth')
   for (const width of [320, 360, 390, 768, 1024, 1440, 1920]) await scenario(`task interactions and overflow at ${width}px`, async page => {
     await page.setViewportSize({ width, height: 950 })
     await page.getByRole('button', { name: 'משימה חדשה', exact: true }).click()

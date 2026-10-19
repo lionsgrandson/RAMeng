@@ -17,5 +17,6 @@ export default defineConfig({
   }],
   envDir: fileURLToPath(new URL('./fixtures', import.meta.url)),
   cacheDir: 'node_modules/.vite-qa',
+  build: { rollupOptions: { input: ['index.html', 'tests/fixtures/auth.html'] } },
   server: { host: '127.0.0.1', port: 4175, strictPort: true },
 })
