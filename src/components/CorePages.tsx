@@ -3,7 +3,7 @@ import { AlertTriangle, ArrowLeft, ArrowRight, BriefcaseBusiness, CalendarDays, 
 import type { Contact, Deal, DealStage, Quote, Task, TeamMember, Workspace } from '../types'
 import { integrationsApi } from '../lib/api'
 import { ContactTags, ContactFields, contactFormDetails } from './ContactFields'
-import { appendUniqueContacts, appendUniqueTasks, mapContactImportRows, readImportRows } from '../lib/imports'
+import { appendUniqueContacts, appendUniqueTasks, mapContactImportRows, readImportRows, resolveTaskProjectReference } from '../lib/imports'
 import { Chip, EmptyState, Field, Modal, dateLabel, money, nowIso, uid } from './common'
 
 type DashboardPage = 'clients' | 'projects' | 'tasks' | 'calendar' | 'reports'
@@ -95,15 +95,16 @@ export function ImportCenter({ workspace, setWorkspace, canImport }: { workspace
         const tasks: Task[] = rows.map((row, index): Task | null => {
           const title = String(row['משימה'] || row.title || row.Task || '').trim()
           if (!title) return null
-          const projectReference = String(row['projectId'] || row['פרויקט'] || row['שם פרויקט'] || row['project'] || '').trim()
-          const matches = projectReference ? workspace.projects.filter((project) => project.id === projectReference || project.name.trim() === projectReference) : []
-          if (projectReference && matches.length !== 1) {
-            throw new Error(`לא נמצא פרויקט יחיד עבור "${projectReference}" (שורה ${index + 2}). יש לתקן את הקובץ לפני הייבוא.`)
-          }
+          const projectReference = row['projectId'] || row['פרויקט'] || row['שם פרויקט'] || row['project'] || ''
+          let projectId: string | undefined
+          try { projectId = resolveTaskProjectReference(workspace.projects, projectReference) }
+          catch (e) { throw new Error(`רשומה ${index + 1}: ${e instanceof Error ? e.message : 'פרויקט לא תקין'}`) }
+          const status = String(row['סטטוס'] || 'טרם התחיל').trim()
+          if (!workspace.taskStatuses.includes(status)) throw new Error(`רשומה ${index + 1}: הסטטוס "${status}" אינו מוגדר. יש להוסיף אותו בהגדרות המשימות לפני הייבוא.`)
           return {
-            id: uid('task'), projectId: matches[0]?.id, title,
+            id: uid('task'), projectId, title,
             description: String(row['הערות'] || row.notes || ''),
-            status: String(row['סטטוס'] || 'טרם התחיל'), priority: 'רגילה',
+            status, priority: 'רגילה',
             startDate: String(row['תאריך התחלה'] || '') || undefined,
             dueDate: String(row['תאריך סיום'] || '') || undefined,
             followUpDate: String(row['מועד מעקב'] || '') || undefined,
