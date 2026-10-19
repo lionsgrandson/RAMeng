@@ -74,7 +74,7 @@ export async function readImportRows(buffer: ArrayBuffer, csv: boolean, kind: 'c
     const sheet = workbook.Sheets[sheetName]
     if (!sheet?.['!ref']) continue
     const grid = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '' })
-    const headers = kind === 'contacts' ? aliases.name : ['משימה', 'title', 'task']
+    const headers: readonly string[] = kind === 'contacts' ? aliases.name : ['משימה', 'title', 'task']
     const firstHeader = grid.findIndex((line) => line.some((cell) => headers.includes(cleanText(cell).toLowerCase())))
     if (firstHeader < 0) continue
     recognizedSheets++
