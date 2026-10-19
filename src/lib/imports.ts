@@ -1,4 +1,4 @@
-import type { Contact, Task } from '../types'
+import type { Contact, Project, Task } from '../types'
 import { normalizeContactCategories } from './contactCategories'
 
 const dateColumns = ['תאריך התחלה', 'תאריך סיום', 'מועד מעקב']
@@ -38,6 +38,15 @@ export function appendUniqueContacts(existing: Contact[], incoming: Contact[]): 
   return { contacts: [...existing, ...added], added: added.length, skipped: incoming.length - added.length }
 }
 
+
+/** Resolve only unambiguous existing projects; never silently attach a task to the wrong site. */
+export function resolveTaskProjectReference(projects: Pick<Project, 'id' | 'name'>[], reference: unknown): string | undefined {
+  const query = cleanText(reference)
+  if (!query) return undefined
+  const matches = projects.filter((project) => project.id === query || cleanText(project.name) === query)
+  if (matches.length !== 1) throw new Error(matches.length ? `נמצאו מספר פרויקטים בשם "${query}"` : `לא נמצא פרויקט בשם או מזהה "${query}"`)
+  return matches[0].id
+}
 
 /** Match only stable imported task fields, not mutable status or assignment.
  * Existing tasks retain their IDs, history and current status on repeated imports.
