@@ -1,4 +1,4 @@
-import type { Contact } from '../types'
+import type { Contact, Task } from '../types'
 import { normalizeContactCategories } from './contactCategories'
 
 const dateColumns = ['תאריך התחלה', 'תאריך סיום', 'מועד מעקב']
@@ -38,22 +38,50 @@ export function appendUniqueContacts(existing: Contact[], incoming: Contact[]): 
   return { contacts: [...existing, ...added], added: added.length, skipped: incoming.length - added.length }
 }
 
+
+/** Match only stable imported task fields, not mutable status or assignment.
+ * Existing tasks retain their IDs, history and current status on repeated imports.
+ */
+export function appendUniqueTasks(existing: Task[], incoming: Task[]): { tasks: Task[]; added: number; skipped: number } {
+  const normalized = (value: unknown) => cleanText(value).replace(/\s+/g, ' ').toLocaleLowerCase()
+  const identity = (task: Task) => JSON.stringify([
+    normalized(task.projectId), normalized(task.title), normalized(task.description),
+    normalized(task.startDate), normalized(task.dueDate), normalized(task.followUpDate),
+    normalized(task.emailTo),
+  ])
+  const seen = new Set(existing.map(identity))
+  const added: Task[] = []
+  for (const task of incoming) {
+    if (!task.title.trim()) continue
+    const key = identity(task)
+    if (seen.has(key)) continue
+    seen.add(key)
+    added.push(task)
+  }
+  return { tasks: [...existing, ...added], added: added.length, skipped: incoming.length - added.length }
+}
+
 export async function readImportRows(buffer: ArrayBuffer, csv: boolean, kind: 'contacts' | 'tasks' = 'tasks'): Promise<Record<string, unknown>[]> {
   const XLSX = await import('@e965/xlsx')
   const workbook = csv
     ? XLSX.read(new TextDecoder('utf-8').decode(buffer), { type: 'string', raw: true })
     : XLSX.read(buffer, { type: 'array', cellDates: true })
-  const firstName = workbook.SheetNames[0]
-  if (!firstName) throw new Error('הקובץ לא מכיל גיליון נתונים')
-  const sheet = workbook.Sheets[firstName]
-  let headerRow = 0
-  if (kind === 'contacts') {
+  // Skip cover/instructions sheets and collect valid rows from every data worksheet.
+  // A file with no recognized column headers is rejected rather than silently imported.
+  const rows: Record<string, unknown>[] = []
+  let recognizedSheets = 0
+  for (const sheetName of workbook.SheetNames) {
+    const sheet = workbook.Sheets[sheetName]
+    if (!sheet?.['!ref']) continue
     const grid = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '' })
-    headerRow = grid.findIndex((row) => row.some((value) => (aliases.name as readonly string[]).includes(cleanText(value).toLowerCase())))
-    if (headerRow < 0) throw new Error('לא נמצאה שורת כותרות עם עמודת שם או Name')
-    headerRow += XLSX.utils.decode_range(sheet['!ref'] || 'A1').s.r
+    const headers = kind === 'contacts' ? aliases.name : ['משימה', 'title', 'task']
+    const firstHeader = grid.findIndex((line) => line.some((cell) => headers.includes(cleanText(cell).toLowerCase())))
+    if (firstHeader < 0) continue
+    recognizedSheets++
+    const headerRow = firstHeader + XLSX.utils.decode_range(sheet['!ref']).s.r
+    rows.push(...XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '', range: headerRow }))
   }
-  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '', ...(kind === 'contacts' ? { range: headerRow } : {}) })
+  if (!recognizedSheets) throw new Error(kind === 'contacts' ? 'לא נמצאה שורת כותרות עם עמודת שם או Name' : 'לא נמצאה עמודת משימה, title או Task')
   if (!rows.length) throw new Error('לא נמצאו שורות לייבוא')
   for (const row of rows) {
     for (const column of kind === 'tasks' ? dateColumns : []) {
