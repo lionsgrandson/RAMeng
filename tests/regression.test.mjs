@@ -1393,3 +1393,17 @@ test('organization user deletion cannot cascade into a different organization', 
   const response = await worker.fetch(request('/api/users/delete', { orgId: 'org', userId: '10000000-0000-4000-8000-000000000099' }), privateEnv)
   assert.equal(response.status, 409, (await response.text()) + JSON.stringify(calls)); assert.equal(deleted, false)
 })
+
+
+test('edit without delete cannot omit, null or replace nested report entities', () => {
+  const before = cloneWorkspace(); before.reports = [{ id: 'r', sections: [{ id: 's', items: [{ id: 'i', photos: [{ id: 'photo', url: 'private' }] }] }] }]
+  const permissions = normalizePermissions('viewer', { reports: { edit: true } })
+  for (const replacement of [undefined, null, {}, [], 'invalid']) {
+    const after = structuredClone(before)
+    if (replacement === undefined) delete after.reports[0].sections[0].items[0].photos
+    else after.reports[0].sections[0].items[0].photos = replacement
+    assert.match(workspaceMutationError(before, after, permissions, options), /מחיקה/)
+  }
+  const after = structuredClone(before); delete after.reports[0].sections
+  assert.match(workspaceMutationError(before, after, permissions, options), /מחיקה/)
+})

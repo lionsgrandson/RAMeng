@@ -155,6 +155,9 @@ function onlyStatusChanged(before: unknown, after: unknown, key = ''): boolean {
 function hasNestedEntityRemoval(before: unknown, after: unknown): boolean {
   if (JSON.stringify(before) === JSON.stringify(after)) return false
 
+  if (isObject(before) && !isObject(after) && typeof before.id !== 'undefined') return true
+  if (Array.isArray(before) && !Array.isArray(after)) return before.some(item => hasNestedEntityRemoval(item, undefined))
+
   if (Array.isArray(before) && Array.isArray(after)) {
     const identifiable = before.length > 0 && [...before, ...after].every((item) => isObject(item) && typeof item.id !== 'undefined')
     if (identifiable) {
@@ -168,16 +171,15 @@ function hasNestedEntityRemoval(before: unknown, after: unknown): boolean {
       return false
     }
 
-    const overlap = Math.min(before.length, after.length)
-    for (let index = 0; index < overlap; index += 1) {
+    for (let index = 0; index < before.length; index += 1) {
       if (hasNestedEntityRemoval(before[index], after[index])) return true
     }
     return false
   }
 
-  if (isObject(before) && isObject(after)) {
+  if (isObject(before)) {
     for (const key of Object.keys(before)) {
-      if (key in after && hasNestedEntityRemoval(before[key], after[key])) return true
+      if (hasNestedEntityRemoval(before[key], isObject(after) ? after[key] : undefined)) return true
     }
   }
 
