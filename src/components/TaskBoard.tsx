@@ -74,6 +74,9 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
   const [newColumn, setNewColumn] = useState('')
   const [newColumnType, setNewColumnType] = useState<TaskColumnType>('text')
   const [newStatus, setNewStatus] = useState('')
+  const [editingStatus, setEditingStatus] = useState('')
+  const [renamedStatus, setRenamedStatus] = useState('')
+  const coreStatuses = new Set(['טרם התחיל', 'בטיפול', 'ממתין לגורם חיצוני', 'דורש מעקב', 'בוצע חלקית', 'בוצע', 'סגור'])
 
   const taskColumns = useMemo(() => {
     const normalized = workspace.taskColumns.map((column) => {
@@ -403,12 +406,40 @@ export default function TaskBoard({ workspace, setWorkspace, projectId, onEmail,
         <input type="checkbox" aria-label={`הצגת עמודה ${column.label}`} checked={column.visible} onChange={(e) => setWorkspace((current) => ({ ...current, taskColumns: current.taskColumns.map((item) => item.id === column.id ? { ...item, visible: e.target.checked } : item) }))} />
         <input aria-label="שם עמודה" value={column.label} onChange={(e) => setWorkspace((current) => ({ ...current, taskColumns: current.taskColumns.map((item) => item.id === column.id ? { ...item, label: e.target.value } : item) }))} />
         <span>{column.type}</span>
+        <label className="inline-control-label"><span>רוחב</span><input type="number" min={90} max={600} step={10} style={{ width: 80 }}
+          aria-label={`רוחב עמודה ${column.label}`} value={column.width || 160}
+          onChange={(event) => {
+            const width = Number(event.target.value)
+            if (!Number.isFinite(width) || width < 90 || width > 600) return
+            setWorkspace((current) => ({ ...current, taskColumns: current.taskColumns.map((item) => item.id === column.id ? { ...item, width } : item) }))
+          }} /></label>
         <button type="button" className="icon-btn" aria-label="הזזת עמודה למעלה" disabled={index === 0} onClick={() => moveColumn(column.id, -1)}><ChevronUp /></button>
         <button type="button" className="icon-btn" aria-label="הזזת עמודה למטה" disabled={index === taskColumns.length - 1} onClick={() => moveColumn(column.id, 1)}><ChevronDown /></button>
         {column.removable && <button type="button" className="icon-btn danger" aria-label={`מחיקת עמודה ${column.label}`} onClick={() => { if (confirmDelete(`העמודה "${column.label}"`)) setWorkspace((current) => ({ ...current, taskColumns: current.taskColumns.filter((item) => item.id !== column.id) })) }}><Trash2 /></button>}
       </div>)}</div>
       <div className="config-add"><label className="inline-control-label"><span>שם עמודה</span><input value={newColumn} onChange={(e) => setNewColumn(e.target.value)} placeholder="שם עמודה חדשה" /></label><label className="inline-control-label"><span>סוג עמודה</span><select value={newColumnType} onChange={(e) => setNewColumnType(e.target.value as TaskColumnType)}><option value="text">טקסט</option><option value="date">תאריך</option><option value="status">סטטוס</option><option value="member">אחראי</option><option value="email">מייל</option><option value="priority">עדיפות</option></select></label><button type="button" className="secondary" onClick={addColumn}>הוספת עמודה</button></div>
-      <div className="status-config"><strong>סטטוסים:</strong>{workspace.taskStatuses.map((status) => <Chip key={status} tone="brand">{status}</Chip>)}<label className="inline-control-label"><span>סטטוס חדש</span><input value={newStatus} onChange={(e) => setNewStatus(e.target.value)} placeholder="שם הסטטוס" /></label><button type="button" className="secondary" onClick={() => { const value = newStatus.trim(); if (value && !workspace.taskStatuses.includes(value)) setWorkspace((current) => ({ ...current, taskStatuses: [...current.taskStatuses, value] })); setNewStatus('') }}>הוספת סטטוס</button></div>
+      <div className="status-config"><strong>סטטוסים:</strong>
+        {workspace.taskStatuses.map((status) => <span className="inline-create" key={status}>
+          <Chip tone="brand">{status}</Chip>
+          {!coreStatuses.has(status) && <><button type="button" className="secondary" onClick={() => { setEditingStatus(status); setRenamedStatus(status) }}>שינוי שם</button>
+            <button type="button" className="secondary" disabled={workspace.tasks.some((task) => task.status === status)}
+              title={workspace.tasks.some((task) => task.status === status) ? 'יש לשנות קודם את הסטטוס של המשימות המשתמשות בו' : 'הסרת סטטוס שאינו בשימוש'}
+              onClick={() => { if (!confirmDelete(`למחוק את הסטטוס "${status}"?`)) return; setWorkspace((current) => ({ ...current, taskStatuses: current.taskStatuses.filter((item) => item !== status) })) }}>הסרה</button></>}
+        </span>)}
+        {editingStatus && <label className="inline-control-label"><span>שם חדש לסטטוס</span><input value={renamedStatus} onChange={(event) => setRenamedStatus(event.target.value)} />
+          <button type="button" className="secondary" onClick={() => {
+            const name = renamedStatus.trim()
+            if (!name || coreStatuses.has(editingStatus) || (workspace.taskStatuses.includes(name) && name !== editingStatus)) return
+            setWorkspace((current) => ({ ...current, taskStatuses: current.taskStatuses.map((status) => status === editingStatus ? name : status),
+              tasks: current.tasks.map((task) => task.status === editingStatus ? { ...task, status: name } : task) }))
+            setEditingStatus('')
+          }}>שמירה</button>
+          <button type="button" className="secondary" onClick={() => setEditingStatus('')}>ביטול</button>
+        </label>}
+        <label className="inline-control-label"><span>סטטוס חדש</span><input value={newStatus} onChange={(e) => setNewStatus(e.target.value)} placeholder="שם הסטטוס" /></label>
+        <button type="button" className="secondary" onClick={() => { const value = newStatus.trim(); if (value && !workspace.taskStatuses.includes(value)) setWorkspace((current) => ({ ...current, taskStatuses: [...current.taskStatuses, value] })); setNewStatus('') }}>הוספת סטטוס</button>
+        <small>סטטוסים מובנים נשארים קבועים כדי לשמור על לוגיקת התראות והשלמת משימות.</small>
+      </div>
     </div>}
 
     <div className="table-scroll task-table-wrap">
