@@ -10,7 +10,7 @@ after(() => server.close())
 const { normalizePermissions, workspaceMutationError } = await server.ssrLoadModule('/src/lib/permissions.ts')
 const { cloneWorkspace } = await server.ssrLoadModule('/src/seed.ts')
 const backend = await server.ssrLoadModule('/src/lib/backend.ts')
-const { readImportRows, mapContactImportRows, appendUniqueContacts } = await server.ssrLoadModule('/src/lib/imports.ts')
+const { readImportRows, mapContactImportRows, appendUniqueContacts, appendUniqueTasks } = await server.ssrLoadModule('/src/lib/imports.ts')
 const { normalizeContactCategories } = await server.ssrLoadModule('/src/lib/contactCategories.ts')
 const { mailContent } = await import('../worker/src/mailHtml.js')
 const options = { canManageUsers: false, isDeveloper: false }
@@ -173,6 +173,35 @@ test('reimport skips exact contact identities but keeps different people at a sh
   assert.equal(result.contacts[0].id, 'existing')
   assert.equal(result.contacts[1].name, 'אדם אחר')
   assert.equal(appendUniqueContacts([contact], [{ ...contact, notes: 'פרטים נוספים' }]).added, 1)
+})
+
+
+test('import reads every data worksheet while ignoring unrelated cover pages', async () => {
+  const XLSX = await import('@e965/xlsx')
+  const book = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([['הוראות'], ['נא לקרוא']]), 'cover')
+  XLSX.utils.book_append_sheet(book, XLSX.utils.json_to_sheet([{ 'משימה': 'חשמל', 'תאריך סיום': '21/10/2026' }]), 'tasks one')
+  XLSX.utils.book_append_sheet(book, XLSX.utils.json_to_sheet([{ 'משימה': 'איטום', 'תאריך סיום': '22/10/2026' }]), 'tasks two')
+  XLSX.utils.book_append_sheet(book, XLSX.utils.json_to_sheet([{ 'שם': 'אדריכלית' }]), 'contacts')
+  const buffer = XLSX.write(book, { type: 'array', bookType: 'xlsx' })
+  const tasks = await readImportRows(buffer, false, 'tasks')
+  const contacts = mapContactImportRows(await readImportRows(buffer, false, 'contacts'))
+  assert.deepEqual(tasks.map(task => task['משימה']), ['חשמל', 'איטום'])
+  assert.deepEqual(tasks.map(task => task['תאריך סיום']), ['2026-10-21', '2026-10-22'])
+  assert.deepEqual(contacts.map(contact => contact.name), ['אדריכלית'])
+})
+
+test('reimporting tasks preserves existing records, ignores status edits and rejects within-file duplicates', () => {
+  const original = { id: 'existing', projectId: 'p', title: 'איטום', description: 'בדיקת מרפסת', status: 'בוצע', priority: 'רגילה', dueDate: '2026-10-22', startDate: undefined, followUpDate: undefined, emailTo: undefined, custom: {}, order: 1, createdAt: '2026-10-01' }
+  const duplicate = { ...original, id: 'imported', status: 'טרם התחיל', order: 2 }
+  const changedDate = { ...duplicate, id: 'new', dueDate: '2026-10-23' }
+  const preview = appendUniqueTasks([original], [duplicate, duplicate, changedDate])
+  assert.equal(preview.added, 1)
+  assert.equal(preview.skipped, 2)
+  assert.equal(preview.tasks[0], original)
+  assert.equal(preview.tasks[0].status, 'בוצע')
+  assert.equal(preview.tasks[1].dueDate, '2026-10-23')
+  assert.equal(appendUniqueTasks(preview.tasks, [changedDate]).added, 0)
 })
 
 test('UTF-8 Hebrew CSV without a BOM imports and normalizes Israeli dates', async () => {
