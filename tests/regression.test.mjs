@@ -15,6 +15,7 @@ const { normalizeContactCategories } = await server.ssrLoadModule('/src/lib/cont
 const { mailContent } = await import('../worker/src/mailHtml.js')
 const options = { canManageUsers: false, isDeveloper: false }
 const { deleteProject, deleteContact } = await server.ssrLoadModule('/src/lib/records.ts')
+const { createReportFromTasks } = await server.ssrLoadModule('/src/lib/reportTasks.ts')
 
 test('calendar merge keeps private Google metadata for source filters and deduplicates equivalent timestamps', async () => {
   const { mergeCalendarEvents } = await server.ssrLoadModule('/src/components/CalendarFiles.tsx')
@@ -72,6 +73,35 @@ test('automatic Drive uploads wait for the daily window, replace queued edits, a
   for (const [key, value] of kv) if (key.startsWith('drive-pending:')) value.dueAt = Date.now() - 1
   assert.equal((await runDriveQueue(env, execute)).uploaded, 1)
   assert.equal(uploads, 2)
+})
+
+
+test('selected project tasks generate an editable, traceable report draft without mutating tasks', () => {
+  const workspace = cloneWorkspace()
+  workspace.projects = [{ id: 'project-a', name: 'פרויקט א', address: 'רחוב 10' }, { id: 'project-b', name: 'פרויקט ב', address: 'רחוב 20' }]
+  workspace.categories = [{ id: 'electric', name: 'חשמל' }, { id: 'seal', name: 'איטום' }]
+  workspace.team = [{ id: 'member', name: 'מפקחת בדיקה' }]
+  workspace.tasks = [
+    { id: 't1', projectId: 'project-a', categoryIds: ['electric'], title: 'לוח חשמל', description: 'יש לבדוק', dueDate: '2026-10-24', status: 'בטיפול', assigneeId: 'member' },
+    { id: 't2', projectId: 'project-a', categoryIds: ['seal'], title: 'איטום גג', description: 'הסתיים', status: 'בוצע' },
+    { id: 't3', projectId: 'project-b', categoryIds: ['electric'], title: 'לוח בפרויקט אחר', status: 'בטיפול' },
+  ]
+  const before = structuredClone(workspace.tasks)
+  let n = 0
+  const draft = createReportFromTasks(workspace, 'project-a', ['t1', 't1', 't2', 't3'], { title: 'דוח שבועי', templateId: 'report-table', date: '2026-10-19' }, prefix => `${prefix}-${++n}`)
+  const items = draft.sections.flatMap(section => section.items)
+  assert.equal(draft.projectId, 'project-a')
+  assert.equal(draft.siteAddress, 'רחוב 10')
+  assert.equal(draft.title, 'דוח שבועי')
+  assert.equal(draft.inspectionDate, '2026-10-19')
+  assert.deepEqual(items.map(item => item.sourceTaskId), ['t1', 't2'])
+  assert.deepEqual(items.map(item => item.status), ['פתוח', 'בוצע'])
+  assert.equal(items[0].responsible, 'מפקחת בדיקה')
+  assert.match(items[0].description, /תאריך יעד: 2026-10-24/)
+  assert.equal(draft.sections.find(section => section.title === 'חשמל').items.length, 1)
+  assert.equal(draft.sections.find(section => section.title === 'איטום').items.length, 1)
+  assert.deepEqual(workspace.tasks, before)
+  assert.throws(() => createReportFromTasks(workspace, 'project-b', ['t1'], { title: 'Invalid' }), /יש לבחור משימות/)
 })
 
 test('project deletion preserves dependent business records and removes their project links', () => {
