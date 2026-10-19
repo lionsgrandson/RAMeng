@@ -206,8 +206,8 @@ async function requireOrgManager(request, env, config, orgId) {
   const user = await getAuthenticatedUser(request, env, config)
   if (isDeveloper(user, config)) {
     await ensureDeveloperMembership(env, config, user)
-    return user
   }
+  // A configured developer identity does not authorize an arbitrary target org.
   const auth = request.headers.get('authorization') || ''
   const response = await fetch(`${config.supabaseUrl.replace(/\/$/, '')}/rest/v1/rpc/is_org_admin`, {
     method: 'POST',
@@ -1438,6 +1438,12 @@ async function handleUserDelete(request, env, config) {
   if (membership.role === 'developer' || developerEmails(config).includes(email)) {
     throw Object.assign(new Error('לא ניתן למחוק את חשבון המפתח המוגן'), { status: 403 })
   }
+
+  // Auth deletion cascades across every organization in this Supabase project.
+  // An organization manager must not delete another organization's membership.
+  const otherMemberships = await admin.from('memberships').select('org_id').eq('user_id', targetUser.id).neq('org_id', cleanString(body.orgId)).limit(1)
+  if (otherMemberships.error) throw Object.assign(new Error('לא ניתן לאמת את שיוכי המשתמש. המחיקה בוטלה.'), { status: 502 })
+  if (otherMemberships.data?.length) throw Object.assign(new Error('החשבון משויך לארגון נוסף. לא ניתן למחוק אותו מתוך ארגון זה.'), { status: 409 })
 
   const result = await admin.auth.admin.deleteUser(targetUser.id)
   if (result.error) throw Object.assign(new Error('מחיקת המשתמש נכשלה. אם המשתמש העלה קבצים, יש להעביר או למחוק אותם תחילה.'), { status: 502 })

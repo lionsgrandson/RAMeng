@@ -1356,3 +1356,40 @@ test('unexpected API failures expose neither secrets nor provider message bodies
   assert.ok(!recorded.includes('private-query')); assert.ok(!recorded.includes('private-mail'))
   assert.ok(recorded.includes('/api/public-config'))
 })
+
+
+test('configured developer cannot manage a client-supplied organization without target membership', async t => {
+  const privateEnv = { CONFIG: { get: async () => ({ ...config, developerEmails: ['qa@example.test'] }) } }
+  let checked = false
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    if (String(url).endsWith('/auth/v1/user')) return Response.json({ id: 'qa', email: 'qa@example.test' })
+    if (String(url).endsWith('/rpc/is_org_admin')) { checked = true; assert.equal(JSON.parse(init.body).target_org, 'unrelated'); return Response.json(false) }
+    throw new Error('Unexpected privileged operation')
+  })
+  t.mock.method(console, 'error', () => undefined)
+  const response = await worker.fetch(request('/api/users/password-reset', { orgId: 'unrelated', userId: 'target' }), privateEnv)
+  assert.equal(response.status, 403); assert.equal(checked, true)
+})
+
+test('organization user deletion cannot cascade into a different organization', async t => {
+  const privateEnv = { SUPABASE_SECRET_KEY: 'sb_secret_synthetic_test_only', CONFIG: { get: async () => config } }
+  let deleted = false; const calls = []
+  t.mock.method(globalThis, 'fetch', async (input, supplied) => {
+    calls.push(String(input)); const url = new URL(typeof input === 'string' || input instanceof URL ? input : input.url)
+    const method = supplied?.method || (typeof input === 'object' ? input.method : 'GET')
+    if (url.pathname.endsWith('/auth/v1/user')) return Response.json({ id: 'qa', email: 'qa@example.test' })
+    if (url.pathname.endsWith('/rpc/is_org_admin')) return Response.json(true)
+    if (url.pathname.endsWith('/rest/v1/memberships')) {
+      if (url.searchParams.get('select') === 'org_id') { assert.equal(url.searchParams.get('org_id'), 'neq.org'); return Response.json([{ org_id: 'other-org' }]) }
+      return Response.json({ user_id: '10000000-0000-4000-8000-000000000099', role: 'viewer' })
+    }
+    if (url.pathname.endsWith('/auth/v1/admin/users/10000000-0000-4000-8000-000000000099')) {
+      if (method === 'DELETE') deleted = true
+      return Response.json({ id: '10000000-0000-4000-8000-000000000099', email: 'target@example.test' })
+    }
+    throw new Error('Unexpected outbound operation')
+  })
+  t.mock.method(console, 'error', () => undefined)
+  const response = await worker.fetch(request('/api/users/delete', { orgId: 'org', userId: '10000000-0000-4000-8000-000000000099' }), privateEnv)
+  assert.equal(response.status, 409, (await response.text()) + JSON.stringify(calls)); assert.equal(deleted, false)
+})
