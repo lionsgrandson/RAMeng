@@ -62,7 +62,7 @@ GitHub CI uses read-only repository permissions. Dependency monitoring covers fr
 
 ## E. QA results
 
-- `npm ci`, `npm ci --prefix worker`: successful; both audits reported zero vulnerabilities.
+- `npm ci`, `npm ci --prefix worker`: successful; frontend/Worker audits reported zero vulnerabilities. The newly generated desktop lockfile exposes 8 moderate development-tool findings in the electron-builder → sprintf-js chain (GHSA-hp3w-g68c-fv3c); there are no high/critical findings. No forced downgrade or incompatible override was applied. Native packaging is not certified.
 - TypeScript (`npm run lint`, which is TypeScript checking, **not ESLint**): passed.
 - Node regression suite: **127 passed, 0 failed**, including mocked Worker/provider integration cases.
 - Real Chromium interactions against fixtures: **20 scenarios**, covering seven widths, 500 tasks, task/contact import/reimport, report selection/edit/export, status management, project persistence, contact paging/search, viewer/status/external roles, conflict recovery and keyboard focus. Final local/remote outcomes are recorded below.
@@ -70,6 +70,8 @@ GitHub CI uses read-only repository permissions. Dependency monitoring covers fr
 - Production build and Worker/desktop syntax: passed. Worker deploy dry run passed. Whitespace check passed.
 - No real client email, invitation, calendar invitation or Drive grant was sent during automated testing. Actual Supabase password reset, live OAuth failures, full provider write round trips and native print/Foxit execution are separate, unverified cases unless explicitly added to the final record.
 - Local evidence: ignored `artifacts/audit/`, `audit-tests.log`, `audit-database.log`, `audit-browser.log`, `audit-remote-browser.log`. CI publishes synthetic screenshots and JSON for 14 days.
+
+Remote synthetic preview: the HTTP/1.1 fallback run passed 19/20 scenarios; one 1024px navigation timed out before loading. A separate 1024px browser retry passed creation/search/overflow. Thus all 20 distinct scenarios have successful remote evidence across the initial run and retry. The default local/CI browser runs pass all 20 in one run. These results do not establish authenticated live Google/Supabase operation. The fixed QA notice now stays in document flow instead of covering mobile controls.
 
 ## F. Deployment record
 
@@ -87,7 +89,7 @@ Final commit, CI URL, UTC/Jerusalem timestamp, version ID, exact asset compariso
 - **Technical blocker:** organizational communication journal/review queue is missing. Existing Gmail associations remain mailbox-private KV data. Requires a verified RAM database, approved mailbox/scope configuration, org-scoped tables/RLS, unique `(mailbox_id, gmail_message_id)`, persisted associations, sync cursors/retry/outbox state and privacy-focused migrations/tests. Do not broaden synchronization to unrelated mail.
 - **Client decision:** identify approved organizational mailboxes and synchronization rules; establish reporting template approval and whether formal report issuance/immutable versions are required. Draft report editing must not be mistaken for legally approved issuance.
 - **Verification gap:** authenticated live password lifecycle, actual Google send/reply/attachments/calendar mutation, Drive upload/rename/revocation, production two-user concurrency and full page-by-page accessibility/responsive matrix. User authorized Udi's account for testing; this does not certify those flows until executed.
-- **Known limitations:** browser-native print/PDF path, no full immutable issued-report model, bounded import UI without arbitrary mapping, comments still private KV records rather than an organization database journal, prepared SQL guards are not yet active in production, large entry bundle warning, mobile native packages untested.
+- **Known limitations:** browser-native print/PDF path, no full immutable issued-report model, bounded import UI without arbitrary mapping, comments still private KV records rather than an organization database journal, prepared SQL guards are not yet active in production, large entry bundle warning, 8 moderate desktop development-tool dependency advisories, mobile native packages untested.
 - **Recovery:** database/storage backup retention and isolated restore test, RPO/RTO and secret restoration drill need verified operator access. Keep encrypted backups and provider configuration exports in approved private storage; restore only into an isolated project. Never rerun `setup.sql` or restore over production to fix a migration.
 - **Future phase / commercial approval:** broad ERP, offline/native rollout, paid AI/transcription and provider-cost commitments remain outside this release.
 
