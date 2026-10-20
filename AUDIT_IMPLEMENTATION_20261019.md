@@ -1,5 +1,7 @@
 # RAM Engineering CRM audit and release — 19 October 2026
 
+**20 October database update:** dashboard access, a private migration snapshot, local restoration, production migration application and eight live synthetic checks are now verified. See [the current database release record](AUDIT_DATABASE_RELEASE_20261020.md), which supersedes the historical pending-database statements below.
+
 ## A. Executive summary
 
 This is an incremental, data-preserving release, **not certification that the entire requested CRM/ERP scope is complete**. PR #7 was open at audit start (`595a620`). It was reconciled with the separate meeting CRM branch (`e902046`), preserving task layouts, scheduling, comments, external assignments, contacts, Gmail cache corrections and Drive controls. The original working checkout and its uncommitted changes remain intact. Its reviewed desktop PDF changes were copied into the isolated release checkout so the already committed PDF regression can run from a clean clone.

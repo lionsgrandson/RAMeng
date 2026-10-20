@@ -20,6 +20,12 @@ try {
     await client.query(sql)
     console.log(`PASS ${file}`)
   }
+  // The normal migration pass also covers databases where the optional
+  // platform function is absent. Exercise its present case and DDL behavior.
+  for (const file of ['tests/platform-rls-bootstrap.sql', 'supabase/migrations/20261020021737_restrict_rls_event_trigger_execution.sql', 'tests/platform-rls-assertions.sql']) {
+    await client.query(await readFile(file, 'utf8'))
+    console.log(`PASS ${file}`)
+  }
   console.log('PASS disposable PostgreSQL workflow integration')
 } finally {
   if (client) await client.end()
