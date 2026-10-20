@@ -3,7 +3,7 @@ import { jerusalemInstant, taskCalendarTime } from '../lib/taskTime'
 import { taskCalendarDates } from '../lib/taskCalendar'
 import { CategoryManager } from './Categories'
 import ProjectMail from './ProjectMail'
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, useRef, type FormEvent } from 'react'
 import { ArrowRight, CalendarDays, ExternalLink, FileText, FolderKanban, HardDrive, ListChecks, Mail, Plus, RefreshCw, Settings2 } from 'lucide-react'
 import { integrationsApi } from '../lib/api'
 import type { CalendarEvent, Project, ProjectStatus, Task, Workspace } from '../types'
@@ -190,27 +190,34 @@ export function ProjectWorkspace({ canInviteExternal = false, projectId, workspa
         selectTab('reports')
       } : undefined} /></section>}
     {tab === 'mail' && communicationAccess.view && <ProjectMail setWorkspace={setWorkspace} canCreateTask={taskAccess.create} project={project} workspace={workspace} orgId={orgId} initialTask={emailTask} onTask={taskAccess.view ? id => { setFocusedTaskId(id); selectTab('tasks') } : undefined} permissions={communicationAccess} />}
-    {tab === 'calendar' && calendarAccess.view && <ProjectCalendar project={project} workspace={workspace} setWorkspace={setWorkspace} canEdit={calendarAccess.create} />}
+    {tab === 'calendar' && calendarAccess.view && <ProjectCalendar orgId={orgId} project={project} workspace={workspace} setWorkspace={setWorkspace} canEdit={calendarAccess.create} />}
     {tab === 'drive' && fileAccess.view && <DriveConnection orgId={orgId} workspace={workspace} project={project} canCreateFolder={fileAccess.create && projectAccess.edit} canUnlinkFolder={fileAccess.delete} canShare={fileAccess.edit} />}
     {tab === 'reports' && reportAccess.view && <ReportsPage workspace={workspace} setWorkspace={setWorkspace} orgId={orgId} projectId={project.id} permissions={reportAccess} canUploadFiles={fileAccess.create} initialReportId={createdReportId} onSelectReport={setCreatedReportId} />}
     {tab === 'files' && fileAccess.view && <FilesPage workspace={workspace} setWorkspace={setWorkspace} orgId={orgId} projectId={project.id} permissions={fileAccess} />}
   </div>
 }
 
-function ProjectCalendar({ project, workspace, setWorkspace, canEdit }: { project: Project; workspace: Workspace; setWorkspace: React.Dispatch<React.SetStateAction<Workspace>>; canEdit: boolean }) {
+function ProjectCalendar({ orgId, project, workspace, setWorkspace, canEdit }: { orgId: string; project: Project; workspace: Workspace; setWorkspace: React.Dispatch<React.SetStateAction<Workspace>>; canEdit: boolean }) {
   const events = [...workspace.events.filter(event => event.projectId === project.id), ...workspace.tasks.filter(task => task.projectId === project.id).flatMap(task => [...new Set(taskCalendarDates(task).map(item => item.date))].filter(date => !workspace.events.some(event => event.taskId === task.id && event.start.slice(0, 10) === date)).map(date => ({ id: `task-date-${task.id}-${date}`, projectId: project.id, taskId: task.id, title: `${task.title} · ${taskCalendarDates(task).filter(item => item.date === date).map(item => item.label).join(' / ')} · ${task.status}`, start: jerusalemInstant(date, taskCalendarTime(task, date) || '09:00'), googleHtmlLink: undefined, location: undefined })))].sort((a, b) => a.start.localeCompare(b.start)); const [addingTask, setAddingTask] = useState(''); const [error, setError] = useState('')
+  const [reminderBusy, setReminderBusy] = useState(false)
+  const [reminderNotice, setReminderNotice] = useState('')
+  const creatingReminder = useRef(false)
   const createFromTask = async () => {
+    if (creatingReminder.current) return
     const task = workspace.tasks.find((item) => item.id === addingTask); if (!task) return
     let start: string
     try { start = jerusalemInstant(task.startDate || task.dueDate || task.followUpDate || new Date(Date.now() + 86400000).toISOString().slice(0, 10), task.scheduledTime || '09:00') } catch (e) { setError((e as Error).message); return }
-    const localId = uid('event')
+    const existingReminder=workspace.events.find(event => event.taskId===task.id && event.start===start)
+    creatingReminder.current=true;setReminderBusy(true);setReminderNotice('')
+    const localId = existingReminder?.id || uid('event')
     const localEvent: CalendarEvent = { id: localId, projectId: project.id, taskId: task.id, title: task.title, start, notes: task.description }
-    setWorkspace((current) => ({ ...current, events: [...current.events, localEvent] })); setAddingTask(''); setError('')
+    if (!existingReminder) { setWorkspace((current) => ({ ...current, events: [...current.events, localEvent] })) }; setAddingTask(''); setError('')
     try {
-      await integrationsApi.createCalendarEvent({ summary: `${project.name}: ${task.title}`, start, description: task.description })
+      await integrationsApi.createCalendarEvent({ orgId, localEventId:localId, requestKey:`task-${task.id}-${start}`, summary: `${project.name}: ${task.title}`, start, description: task.description })
+      setReminderNotice('התזכורת קיימת במערכת ונשמרה גם ביומן Google שלך.')
     } catch (e) {
       setError(`התזכורת נשמרה במערכת. Google Calendar לא עודכן: ${e instanceof Error ? e.message : 'שגיאה לא ידועה'}`)
-    }
+    } finally {creatingReminder.current=false;setReminderBusy(false)}
   }
-  return <div className="google-communication-stack"><ContactCalendar contacts={workspace.contacts.filter((contact) => project.clientIds.includes(contact.id))} /><section className="card project-module-card project-calendar-card"><div className="card-head"><h2>יומן</h2>{canEdit && <div className="inline-create"><label className="inline-control-label"><span>משימה לתזכורת</span><select aria-label="בחירת משימה לתזכורת" value={addingTask} onChange={(e) => setAddingTask(e.target.value)}><option value="">בחירת משימה</option>{workspace.tasks.filter((task) => task.projectId === project.id).map((task) => <option key={task.id} value={task.id}>{task.title}</option>)}</select></label><button type="button" className="secondary" disabled={!addingTask} onClick={() => void createFromTask()}><CalendarDays /> יצירה ביומן</button></div>}</div>{error && <div className="error-banner">{error}</div>}<div className="calendar-list">{events.map((event) => <article key={event.id}><div className="calendar-date"><strong>{new Date(event.start).getDate()}</strong><span>{new Intl.DateTimeFormat('he-IL', { month: 'short' }).format(new Date(event.start))}</span></div><div><strong>{event.title}</strong><small>{dateTimeLabel(event.start)}{event.location ? ` · ${event.location}` : ''}</small></div>{event.googleHtmlLink && <a className="icon-btn" href={event.googleHtmlLink} target="_blank" rel="noreferrer" aria-label={`פתיחת ${event.title} ב-Google Calendar`}><ExternalLink /></a>}</article>)}{!events.length && <EmptyState title="אין אירועים בפרויקט" text="ניתן ליצור פגישה או תזכורת ישירות ממשימה." />}</div></section></div>
+  return <div className="google-communication-stack"><ContactCalendar contacts={workspace.contacts.filter((contact) => project.clientIds.includes(contact.id))} /><section className="card project-module-card project-calendar-card"><div className="card-head"><h2>יומן</h2>{canEdit && <div className="inline-create"><label className="inline-control-label"><span>משימה לתזכורת</span><select aria-label="בחירת משימה לתזכורת" value={addingTask} onChange={(e) => setAddingTask(e.target.value)}><option value="">בחירת משימה</option>{workspace.tasks.filter((task) => task.projectId === project.id).map((task) => <option key={task.id} value={task.id}>{task.title}</option>)}</select></label><button type="button" className="secondary" disabled={!addingTask || reminderBusy} onClick={() => void createFromTask()}><CalendarDays /> {reminderBusy ? 'יוצר...' : 'יצירה ביומן'}</button></div>}</div>{reminderNotice && <p role="status" className="success-banner">{reminderNotice}</p>}{error && <div className="error-banner">{error}</div>}<div className="calendar-list">{events.map((event) => <article key={event.id}><div className="calendar-date"><strong>{new Date(event.start).getDate()}</strong><span>{new Intl.DateTimeFormat('he-IL', { month: 'short' }).format(new Date(event.start))}</span></div><div><strong>{event.title}</strong><small>{dateTimeLabel(event.start)}{event.location ? ` · ${event.location}` : ''}</small></div>{event.googleHtmlLink && <a className="icon-btn" href={event.googleHtmlLink} target="_blank" rel="noreferrer" aria-label={`פתיחת ${event.title} ב-Google Calendar`}><ExternalLink /></a>}</article>)}{!events.length && <EmptyState title="אין אירועים בפרויקט" text="ניתן ליצור פגישה או תזכורת ישירות ממשימה." />}</div></section></div>
 }

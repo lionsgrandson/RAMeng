@@ -2384,3 +2384,27 @@ textarea::placeholder {
 .contact-thread-body { min-width: 0; overflow-wrap: anywhere; }
 .drive-list > div { display: flex; gap: 8px; align-items: center; }
 .drive-list > div > a { flex: 1; min-width: 0; }
+
+/* Project grants: keep each RTL label and its native checkbox together. */
+.modal-card .project-access-row { display:grid; grid-template-columns:1.25rem minmax(0,1fr); align-items:center; gap:.75rem; width:100%; padding:.75rem; margin:.35rem 0; border:1px solid #cbd5e1; border-radius:.5rem; cursor:pointer; }
+.modal-card .project-access-row input[type=checkbox] { width:1.25rem; height:1.25rem; margin:0; accent-color:#166534; }
+.modal-card .project-access-row span { min-width:0; overflow-wrap:anywhere; line-height:1.5; }
+.modal-card .project-access-row:focus-within { outline:2px solid #166534; outline-offset:2px; }
+.external-task-actions { display:flex; flex-wrap:wrap; gap:.75rem; align-items:end; }
+.external-task-page { max-width:60rem; width:100%; min-width:0; margin:auto; padding:1rem; overflow-wrap:anywhere; }
+.external-task-page .toolbar { display:flex; flex-wrap:wrap; gap:.75rem; justify-content:space-between; }
+
+.permission-toggle { position:relative; }
+.permission-toggle input[type=checkbox] { inset:0; width:100%; height:100%; margin:0; padding:0; pointer-events:auto; cursor:pointer; z-index:1; }
+
+.import-card, .communication-journal { min-width:0; overflow-wrap:anywhere; }
+.import-card select, .communication-journal select { max-width:100%; min-width:0; }
+.communication-journal article { padding:.75rem 0; border-bottom:1px solid var(--line); }
+.communication-journal fieldset { display:grid; gap:.75rem; min-width:0; margin-block:1rem; }
+
+.task-completion-meta { display:block; font-size:.75rem; overflow-wrap:anywhere; padding-inline:.5rem; }
+
+.report-history, .report-version-readonly { min-width:0; overflow-wrap:anywhere; }
+.report-version-readonly img { max-width:100%; max-height:24rem; object-fit:contain; }
+.report-version-readonly article { padding-block:.5rem; border-bottom:1px solid var(--line); white-space:pre-wrap; }
+@media print { body[data-print-report] .report-history, body[data-print-report] .report-template-controls { display:none!important; } }

@@ -39,6 +39,8 @@ jobs:
       - name: Worker syntax check
         run: |
           node --check worker/src/index.js
+          node --check worker/src/calendarMutations.js
+          node --check worker/src/communicationJournal.js
           node --check desktop/main.cjs
           node --check desktop/preload.cjs
           node --check desktop/pdf.cjs

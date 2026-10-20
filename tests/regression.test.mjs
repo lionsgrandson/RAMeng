@@ -1407,3 +1407,140 @@ test('edit without delete cannot omit, null or replace nested report entities', 
   const after = structuredClone(before); delete after.reports[0].sections
   assert.match(workspaceMutationError(before, after, permissions, options), /מחיקה/)
 })
+
+
+test('downloaded Hebrew CSV and Excel examples round-trip every supported field safely', async () => {
+  const { taskImportSample, taskImportExcel } = await server.ssrLoadModule('/src/lib/importSample.ts')
+  for (const projectId of ['', 'existing-project']) {
+    const csv = taskImportSample(projectId)
+    const buffer = new TextEncoder().encode(csv).buffer
+    const parsed = await readImportRows(buffer, true)
+    assert.equal(parsed.length, 1)
+    assert.equal(parsed[0]['פרויקט'], projectId)
+    assert.equal(parsed[0]['סטטוס'], 'טרם התחיל')
+    assert.equal(parsed[0]['תאריך סיום'], '2026-10-27')
+    assert.equal(parsed[0]['הערות'], 'הערה לדוגמה, עם פסיק')
+    assert.deepEqual(await readImportRows(await taskImportExcel(projectId), false), parsed)
+    assert.deepEqual(await readImportRows(new TextEncoder().encode(csv.replace(/^\uFEFF/, '')).buffer, true), parsed)
+  }
+})
+
+test('external status API sends only the task-local compare-and-set payload and maps safe errors', async () => {
+  const originalFetch = globalThis.fetch
+  const calls=[]
+  try {
+    backend.configureBackend({supabaseUrl:'https://qa.example.test',supabaseAnonKey:'qa-public'})
+    globalThis.fetch=async (url,init) => {
+      calls.push({url:String(url),body:JSON.parse(init.body)})
+      return new Response(JSON.stringify(7),{status:200,headers:{'content-type':'application/json'}})
+    }
+    await backend.updateExternalTaskStatus('qa-org','qa-task','בוצע','בטיפול')
+    assert.equal(calls.length,1)
+    assert.ok(calls[0].url.endsWith('/rpc/set_assigned_task_status'))
+    assert.deepEqual(calls[0].body,{target_org:'qa-org',target_task:'qa-task',next_status:'בוצע',expected_status:'בטיפול'})
+    globalThis.fetch=async () => new Response(JSON.stringify({code:'40001',message:'TASK_STATUS_CONFLICT'}),{status:409,headers:{'content-type':'application/json'}})
+    await assert.rejects(backend.updateExternalTaskStatus('qa-org','qa-task','בוצע','בטיפול'),/סטטוס המשימה עודכן/)
+    globalThis.fetch=async () => new Response(JSON.stringify({code:'42501',message:'Only the developer can grant Google connection, import, or settings permissions'}),{status:403,headers:{'content-type':'application/json'}})
+    await assert.rejects(backend.setOrganizationMemberPermissions('qa-org','qa-user',{}),/רק המפתח/)
+  } finally { globalThis.fetch=originalFetch; backend.configureBackend({}) }
+})
+
+
+test('reporting weeks use Sunday through Saturday across Israel DST changes', async () => {
+  const {reportWeekPeriod}=await server.ssrLoadModule('/src/lib/reportPeriod.ts')
+  assert.deepEqual(reportWeekPeriod('2026-10-20'),{periodStart:'2026-10-18',periodEnd:'2026-10-24'})
+  assert.deepEqual(reportWeekPeriod('2026-10-25'),{periodStart:'2026-10-25',periodEnd:'2026-10-31'})
+  assert.deepEqual(reportWeekPeriod('2026-03-27'),{periodStart:'2026-03-22',periodEnd:'2026-03-28'})
+  assert.throws(() => reportWeekPeriod('2026-02-30'))
+})
+
+test('organizational journal refuses unapproved mailboxes before contacting Google', async () => {
+  const {handleCommunicationJournal}=await import('../worker/src/communicationJournal.js')
+  const originalFetch=globalThis.fetch; let googleCalls=0
+  const deps={json:(_request,body,status=200) => Response.json(body,{status}),requireUser:async () => ({id:'actor'}),currentMembership:async () => ({role:'admin'}),allowed:() => true,getGoogleTokens:async () => ({email:'private@example.test'}),googleFetch:async () => {googleCalls++;throw Error('must not ingest')}}
+  try {
+    globalThis.fetch=async () => Response.json([])
+    const response=await handleCommunicationJournal(new Request('https://qa.example.test/api/communication-journal',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({orgId:'40000000-0000-0000-0000-000000000001',threadId:'thread',projectId:'p',taskIds:[],contactIds:[]})}),{}, {supabaseUrl:'https://db.example.test',supabaseAnonKey:'public'},deps)
+    assert.equal(response.status,403);assert.equal(googleCalls,0)
+    assert.match((await response.json()).error,/אישור מפורש/)
+    deps.currentMembership=async () => null
+    assert.equal((await handleCommunicationJournal(new Request('https://qa.example.test/api/communication-journal?orgId=40000000-0000-0000-0000-000000000002'),{},{},deps)).status,403)
+  } finally {globalThis.fetch=originalFetch}
+})
+
+test('journal ingestion ignores forged browser bodies and uses provider-verified messages', async () => {
+  const {handleCommunicationJournal}=await import('../worker/src/communicationJournal.js')
+  const originalFetch=globalThis.fetch;let stored
+  const deps={json:(_request,body,status=200) => Response.json(body,{status}),requireUser:async () => ({id:'actor'}),currentMembership:async () => ({role:'admin'}),allowed:() => true,getGoogleTokens:async () => ({email:'business@example.test'}),googleFetch:async () => Response.json({id:'thread',historyId:'h2',messages:[{id:'verified-message',payload:{headers:[{name:'Cc',value:'copy@example.test'}],parts:[{filename:'plan.pdf',mimeType:'application/pdf',body:{size:12,attachmentId:'provider-file'}}]}}]}),normalize:message => ({id:message.id,from:'contractor@example.test',to:'business@example.test',subject:'Business',date:'2026-10-20T10:00:00Z',body:'verified body'}),admin:() => ({rpc:async (_name,payload) => {stored=payload;return {data:'journal-thread'}}})}
+  try {
+    globalThis.fetch=async () => Response.json([{email:'business@example.test',active:true}])
+    const response=await handleCommunicationJournal(new Request('https://qa.example.test/api/communication-journal',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({orgId:'40000000-0000-0000-0000-000000000001',threadId:'thread',projectId:'p',taskIds:['task-1','task-2'],contactIds:[],messages:[{body:'forged'}]})}),{}, {supabaseUrl:'https://db.example.test',supabaseAnonKey:'public'},deps)
+    assert.equal(response.status,200)
+    assert.equal(stored.actor,'actor');assert.equal(stored.history,'h2');assert.deepEqual(stored.tasks,['task-1','task-2'])
+    assert.equal(stored.messages[0].body,'verified body');assert.equal(stored.messages[0].id,'verified-message');assert.equal(stored.messages[0].cc,'copy@example.test')
+    assert.deepEqual(stored.messages[0].attachments,[{name:'plan.pdf',mimeType:'application/pdf',size:12,providerAttachmentId:'provider-file'}])
+  } finally {globalThis.fetch=originalFetch}
+})
+
+
+test('Google calendar event IDs scope retries to both mailbox and organization', async () => {
+  const {calendarRequestId}=await import('../worker/src/calendarMutations.js')
+  const first=await calendarRequestId('owner','org','operation')
+  assert.match(first,/^[0-9a-f]{64}$/)
+  assert.equal(await calendarRequestId('owner','org','operation'),first)
+  assert.notEqual(await calendarRequestId('other-owner','org','operation'),first)
+  assert.notEqual(await calendarRequestId('owner','other-org','operation'),first)
+})
+
+test('calendar mutations enforce target membership, ownership and ETag before provider writes', async () => {
+  const {handleCalendarMutation}=await import('../worker/src/calendarMutations.js')
+  let writes=[];let role='admin';let current={id:'event',etag:'v1',organizer:{self:true},start:{dateTime:'2026-10-20T07:00:00Z'}}
+  const deps={json:(_request,body,status=200) => Response.json(body,{status}),requireUser:async () => ({id:'owner'}),currentMembership:async () => role ? {role} : null,allowed:role => role==='admin',googleFetch:async (_env,_config,_user,url,options) => {if (!options) return Response.json(current);writes.push({url,options});return Response.json({id:'event',etag:'v2'})}}
+  const payload={orgId:'40000000-0000-0000-0000-000000000001',id:'event',etag:'v1',summary:'Changed',start:'2026-10-20T07:00:00Z',end:'2026-10-20T08:00:00Z',attendees:[{email:'must-not-send@example.test'}]}
+  const perform=(method='PATCH') => handleCalendarMutation(new Request('https://qa.example.test/api/google/calendar/event',{method,body:JSON.stringify(payload),headers:{'content-type':'application/json'}}),{}, {},deps)
+  role=null;assert.equal((await perform()).status,403);assert.equal(writes.length,0)
+  role='external';assert.equal((await perform()).status,403);assert.equal(writes.length,0)
+  role='admin';current.extendedProperties={private:{ramengOrgId:'different-org'}};assert.equal((await perform()).status,403);assert.equal(writes.length,0);delete current.extendedProperties;current.organizer.self=false;assert.equal((await perform()).status,403);assert.equal(writes.length,0)
+  current.organizer.self=true;current.etag='changed';assert.equal((await perform()).status,409);assert.equal(writes.length,0)
+  current.etag='v1';assert.equal((await perform()).status,200)
+  assert.equal(writes[0].options.headers['If-Match'],'v1')
+  assert.equal(new URL(writes[0].url).searchParams.get('sendUpdates'),'none')
+  const sent=JSON.parse(writes[0].options.body);assert.equal(sent.attendees,undefined);assert.equal(sent.start.timeZone,'Asia/Jerusalem')
+  assert.equal((await perform('DELETE')).status,200)
+  assert.equal(writes[1].options.body,undefined)
+})
+
+test('retrying calendar creation resolves the existing provider event instead of duplicating it', async t => {
+  const privateEnv={CONFIG:{get:async key => key==='rameng:admin-config:v1' ? config : key==='rameng:google-tokens:v2:qa' ? {access_token:'qa-google',expires_at:Date.now()+3600000} : null,put:async () => {}}}
+  let event;let posts=0
+  t.mock.method(globalThis,'fetch',async (url,init={}) => {
+    const target=String(url)
+    if (target.endsWith('/auth/v1/user')) return Response.json({id:'qa',email:'qa@example.test'})
+    if (target.includes('/rest/v1/memberships')) return Response.json([{role:'admin',permissions:null}])
+    if (target.includes('/calendar/v3/calendars/primary/events') && init.method==='POST') {event=JSON.parse(init.body);posts++;return Response.json({error:{message:'already exists'}},{status:409})}
+    if (event && target.endsWith(`/events/${event.id}`)) return Response.json({...event,id:event.id,etag:'v1',htmlLink:'https://calendar.google.com/event'})
+    throw Error('Unexpected network request')
+  })
+  const result=await worker.fetch(request('/api/google/calendar/events',{orgId:'40000000-0000-0000-0000-000000000001',requestKey:'local-event',localEventId:'local-event',summary:'QA',start:'2026-10-20T07:00:00Z'}),privateEnv)
+  assert.equal(result.status,200);assert.equal(posts,1);assert.match((await result.json()).id,/^[0-9a-f]{64}$/)
+  assert.equal(event.extendedProperties.private.ramengOwnerId,'qa')
+})
+
+
+test('primary Google calendar reads all pages and preserves owner-specific provider metadata', async t => {
+  const privateEnv={CONFIG:{get:async key => key==='rameng:admin-config:v1' ? config : key==='rameng:google-tokens:v2:qa' ? {access_token:'qa-google',expires_at:Date.now()+3600000} : null,put:async () => {}}}
+  const pages=[]
+  t.mock.method(globalThis,'fetch',async url => {
+    const target=String(url)
+    if (target.endsWith('/auth/v1/user')) return Response.json({id:'qa',email:'qa@example.test'})
+    if (target.includes('/rest/v1/memberships')) return Response.json([{role:'admin',permissions:null}])
+    if (target.includes('/calendar/v3/calendars/primary/events')) {
+      const cursor=new URL(target).searchParams.get('pageToken');pages.push(cursor)
+      return Response.json(cursor ? {items:[{id:'second',start:{dateTime:'2026-10-21T07:00:00Z'}}]} : {items:[{id:'first',etag:'etag',organizer:{self:true},start:{dateTime:'2026-10-20T07:00:00Z'},extendedProperties:{private:{ramengOwnerId:'qa',ramengLocalEventId:'local-id',ramengOrgId:'organization'}}}],nextPageToken:'next'})
+    }
+    throw Error('Unexpected outbound request')
+  })
+  const response=await worker.fetch(request('/api/google/calendar/events?from=2026-10-01T00:00:00Z&to=2026-11-01T00:00:00Z&force=true'),privateEnv)
+  assert.equal(response.status,200);assert.deepEqual(pages,[null,'next'])
+  const body=await response.json();assert.deepEqual(body.items.map(item=>item.id),['first','second']);assert.equal(body.partial,false);assert.equal(body.items[0].localEventId,'local-id');assert.equal(body.items[0].etag,'etag')
+})

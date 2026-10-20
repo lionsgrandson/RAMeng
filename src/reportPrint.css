@@ -75,3 +75,10 @@
 
   .print-footer{display:flex;justify-content:center;gap:14px;flex-wrap:wrap;margin-top:18px;padding-top:7px;border-top:2px solid #75927c;color:#607066;font-size:8px}
 }
+
+@media print {
+  html { background:#fff!important; }
+  body[data-print-report], body[data-print-report] #root,
+  body[data-print-report] .app-shell, body[data-print-report] .main,
+  body[data-print-report] .page-wrap, body[data-print-report] .report-editor { background:#fff!important; min-height:0!important; }
+}

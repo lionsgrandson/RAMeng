@@ -79,6 +79,8 @@ export interface Task {
   order: number
   createdAt: string
   completedAt?: string
+  completedBy?: string
+  sourceEmail?: { provider: 'gmail'; messageId: string; threadId: string; mailboxUserId: string; importedAt: string }
 }
 
 export interface CalendarEvent {
@@ -90,6 +92,9 @@ export interface CalendarEvent {
   end?: string
   location?: string
   notes?: string
+  googleEtag?: string
+  googleEditable?: boolean
+  googleLocalEventId?: string
   googleEventId?: string
   googleHtmlLink?: string
 }
