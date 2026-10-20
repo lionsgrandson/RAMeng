@@ -2,6 +2,8 @@ import { queueDriveUpload, runDriveQueue } from "./driveQueue.js"
 import { cachedGoogleRead, googleReadHash, refreshGoogleReads } from "./googleSync.js"
 import { createClient } from '@supabase/supabase-js'
 import { cleanMailHtml, mailContent } from './mailHtml.js'
+import { handleCommunicationJournal } from './communicationJournal.js'
+import { calendarRequestId, handleCalendarMutation, invalidateCalendarCache } from './calendarMutations.js'
 
 const CONFIG_KEY = 'rameng:admin-config:v1'
 const GOOGLE_TOKENS_PREFIX = 'rameng:google-tokens:v2:'
@@ -803,12 +805,22 @@ async function handleCalendarList(request, env, config) {
   apiUrl.searchParams.set('maxResults', '250')
   const from = url.searchParams.get('from') || new Date(Date.now() - 30 * 86400000).toISOString()
   const to = url.searchParams.get('to') || ''
+  if (!Number.isFinite(Date.parse(from)) || (to && (!Number.isFinite(Date.parse(to)) || Date.parse(to) <= Date.parse(from)))) throw Object.assign(new Error('טווח תאריכי היומן אינו תקין'), { status: 400 })
   apiUrl.searchParams.set('timeMin', new Date(from).toISOString())
   if (to) apiUrl.searchParams.set('timeMax', new Date(to).toISOString())
-  const response = await googleFetch(env, config, user.id, apiUrl.toString())
-  const body = await response.json()
-  if (!response.ok) throw Object.assign(new Error(localizedExternalError(body.error?.message, 'טעינת יומן Google נכשלה')), { status: response.status })
-  return apiJson(request, { items: (body.items || []).map((item) => ({ id: item.id, summary: item.summary || '(ללא כותרת)', start: item.start?.dateTime || item.start?.date || '', end: item.end?.dateTime || item.end?.date || '', htmlLink: item.htmlLink || '', location: item.location || '' })) })
+  const items = []; let cursor = ''; const visited = new Set()
+  do {
+    if (cursor) apiUrl.searchParams.set('pageToken', cursor)
+    const response = await googleFetch(env, config, user.id, apiUrl.toString())
+    const page = await response.json()
+    if (!response.ok) throw Object.assign(new Error(localizedExternalError(page.error?.message, 'טעינת יומן Google נכשלה')), { status: response.status })
+    items.push(...(page.items || []))
+    cursor = page.nextPageToken || ''
+    if (cursor && visited.has(cursor)) throw Object.assign(new Error('טעינת עמודי היומן נכשלה. נסו לרענן.'), { status: 503 })
+    visited.add(cursor)
+  } while (cursor && visited.size < 10)
+  const body = { items: [...new Map(items.map(item => [item.id,item])).values()] }
+  return apiJson(request, { partial: Boolean(cursor), items: (body.items || []).map((item) => ({ id: item.id, summary: item.summary || '(ללא כותרת)', start: item.start?.dateTime || item.start?.date || '', end: item.end?.dateTime || item.end?.date || '', htmlLink: item.htmlLink || '', location: item.location || '', description: item.description || '', etag: item.etag || '', editable: Boolean(item.organizer?.self && item.start?.dateTime && !item.recurrence && !item.recurringEventId), localEventId: item.extendedProperties?.private?.ramengOwnerId === user.id ? item.extendedProperties.private.ramengLocalEventId || '' : '', sourceOrgId: item.extendedProperties?.private?.ramengOwnerId === user.id ? item.extendedProperties.private.ramengOrgId || '' : '' })) })
 }
 
 function validEmail(value) { return typeof value === 'string' && /^[^\s<>@,;"()]+@[^\s<>@,;"()]+\.[^\s<>@,;"()]+$/.test(value) }
@@ -896,6 +908,10 @@ function isoWithDefaultEnd(start, end) {
 async function handleCalendarCreate(request, env, config) {
   const user = await requireGoogleAreaAction(request, env, config, 'calendar', 'create')
   const body = await parseBody(request)
+  if (body.orgId) {
+    const membership = await currentMembership(request, env, config, user, body.orgId)
+    if (!membership || !rolePermissionAllowed(membership.role, membership.permissions, 'calendar', 'create')) throw Object.assign(new Error('אין הרשאה ליצור אירועים בארגון זה'), { status: 403 })
+  }
   const summary = cleanString(body.summary)
   const start = cleanString(body.start)
   if (!summary || !start || Number.isNaN(new Date(start).getTime())) throw Object.assign(new Error('כותרת ותאריך התחלה תקינים נדרשים'), { status: 400 })
@@ -908,14 +924,23 @@ async function handleCalendarCreate(request, env, config) {
     start: { dateTime: new Date(start).toISOString(), timeZone: 'Asia/Jerusalem' },
     end: { dateTime: isoWithDefaultEnd(start, end), timeZone: 'Asia/Jerusalem' },
   }
+  if (typeof body.requestKey === 'string' && body.requestKey.length <= 200) event.id = await calendarRequestId(user.id, body.orgId || '', body.requestKey)
+  if (body.orgId && typeof body.localEventId === 'string') event.extendedProperties = { private: { ramengOwnerId: user.id, ramengOrgId: body.orgId, ramengLocalEventId: body.localEventId.slice(0, 200) } }
   const response = await googleFetch(env, config, user.id, 'https://www.googleapis.com/calendar/v3/calendars/primary/events', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(event),
   })
   const result = await response.json()
+  if (response.status === 409 && event.id) {
+    const priorResponse = await googleFetch(env, config, user.id, `https://www.googleapis.com/calendar/v3/calendars/primary/events/${event.id}`)
+    const prior = priorResponse.ok ? await priorResponse.json() : null
+    if (prior && prior.summary === event.summary && Date.parse(prior.start?.dateTime) === Date.parse(event.start.dateTime) && Date.parse(prior.end?.dateTime) === Date.parse(event.end.dateTime) && (prior.description || '') === event.description && (prior.location || '') === event.location) {await invalidateCalendarCache(env,user.id);return apiJson(request, { id: prior.id, htmlLink: prior.htmlLink || '', etag: prior.etag || '' })}
+    throw Object.assign(new Error('כבר קיים אירוע אחר עבור בקשה זו. רעננו את היומן.'), { status: 409 })
+  }
   if (!response.ok) throw Object.assign(new Error(localizedExternalError(result.error?.message, 'יצירת האירוע ביומן Google נכשלה')), { status: response.status })
-  return apiJson(request, { id: result.id, htmlLink: result.htmlLink || '' })
+  await invalidateCalendarCache(env,user.id)
+  return apiJson(request, { id: result.id, htmlLink: result.htmlLink || '', etag: result.etag || '' })
 }
 
 function escapeDriveQuery(value) {
@@ -1573,6 +1598,10 @@ async function routeApi(request, env) {
   if (path === '/api/profile/signature' && ['GET', 'PUT'].includes(request.method)) return handleMailSignature(request, env, config)
   if (path === '/api/google/gmail/images' && request.method === 'GET') return handleGmailImages(request, env, config)
   if (path === '/api/google/gmail/inbox' && request.method === 'GET') return handleGmailInbox(request, env, config)
+  if (path === '/api/communication-journal' && ['GET', 'POST'].includes(request.method)) return handleCommunicationJournal(request, env, config, {
+    json: apiJson, requireUser, currentMembership, allowed: rolePermissionAllowed,
+    getGoogleTokens: googleTokens, googleFetch, normalize: normalizeGmailMessage, admin: supabaseAdmin,
+  })
   if (path === '/api/task-notifications/send' && request.method === 'POST') return handleTaskNotifications(request, env, config)
   if (path === '/api/google/gmail/unread' && request.method === 'GET') return handleGmailState(request, env, config)
   if (['/api/google/gmail/read', '/api/google/gmail/trash'].includes(path) && request.method === 'POST') return handleGmailState(request, env, config)
@@ -1597,6 +1626,7 @@ async function routeApi(request, env) {
   if (path === '/api/google/gmail/send' && request.method === 'POST') return handleGmailSend(request, env, config)
   if (path === '/api/google/calendar/events' && request.method === 'GET') return handleCalendarList(request, env, config)
   if (path === '/api/google/calendar/events' && request.method === 'POST') return handleCalendarCreate(request, env, config)
+  if (path === '/api/google/calendar/event' && ['PATCH', 'DELETE'].includes(request.method)) return handleCalendarMutation(request, env, config, { json: apiJson, requireUser, currentMembership, allowed: rolePermissionAllowed, googleFetch })
   if (path === '/api/google/drive/project-folder' && ['GET', 'DELETE'].includes(request.method)) return handleDriveProjectFolderRead(request, env, config)
   if (path === '/api/google/drive/project-folder' && request.method === 'POST') return handleDriveProjectFolder(request, env, config)
   if (path === '/api/google/drive/files' && request.method === 'GET') return handleDriveFiles(request, env, config)
