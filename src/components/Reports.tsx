@@ -1,4 +1,5 @@
 import { downloadTable } from '../lib/tableExport'
+import { reportWeekPeriod } from '../lib/reportPeriod'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { ArrowRight, Camera, ChevronLeft, Download, FileText, Plus, Printer, Trash2, X } from 'lucide-react'
 import { getCurrentUser, uploadFile } from '../lib/backend'
@@ -7,6 +8,7 @@ import type { AreaPermissions } from '../lib/permissions'
 import { Chip, EmptyState, Field, Modal, StoredImage, confirmDelete, dateLabel, nowIso, uid } from './common'
 
 import DeleteButton from './RecordDelete'
+import ReportHistory from './ReportHistory'
 import { SaveButton } from './WorkspaceSave'
 
 const reportStatuses = ['פתוח', 'לא תקין', 'בוצע חלקית', 'לא בוצע', 'תקין', 'בוצע', 'סגור']
@@ -113,6 +115,7 @@ export default function ReportsPage({ workspace, setWorkspace, orgId, projectId,
 }
 
 function ReportEditor({ workspace, setWorkspace, report, orgId, onBack, onProject, permissions, canUploadFiles, focusItemId }: { workspace: Workspace; setWorkspace: React.Dispatch<React.SetStateAction<Workspace>>; report: InspectionReport; orgId: string; onBack: () => void; onProject?: (id: string) => void; permissions: AreaPermissions; canUploadFiles: boolean; focusItemId?: string | null }) {
+  const [templateName, setTemplateName] = useState('')
   const canUpdate = permissions.edit
   const canStatus = permissions.status || permissions.edit
   const canDelete = permissions.delete
@@ -169,6 +172,15 @@ function ReportEditor({ workspace, setWorkspace, report, orgId, onBack, onProjec
 
   const project = workspace.projects.find((item) => item.id === report.projectId)
   return <div className="report-editor">
+    <p className="info-banner">תבנית עבודה ניתנת לעריכה. יש לקבל את אישור הלקוח לתבנית לפני הנפקה רשמית.</p>
+    {canUpdate && <button type="button" className="secondary report-template-controls" onClick={() => { try { patchReport(reportWeekPeriod(report.inspectionDate)) } catch (e) { setPhotoError(e instanceof Error ? e.message : 'תאריך לא תקין') } }}>תקופת דיווח שבועית לפי תאריך הביקורת</button>}
+    {permissions.create && <details className="card report-template-controls"><summary>שמירת מבנה כתבנית חוזרת</summary><form onSubmit={event => {
+      event.preventDefault()
+      const name = templateName.trim()
+      if (!name || workspace.reportTemplates.some(template => template.name === name)) { setPhotoError('יש לבחור שם תבנית חדש.'); return }
+      setWorkspace(current => ({ ...current, reportTemplates: [...current.reportTemplates, { id: uid('report-template'), name, layout: report.layout, sectionTitles: report.sections.map(section => section.title) }] }))
+      setTemplateName(''); setPhotoError('')
+    }}><p>יישמרו הפורמט ושמות המקצועות בלבד, ללא ממצאים, תמונות או פרטי לקוחות.</p><label>שם התבנית<input required value={templateName} onChange={e => setTemplateName(e.target.value)} /></label><button type="submit" className="secondary">שמירת תבנית</button></form></details>}
     {photoError && <div className="error-banner" role="alert">{photoError}</div>}
     {uploadingPhoto && <div className="info-banner" role="status">מעלה תמונה...</div>}
     {project && onProject && <div className="context-links report-project-links"><span>פרויקט:</span><button type="button" onClick={() => onProject(project.id)}>{project.name}</button></div>}
@@ -179,6 +191,7 @@ function ReportEditor({ workspace, setWorkspace, report, orgId, onBack, onProjec
     <div className="inspection-sections">{report.sections.map((section, sectionIndex) => <section className="card inspection-section" key={section.id}><div className="card-head"><div className="section-title-edit"><span>{sectionIndex + 1}</span><input aria-label={`שם קטגוריה ${sectionIndex + 1}`} disabled={!canUpdate} value={section.title} onChange={(e) => patchSection(section.id, (current) => ({ ...current, title: e.target.value }))} /></div><div>{canUpdate && <button type="button" className="secondary" onClick={() => addItem(section.id)}><Plus /> סעיף</button>}{canUpdate && canDelete && <button type="button" className="icon-btn danger" aria-label={`מחיקת קטגוריה ${section.title}`} onClick={() => { if (confirmDelete(`הקטגוריה "${section.title}"`)) patchReport({ sections: report.sections.filter((item) => item.id !== section.id) }) }}><Trash2 /></button>}</div></div><div className="inspection-item-list">{section.items.map((item, index) => <article className={`inspection-item ${focusItemId === item.id ? 'focused-report-item' : ''}`} data-report-item-id={item.id} key={item.id}><div className="issue-number">{index + 1}</div><div className="issue-main"><label>תיאור<textarea rows={3} disabled={!canUpdate} value={item.description} onChange={(e) => patchItem(section.id, item.id, { description: e.target.value })} /></label><div className="issue-fields"><label>סטטוס<select disabled={!canStatus} value={item.status} onChange={(e) => patchItem(section.id, item.id, { status: e.target.value })}>{reportStatuses.map((status) => <option key={status}>{status}</option>)}</select></label><label>אחראי<input disabled={!canUpdate} value={item.responsible || ''} onChange={(e) => patchItem(section.id, item.id, { responsible: e.target.value })} /></label></div><label className="treatment-field">לטיפול / הערות<textarea disabled={!canUpdate} rows={3} value={item.treatment} onChange={(e) => patchItem(section.id, item.id, { treatment: e.target.value })} /></label>{item.sourceTaskId && <small>משימת מקור: <bdi>{item.sourceTaskId}</bdi> · {item.sourceTaskStatus || ''}{!workspace.tasks.some(task => task.id === item.sourceTaskId) && ' · המשימה אינה זמינה; תוכן הדוח נשמר'}</small>}<div className="issue-actions">{canUpdate && canUploadFiles && <label className="secondary file-label"><Camera /> הוספת תמונה<input type="file" disabled={uploadingPhoto} accept="image/*" capture="environment" onChange={(e) => { const file = e.currentTarget.files?.[0]; e.currentTarget.value = ''; if (file) void attachPhoto(section.id, item, file) }} /></label>}{canUpdate && canDelete && <button type="button" className="icon-btn danger" aria-label="מחיקת סעיף" onClick={() => { if (confirmDelete('הסעיף')) patchSection(section.id, (current) => ({ ...current, items: current.items.filter((currentItem) => currentItem.id !== item.id) })) }}><Trash2 /></button>}</div></div><div className="issue-photos">{item.photos.map((photo) => <figure key={photo.id}><StoredImage photo={photo} alt={photo.caption || item.description} /><input aria-label="כיתוב תמונה" disabled={!canUpdate} value={photo.caption || ''} onChange={(e) => patchItem(section.id, item.id, { photos: item.photos.map((current) => current.id === photo.id ? { ...current, caption: e.target.value } : current) })} placeholder="כיתוב" />{canUpdate && canDelete && <button type="button" aria-label="מחיקת תמונה" onClick={() => { if (confirmDelete('התמונה')) patchItem(section.id, item.id, { photos: item.photos.filter((current) => current.id !== photo.id) }) }}><X /></button>}</figure>)}</div></article>)}{!section.items.length && <div className="table-empty">אין סעיפים.</div>}</div></section>)}
       {canUpdate && <button type="button" className="add-section secondary" onClick={() => patchReport({ sections: [...report.sections, { id: uid('section'), title: 'קטגוריה חדשה', items: [] }] })}><Plus /> קטגוריה</button>}
     </div>
+    <ReportHistory orgId={orgId} reportId={report.id} canCapture={canUpdate} />
     <PrintableReport report={report} projectName={project?.name || ''} settings={workspace.settings} />
   </div>
 }

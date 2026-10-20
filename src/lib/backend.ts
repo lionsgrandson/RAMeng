@@ -1,6 +1,6 @@
 import { createClient, type RealtimeChannel, type SupabaseClient, type User } from '@supabase/supabase-js'
 import type { RuntimeConfig } from './runtime'
-import type { Workspace } from '../types'
+import type { Workspace, InspectionReport } from '../types'
 import { cloneWorkspace, hydrateWorkspace } from '../seed'
 import type { StoredPermissions } from './permissions'
 import { authRedirectUrl } from './runtime'
@@ -17,6 +17,9 @@ function localizedBackendError(error: unknown, fallback: string) {
   if (normalized.includes('email not confirmed')) return new Error('יש לאשר את כתובת המייל לפני ההתחברות.')
   if (normalized.includes('password should be at least')) return new Error('הסיסמה קצרה מדי.')
   if (normalized.includes('rate limit')) return new Error('בוצעו יותר מדי ניסיונות. נסו שוב בעוד כמה דקות.')
+  if (normalized.includes('only the developer can grant')) return new Error('רק המפתח יכול להעניק הרשאות Google, ייבוא והגדרות חדשות.')
+  if (normalized.includes('task access denied') || normalized.includes('only an administrator')) return new Error('אין הרשאה לבצע את הפעולה. ייתכן שהגישה בוטלה.')
+  if (normalized.includes('task_status_conflict')) return new Error('סטטוס המשימה עודכן בינתיים. רעננו ובחרו שוב.')
   if (normalized.includes('row-level security') || normalized.includes('permission denied')) return new Error('אין הרשאה לבצע את הפעולה.')
   if (normalized.includes('already exists') || normalized.includes('duplicate')) return new Error('הפריט כבר קיים במערכת.')
   return new Error(fallback)
@@ -217,6 +220,33 @@ export async function readWorkspaceState(orgId: string) {
   if (error) throw localizedBackendError(error, 'רענון הנתונים נכשל')
   const row = Array.isArray(data) ? data[0] : data
   return row?.data ? { workspace: hydrateWorkspace(row.data), version: Number(row.version || 0) } : null
+}
+
+export async function updateExternalTaskStatus(orgId: string, taskId: string, status: string, expectedStatus: string) {
+  if (!client || orgId === 'local') throw new Error('עדכון משימות חיצוניות דורש חיבור לשרת.')
+  const { error } = await client.rpc('set_assigned_task_status', {
+    target_org: orgId, target_task: taskId, next_status: status, expected_status: expectedStatus,
+  })
+  if (error) throw localizedBackendError(error, 'עדכון סטטוס המשימה נכשל. נסו שוב.')
+}
+
+export interface ReportSnapshot { id: string; captured_by: string; captured_at: string; workspace_version: number; snapshot: { report: InspectionReport; projectName: string; organizationName: string } }
+export async function listReportSnapshots(orgId: string, reportId: string): Promise<Omit<ReportSnapshot, 'snapshot'>[]> {
+  if (!client || orgId === 'local') return []
+  const { data, error } = await client.from('report_snapshots').select('id,captured_by,captured_at,workspace_version').eq('org_id', orgId).eq('report_id', reportId).order('captured_at', { ascending: false }).limit(50)
+  if (error) throw localizedBackendError(error, 'טעינת היסטוריית הדוח נכשלה')
+  return data as ReportSnapshot[]
+}
+export async function readReportSnapshot(orgId: string, snapshotId: string): Promise<ReportSnapshot> {
+  if (!client || orgId === 'local') throw new Error('צפייה בגרסת דוח דורשת חיבור לשרת.')
+  const { data, error } = await client.from('report_snapshots').select('id,captured_by,captured_at,workspace_version,snapshot').eq('org_id', orgId).eq('id', snapshotId).single()
+  if (error || !data) throw localizedBackendError(error, 'טעינת גרסת הדוח נכשלה')
+  return data as ReportSnapshot
+}
+export async function captureReportSnapshot(orgId: string, reportId: string) {
+  if (!client || orgId === 'local') throw new Error('שמירת גרסת דוח דורשת חיבור לשרת.')
+  const { error } = await client.rpc('capture_report_snapshot', { target_org: orgId, target_report: reportId })
+  if (error) throw localizedBackendError(error, 'שמירת גרסת הדוח נכשלה')
 }
 
 export function subscribeWorkspace(orgId: string, onWorkspace: (workspace: Workspace, version: number) => void): RealtimeChannel | null {

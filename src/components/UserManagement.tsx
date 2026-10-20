@@ -64,6 +64,7 @@ export default function UserManagement({ orgId, canManage, isDeveloper, workspac
   workspace: Workspace
   setWorkspace: React.Dispatch<React.SetStateAction<Workspace>>
 }) {
+  const [grantsLoading, setGrantsLoading] = useState(false)
   const [projectGrants, setProjectGrants] = useState<{ project_id: string; user_id: string }[]>([])
   const [managingExternal, setManagingExternal] = useState<OrganizationMember | null>(null)
   const [members, setMembers] = useState<OrganizationMember[]>([])
@@ -279,7 +280,7 @@ export default function UserManagement({ orgId, canManage, isDeveloper, workspac
             <td>{protectedDeveloper
               ? <span className="muted-text">מוגן</span>
               : canManage
-                ? member.role === 'external' ? <button type="button" className="secondary" onClick={() => { setManagingExternal(member); void listProjectCollaborators(orgId).then(setProjectGrants).catch(e => setError(e.message)) }}>גישה לפרויקטים</button> : <button type="button" className="secondary" onClick={() => openPermissions(member)}><SlidersHorizontal /> התאמה</button>
+                ? member.role === 'external' ? <button type="button" className="secondary" onClick={() => { setManagingExternal(member); setGrantsLoading(true); setError(''); setMessage(''); void listProjectCollaborators(orgId).then(setProjectGrants).catch(e => setError(e.message)).finally(() => setGrantsLoading(false)) }}>גישה לפרויקטים</button> : <button type="button" className="secondary" onClick={() => openPermissions(member)}><SlidersHorizontal /> התאמה</button>
                 : <span className="muted-text">—</span>}</td>
             <td>{canManage
               ? <div className="user-actions">
@@ -305,7 +306,7 @@ export default function UserManagement({ orgId, canManage, isDeveloper, workspac
       {!members.length && <EmptyState title="אין משתמשים נוספים" text="הוסיפו משתמש." />}
     </div>}
 
-    {managingExternal && <Modal title={`גישה לפרויקטים — ${managingExternal.displayName}`} onClose={() => setManagingExternal(null)}><p>המשתתף יראה רק פרויקטים מסומנים ומשימות שהוקצו לו, ויוכל לעדכן רק את סטטוס המשימות שלו. מסמכים משותפים בנפרד דרך Drive.</p>{error && <p role="alert">{error}</p>}{workspace.projects.map(project => <label key={project.id}><input type="checkbox" disabled={submitting} checked={projectGrants.some(grant => grant.project_id === project.id && grant.user_id === managingExternal.userId)} onChange={event => { const allow = event.target.checked; setSubmitting(true); void setProjectCollaborator(orgId, project.id, managingExternal.userId, allow).then(() => listProjectCollaborators(orgId)).then(setProjectGrants).catch(e => setError(e.message)).finally(() => setSubmitting(false)) }} />{project.name}</label>)}</Modal>}
+    {managingExternal && <Modal title={`גישה לפרויקטים — ${managingExternal.displayName}`} onClose={() => !submitting && setManagingExternal(null)}><p>המשתתף יראה רק פרויקטים מסומנים ומשימות שהוקצו לו, ויוכל לעדכן רק את סטטוס המשימות שלו. מסמכים משותפים בנפרד דרך Drive.</p>{error && <p role="alert">{error}</p>}{message && <p role="status">{message}</p>}{workspace.projects.map(project => <label className="project-access-row" key={project.id}><input type="checkbox" disabled={submitting || grantsLoading} checked={projectGrants.some(grant => grant.project_id === project.id && grant.user_id === managingExternal.userId)} onChange={event => { const allow = event.target.checked; setError(''); setMessage(''); setSubmitting(true); void setProjectCollaborator(orgId, project.id, managingExternal.userId, allow).then(() => listProjectCollaborators(orgId)).then(grants => { setProjectGrants(grants); setMessage('הגישה לפרויקט נשמרה.'); }).catch(e => setError(e.message)).finally(() => setSubmitting(false)) }} /><span>{project.name}</span></label>)}</Modal>}
     {adding && <Modal title="הוספת משתמש" onClose={() => !submitting && setAdding(false)}>
       <form className="form-grid" onSubmit={(e) => void add(e)}>
         <div className="info-banner"><MailPlus /> משתמש חדש יקבל הזמנה במייל. ניתן לדייק את ההרשאות אחרי ההוספה.</div>
@@ -317,7 +318,7 @@ export default function UserManagement({ orgId, canManage, isDeveloper, workspac
     </Modal>}
 
     {editingPermissions && permissionDraft && <Modal title={`הרשאות · ${editingPermissions.displayName || editingPermissions.email}`} onClose={() => !submitting && setEditingPermissions(null)} wide>
-      <div className="permission-editor">
+      <div className="permission-editor">{error && <div role="alert" className="error-banner">{error}</div>}
         <div className="info-banner"><ShieldCheck /> בחרו את ההרשאות עבור המשתמש.</div>
         <div className="permission-presets" aria-label="תבניות הרשאה">
           <button type="button" className={resetToRoleDefault ? 'primary' : 'secondary'} onClick={() => applyPermissionPreset('role')}>ברירת מחדל לתפקיד</button>

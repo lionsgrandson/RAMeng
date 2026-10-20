@@ -20,7 +20,10 @@ export const updatePassword = async () => user
 export const updateCurrentUserName = async (name: string) => ({ ...user, user_metadata: { full_name: name } })
 export const listOrganizationMembers = async () => [{ userId: user.id, displayName: user.user_metadata.full_name, email: user.email, role }, ...JSON.parse(localStorage.getItem('qa-members') || '[]')]
 export const setOrganizationMemberRole = async () => undefined
-export const setOrganizationMemberPermissions = async () => undefined
+export const setOrganizationMemberPermissions = async (_org: string, userId: string, permissions: unknown) => {
+  const members = JSON.parse(localStorage.getItem('qa-members') || '[]')
+  localStorage.setItem('qa-members', JSON.stringify(members.map((member: any) => member.userId === userId ? { ...member, permissions } : member)))
+}
 export const taskNotifications = async () => []
 export const readTaskNotification = async () => undefined
 export const listProjectCollaborators = async () => JSON.parse(localStorage.getItem('qa-project-grants') || '[]')
@@ -61,3 +64,29 @@ export async function uploadFile(_org: string, _project: string, file: File) {
 export const refreshSignedUrl = async () => ''
 
 export const readWorkspaceState = async () => { const raw = localStorage.getItem(key); return raw ? { workspace: JSON.parse(raw), version: Number(localStorage.getItem(versionKey) || 0) } : null }
+
+export async function updateExternalTaskStatus(_org: string, taskId: string, status: string, expectedStatus: string) {
+  if (params.get('qaExternalSave') === 'error' && !failedSave) { failedSave = true; throw new Error('עדכון סטטוס המשימה נכשל. נסו שוב.') }
+  const {workspace} = await loadOrganizationWorkspace()
+  const task = workspace.tasks.find(task => task.id === taskId && task.assigneeId === user.id)
+  if (!task) throw new Error('אין גישה למשימה')
+  if (task.status !== expectedStatus && task.status !== status) throw new Error('סטטוס המשימה עודכן בינתיים')
+  task.status = status
+  if (status === 'בוצע') { task.completedAt = new Date().toISOString(); task.completedBy = user.id }
+  localStorage.setItem(key, JSON.stringify(workspace))
+  localStorage.setItem(versionKey, String(Number(localStorage.getItem(versionKey) || 0) + 1))
+}
+
+export const listReportSnapshots = async (_org: string, reportId: string) => JSON.parse(localStorage.getItem(`qa-report-snapshots-${reportId}`) || '[]')
+export async function captureReportSnapshot(_org: string, reportId: string) {
+  const {workspace,version}=await loadOrganizationWorkspace()
+  const rows=await listReportSnapshots(_org,reportId)
+  if (rows.some((row: any) => row.workspace_version===version)) return
+  const report=workspace.reports.find(report => report.id===reportId)
+  rows.unshift({id:`qa-snapshot-${rows.length+1}`,captured_by:'qa-user',captured_at:new Date().toISOString(),workspace_version:version,snapshot:{report:JSON.parse(JSON.stringify(report)),projectName:'פרויקט בדיקה',organizationName:'RAM QA'}})
+  localStorage.setItem(`qa-report-snapshots-${reportId}`,JSON.stringify(rows))
+}
+
+export async function readReportSnapshot(_org: string, id: string) {
+  return Object.keys(localStorage).filter(key => key.startsWith('qa-report-snapshots-')).flatMap(key => JSON.parse(localStorage.getItem(key) || '[]')).find(row => row.id===id)
+}

@@ -4,6 +4,7 @@ import type { Contact, Deal, DealStage, Quote, Task, TeamMember, Workspace } fro
 import { integrationsApi } from '../lib/api'
 import { ContactTags, ContactFields, contactFormDetails } from './ContactFields'
 import { appendUniqueContacts, appendUniqueTasks, mapContactImportRows, readImportRows, validateImportFile, resolveTaskProjectReference } from '../lib/imports'
+import { downloadTaskImportSample, downloadTaskImportExcel } from '../lib/importSample'
 import { Chip, EmptyState, Field, Modal, dateLabel, money, nowIso, uid } from './common'
 
 type DashboardPage = 'clients' | 'projects' | 'tasks' | 'calendar' | 'reports'
@@ -72,6 +73,7 @@ export function TeamPage({ workspace, setWorkspace }: { workspace: Workspace; se
 }
 
 export function ImportCenter({ workspace, setWorkspace, canImport }: { workspace: Workspace; setWorkspace: React.Dispatch<React.SetStateAction<Workspace>>; canImport: boolean }) {
+  const [sampleProjectId, setSampleProjectId] = useState('')
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -144,7 +146,17 @@ export function ImportCenter({ workspace, setWorkspace, canImport }: { workspace
   return <div className="import-grid">
     {!canImport && <div className="info-banner"><FileSpreadsheet /> קיימת הרשאת צפייה בלבד. כדי לייבא קבצים נדרשת גם הרשאת הוספה.</div>}
     <section className="card import-card"><span><UsersRound /></span><h2>ייבוא לקוחות</h2><p>Excel או CSV, כולל רשימות עורכי דין ואנשי קשר. הכותרות מזוהות אוטומטית גם אחרי שורות כותרת. ניתן לבחור כמה קבצים יחד.</p><label className="upload-button" aria-disabled={!canImport}><Upload /> בחירת קובץ<input disabled={!canImport || busy} aria-label="ייבוא קובץ לקוחות" multiple type="file" accept=".xlsx,.xls,.csv" onChange={(e) => onPick(e, 'contacts')} /></label></section>
-    <section className="card import-card"><span><ListChecks /></span><h2>ייבוא משימות</h2><p>Excel או CSV מכל הגיליונות, עם משימה, פרויקט (שם מדויק או ID), סטטוס, תאריכים והערות. לפני הייבוא תוצג בדיקת כפילויות.</p><label className="upload-button" aria-disabled={!canImport}><FileSpreadsheet /> בחירת קובץ<input disabled={!canImport || busy} aria-label="ייבוא קובץ משימות" type="file" accept=".xlsx,.xls,.csv" onChange={(e) => onPick(e, 'tasks')} /></label></section>
+    <section className="card import-card"><span><ListChecks /></span><h2>ייבוא משימות</h2><p>1. הורידו דוגמה ומלאו את המשימות. 2. בחרו קובץ. 3. בדקו את התצוגה המקדימה ואשרו את הייבוא.</p>
+      <label>פרויקט לדוגמה<select aria-label="פרויקט לדוגמה" value={sampleProjectId} onChange={event => setSampleProjectId(event.target.value)}><option value="">ללא שיוך לפרויקט</option>{workspace.projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
+      <button type="button" className="secondary" onClick={() => downloadTaskImportSample(sampleProjectId)}>הורדת CSV לדוגמה בעברית</button>
+      <button type="button" className="secondary" onClick={() => void downloadTaskImportExcel(sampleProjectId).catch(() => setError('הורדת Excel נכשלה. ניתן להשתמש בדוגמת CSV.'))}>הורדת Excel לדוגמה בעברית</button>
+      <p>עמודת חובה: <strong>משימה</strong>. עמודות רשות: פרויקט, סטטוס, תאריך התחלה, תאריך סיום, מועד מעקב, הערות, מייל. ניתן להשתמש גם בכותרות באנגלית: Task, Project, Status, Start Date, Due Date, Follow Up Date, Description, Email.</p>
+      <p>פרויקט: שם מדויק וחד־משמעי או מזהה קיים. {sampleProjectId ? <>בדוגמה שנבחרה: <bdi>{sampleProjectId}</bdi> = {workspace.projects.find(project => project.id === sampleProjectId)?.name}.</> : 'תא ריק ייצור משימה ללא פרויקט. בחרו פרויקט לעיל כדי לכלול בדוגמה מזהה תקין.'} פרויקט לא מוכר או שם כפול יעצרו את הייבוא.</p>
+      <p>תאריכים: <bdi>2026-10-27</bdi>, <bdi>27/10/2026</bdi> או <bdi>27.10.2026</bdi>. ב־Excel אפשר גם תא תאריך. סטטוס ריק יקבל “טרם התחיל”; ערכים מותרים: {workspace.taskStatuses.join(' · ')}.</p>
+      <p>שמרו CSV בקידוד UTF-8 (עם BOM או בלעדיו). Excel נקרא מכל גיליונות הנתונים. עד 10 MB ועד 20,000 רשומות. שורות ריקות וכותרות חוזרות ידולגו; כפילויות יוצגו לפני האישור ומשימות קיימות יישמרו.</p>
+      <label className="upload-button" aria-disabled={!canImport}><FileSpreadsheet /> בחירת קובץ<input disabled={!canImport || busy} aria-label="ייבוא קובץ משימות" type="file" accept=".xlsx,.xls,.csv" onChange={(e) => onPick(e, 'tasks')} /></label>
+      <p>לאחר הייבוא המתינו לאישור השמירה. המשימות יופיעו במסך “משימות” ובתוך הפרויקט ששויך. <a href="/samples/rameng-task-import-he.csv" download>דוגמה כללית ללא פרויקט</a></p>
+    </section>
     {busy && <div className="info-banner" role="status">קורא את הקבצים...</div>}
     {pending && preview && <Modal wide title="תצוגה מקדימה של ייבוא לקוחות" onClose={() => setPending(null)}><p>{pending.files.join(', ')}</p><p>{preview.added} אנשי קשר חדשים · {preview.skipped} כפילויות ידולגו</p><p>פרטי התפקיד, החברה, הטלפונים, הכתובת והעמודות הנוספות יישמרו בכרטיס הלקוח. שמות פרויקטים נשמרים כהפניות ללא יצירת פרויקטים.</p><div className="table-scroll"><table className="data-table"><thead><tr><th>שם</th><th>חברה</th><th>תפקיד</th><th>טלפון</th><th>נייד</th><th>מייל</th></tr></thead><tbody>{pending.contacts.slice(0, 10).map((contact) => <tr key={contact.id}><td>{contact.name}</td><td>{contact.company}</td><td>{contact.role}</td><td dir="ltr">{contact.phone}</td><td dir="ltr">{contact.mobile}</td><td>{contact.email}</td></tr>)}</tbody></table></div>{pending.contacts.length > 10 && <p>מוצגות 10 הרשומות הראשונות מתוך {pending.contacts.length}.</p>}<div className="form-actions"><button type="button" className="secondary" onClick={() => setPending(null)}>ביטול</button><button type="button" className="primary" disabled={!canImport || !preview.added} onClick={() => { if (!canImport) return; setWorkspace((current) => ({ ...current, contacts: appendUniqueContacts(current.contacts, pending.contacts).contacts })); setMessage(`יובאו ${preview.added} לקוחות; דולגו ${preview.skipped} כפילויות`); setPending(null) }}>ייבוא {preview.added} לקוחות</button></div></Modal>}
     {pendingTasks && taskPreview && <Modal wide title="תצוגה מקדימה של ייבוא משימות" onClose={() => setPendingTasks(null)}>

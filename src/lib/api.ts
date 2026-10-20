@@ -27,6 +27,9 @@ export interface MailProjectContext { orgId: string; projectId: string; taskId?:
 export interface MailSendResult { id: string; threadId: string; associationSaved?: boolean; subject?: string }
 export interface ProjectMailLink extends MailProjectContext { threadId: string; subject: string; from: string; to: string; date: string; snippet: string; incoming?: boolean; unread?: boolean }
 export const integrationsApi = {
+  communicationJournal: (orgId: string, projectId = '') => request<{ mailbox: { user_id: string; active: boolean; email: string; last_sync_at?: string; last_error_code?: string } | null; threads: JournalThread[] }>(`/api/communication-journal?orgId=${encodeURIComponent(orgId)}&projectId=${encodeURIComponent(projectId)}`),
+  journalMessages: (orgId: string, threadId: string) => request<{ messages: JournalMessage[] }>(`/api/communication-journal?orgId=${encodeURIComponent(orgId)}&threadId=${encodeURIComponent(threadId)}`),
+  shareJournalThread: (payload: { orgId: string; threadId: string; projectId: string; taskIds: string[]; contactIds: string[] }) => request<{ ok: boolean; threadId: string; messageCount: number }>('/api/communication-journal', { method: 'POST', body: JSON.stringify(payload) }),
   taskComments: (orgId: string, taskId: string, cursor = '') => request<{ comments: { id: string; body: string; authorId: string; at: string }[]; cursor: string }>(`/api/task-comments?orgId=${encodeURIComponent(orgId)}&taskId=${encodeURIComponent(taskId)}&cursor=${encodeURIComponent(cursor)}`),
   addTaskComment: (orgId: string, taskId: string, body: string) => request<{ comment: { id: string; body: string; authorId: string; at: string } }>('/api/task-comments', { method: 'POST', body: JSON.stringify({ orgId, taskId, body }) }),
   renameDrive: (payload: { orgId: string; projectId: string; fileId: string; name: string }) => request<{ file: GoogleDriveFile }>('/api/google/drive/rename', { method: 'PATCH', body: JSON.stringify(payload) }),
@@ -59,9 +62,11 @@ export const integrationsApi = {
   gmailSearch: (query: string) => request<{ threads: { id: string; snippet: string; subject?: string; from?: string }[] }>(`/api/google/gmail/search?q=${encodeURIComponent(query)}`),
   sendMail: (payload: { to: string; subject: string; body: string; html?: string; threadId?: string; attachments?: MailAttachment[]; draftKey?: string; draftId?: string; ownerId?: string } & Partial<MailProjectContext>) => request<MailSendResult>('/api/google/gmail/send', { method: 'POST', body: JSON.stringify(payload) }),
   contactMail: (emails: string[], pageToken = '', force = false) => request<{ threads: GmailThreadSummary[]; nextPageToken: string }>(`/api/google/gmail/contacts?emails=${encodeURIComponent(emails.join(','))}&pageToken=${encodeURIComponent(pageToken)}&force=${force}`),
-  contactCalendar: (emails: string[], from: string, to: string, force = false) => request<{ items: GoogleCalendarEvent[] }>(`/api/google/calendar/contacts?emails=${encodeURIComponent(emails.join(','))}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&force=${force}`),
-  calendarEvents: (from?: string, to?: string, force = false) => request<{ items: GoogleCalendarEvent[] }>(`/api/google/calendar/events?from=${encodeURIComponent(from || '')}&to=${encodeURIComponent(to || '')}&force=${force}`),
-  createCalendarEvent: (payload: { summary: string; start: string; end?: string; description?: string; location?: string }) => request<{ id: string; htmlLink?: string }>('/api/google/calendar/events', { method: 'POST', body: JSON.stringify(payload) }),
+  contactCalendar: (emails: string[], from: string, to: string, force = false) => request<{ items: GoogleCalendarEvent[]; partial?: boolean }>(`/api/google/calendar/contacts?emails=${encodeURIComponent(emails.join(','))}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&force=${force}`),
+  calendarEvents: (from?: string, to?: string, force = false) => request<{ items: GoogleCalendarEvent[]; partial?: boolean }>(`/api/google/calendar/events?from=${encodeURIComponent(from || '')}&to=${encodeURIComponent(to || '')}&force=${force}`),
+  updateCalendarEvent: (payload: { orgId: string; id: string; etag: string; summary: string; start: string; end: string; description?: string; location?: string }) => request<{ id: string; etag: string; htmlLink?: string }>('/api/google/calendar/event', { method: 'PATCH', body: JSON.stringify(payload) }),
+  deleteCalendarEvent: (payload: { orgId: string; id: string; etag: string }) => request<{ ok: boolean }>('/api/google/calendar/event', { method: 'DELETE', body: JSON.stringify(payload) }),
+  createCalendarEvent: (payload: { orgId?: string; localEventId?: string; requestKey?: string; summary: string; start: string; end?: string; description?: string; location?: string }) => request<{ id: string; htmlLink?: string; etag?: string }>('/api/google/calendar/events', { method: 'POST', body: JSON.stringify(payload) }),
   ensureProjectFolder: (payload: { projectId: string; name: string; parentId?: string; folderId?: string; readOnly?: boolean }) => request<{ id: string; name?: string; readOnly?: boolean; webViewLink: string }>('/api/google/drive/project-folder', { method: 'POST', body: JSON.stringify(payload) }),
   projectDriveFolder: (projectId: string) => request<{ folder: { id: string; name?: string; readOnly?: boolean; webViewLink: string } | null }>(`/api/google/drive/project-folder?projectId=${encodeURIComponent(projectId)}`),
   unlinkProjectDriveFolder: (projectId: string) => request<{ folder: null }>(`/api/google/drive/project-folder?projectId=${encodeURIComponent(projectId)}`, { method: 'DELETE' }),
@@ -84,7 +89,7 @@ export interface GmailApiMessage { id: string; threadId: string; from: string; t
 export interface MailAttachment { name: string; type: string; data: string }
 export interface GmailThreadSummary { id: string; subject: string; from: string; to: string; date: string; snippet: string }
 export interface DriveSettings { autoFiles: boolean; autoReports: boolean }
-export interface GoogleCalendarEvent { id: string; summary: string; start: string; end?: string; htmlLink?: string; location?: string }
+export interface GoogleCalendarEvent { etag?: string; editable?: boolean; description?: string; localEventId?: string; sourceOrgId?: string; id: string; summary: string; start: string; end?: string; htmlLink?: string; location?: string }
 export interface GoogleDriveFile { id: string; name: string; mimeType: string; size?: string; modifiedTime?: string; webViewLink?: string }
 export interface IntegrationStatus {
   google: { configured: boolean; connected: boolean; email?: string }
@@ -117,3 +122,6 @@ export async function bootstrapServer(payload: AdminConfig & { setupToken: strin
   if (!response.ok) throw new Error(body.error || 'שמירת ההגדרה נכשלה')
   return body
 }
+
+export interface JournalThread { id: string; mailbox_user_id: string; gmail_thread_id: string; project_id: string; task_ids: string[]; contact_ids: string[]; subject: string; synced_at: string }
+export interface JournalMessage { gmail_message_id: string; sender: string; recipients: string; cc: string; subject: string; sent_at: string | null; body: string; attachment_metadata: { name: string; mimeType: string; size: number }[] }

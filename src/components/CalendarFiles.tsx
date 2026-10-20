@@ -2,7 +2,7 @@ import { jerusalemInstant, jerusalemDate, taskCalendarTime } from '../lib/taskTi
 import { CategoryPicker } from './Categories'
 import { taskCalendarDates } from '../lib/taskCalendar'
 import DriveConnection from './DriveConnection'
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, useRef, type FormEvent } from 'react'
 import { CalendarPlus, ExternalLink, FileText, RefreshCw, Upload } from 'lucide-react'
 import DeleteButton from './RecordDelete'
 import { integrationsApi } from '../lib/api'
@@ -14,17 +14,21 @@ import { Chip, EmptyState, Field, Modal, StoredFileLink, PdfReaderButton, dateTi
 // Google metadata stays in the caller's personal display state. Shared records
 // retain their project/task links without hiding their matching Google event.
 export function mergeCalendarEvents(shared: CalendarEvent[], personal: CalendarEvent[]) {
-  const sameEvent = (left: CalendarEvent, right: CalendarEvent) => left.title === right.title && Date.parse(left.start) === Date.parse(right.start)
+  const sameEvent = (left: CalendarEvent, right: CalendarEvent) => right.googleLocalEventId ? left.id === right.googleLocalEventId : left.title === right.title && Date.parse(left.start) === Date.parse(right.start)
   return [...shared.map(item => {
     const google = personal.find(candidate => sameEvent(item, candidate))
-    return google ? { ...item, googleEventId: google.googleEventId, googleHtmlLink: google.googleHtmlLink } : item
+    return google ? { ...item, ...(google.googleLocalEventId ? { title: google.title, start: google.start, end: google.end, location: google.location, notes: google.notes } : {}), googleEventId: google.googleEventId, googleHtmlLink: google.googleHtmlLink, googleEtag: google.googleEtag, googleEditable: google.googleEditable, googleLocalEventId: google.googleLocalEventId } : item
   }), ...personal.filter(item => !shared.some(candidate => sameEvent(item, candidate)))]
 }
 
-export function CalendarPage({ workspace, setWorkspace, onProject, onTask, startCreating = false, canEdit = true, permissions }: { workspace: Workspace; setWorkspace: React.Dispatch<React.SetStateAction<Workspace>>; onProject?: (id: string) => void; onTask?: (id: string) => void; startCreating?: boolean; canEdit?: boolean; permissions?: AreaPermissions }) {
+export function CalendarPage({ orgId, workspace, setWorkspace, onProject, onTask, startCreating = false, canEdit = true, permissions }: { orgId: string; workspace: Workspace; setWorkspace: React.Dispatch<React.SetStateAction<Workspace>>; onProject?: (id: string) => void; onTask?: (id: string) => void; startCreating?: boolean; canEdit?: boolean; permissions?: AreaPermissions }) {
   const calendarPermissions: AreaPermissions = permissions || { view: true, create: canEdit, edit: canEdit, status: canEdit, delete: canEdit }
   const canCreate = calendarPermissions.create
   const canSync = calendarPermissions.view
+  const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null)
+  const [mutationBusy, setMutationBusy] = useState(false)
+  const [mutationMessage, setMutationMessage] = useState('')
+  const mutationLock = useRef(false)
   const [personalEvents, setPersonalEvents] = useState<CalendarEvent[]>([])
   const today = new Date(`${jerusalemDate(new Date().toISOString())}T12:00:00`)
   const dateKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
@@ -48,8 +52,9 @@ export function CalendarPage({ workspace, setWorkspace, onProject, onTask, start
     try {
       const from = new Date(new Date().setUTCHours(0, 0, 0, 0) - 30 * 86400000).toISOString()
       const to = new Date(new Date().setUTCHours(0, 0, 0, 0) + 180 * 86400000).toISOString()
-      const { items } = await integrationsApi.calendarEvents(from, to, force)
-      setPersonalEvents(items.map((item) => ({ id: `google-${item.id}`, title: item.summary, start: item.start, end: item.end, location: item.location, googleEventId: item.id, googleHtmlLink: item.htmlLink })))
+      const { items, partial } = await integrationsApi.calendarEvents(from, to, force)
+      if (partial) setError('מוצגים עד 2,500 אירועי Google בטווח הנוכחי. פתחו את היומן ב-Google להצגת השאר.')
+      setPersonalEvents(items.map((item) => ({ id: `google-${item.id}`, title: item.summary, start: item.start, end: item.end, location: item.location, googleEventId: item.id, googleHtmlLink: item.htmlLink, googleEtag: item.etag, googleEditable: item.editable && (!item.sourceOrgId || item.sourceOrgId === orgId), googleLocalEventId: item.sourceOrgId === orgId ? item.localEventId : undefined, notes: item.description })))
     } catch (e) {
       setError(e instanceof Error ? e.message : 'שגיאת סנכרון')
     } finally {
@@ -86,8 +91,8 @@ export function CalendarPage({ workspace, setWorkspace, onProject, onTask, start
     }
     if (data.get('google') === 'on') {
       try {
-        const created = await integrationsApi.createCalendarEvent({ summary: item.title, start: item.start, end: item.end, description: item.notes, location: item.location })
-        setPersonalEvents((current) => [...current, { ...item, id: `google-${created.id}`, googleEventId: created.id, googleHtmlLink: created.htmlLink }])
+        const created = await integrationsApi.createCalendarEvent({ orgId, localEventId: item.id, requestKey: item.id, summary: item.title, start: item.start, end: item.end, description: item.notes, location: item.location })
+        setPersonalEvents((current) => [...current, { ...item, id: `google-${created.id}`, googleEventId: created.id, googleHtmlLink: created.htmlLink, googleEtag: created.etag, googleEditable: true, googleLocalEventId: item.id }])
       } catch (e) {
         setError(`האירוע נשמר במערכת, אבל Google Calendar לא עודכן: ${e instanceof Error ? e.message : 'שגיאה לא ידועה'}`)
       }
@@ -99,6 +104,25 @@ export function CalendarPage({ workspace, setWorkspace, onProject, onTask, start
     setSubmitting(false)
   }
 
+  const localInput = (instant: string) => {
+    const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Jerusalem',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date(instant)).map(part => [part.type,part.value]))
+    return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`
+  }
+  const mutateEvent = async (item: CalendarEvent, changes?: {title:string;start:string;end:string;location:string;notes:string}) => {
+    if (mutationLock.current) return
+    mutationLock.current=true;setMutationBusy(true);setError('');setMutationMessage('')
+    try {
+      if (item.googleEventId) {
+        if (changes) await integrationsApi.updateCalendarEvent({orgId,id:item.googleEventId,etag:item.googleEtag || '',summary:changes.title,start:changes.start,end:changes.end,location:changes.location,description:changes.notes})
+        else await integrationsApi.deleteCalendarEvent({orgId,id:item.googleEventId,etag:item.googleEtag || ''})
+        // Only explicit provider metadata can associate a shared CRM record.
+        if (item.googleLocalEventId) setWorkspace(current => ({...current,events:changes ? current.events.map(event => event.id===item.googleLocalEventId ? {...event,...changes} : event) : current.events.filter(event => event.id!==item.googleLocalEventId)}))
+        await sync(true)
+      } else setWorkspace(current => ({...current,events:changes ? current.events.map(event => event.id===item.id ? {...event,...changes} : event) : current.events.filter(event => event.id!==item.id)}))
+      setEditingEvent(null);setMutationMessage(changes ? 'האירוע עודכן. שינויים במערכת נשמרים בנפרד ביומן השמירה.' : 'האירוע נמחק. שינויים במערכת נשמרים בנפרד ביומן השמירה.')
+    } catch (e) {setError(e instanceof Error ? e.message : 'עדכון האירוע נכשל. רעננו ונסו שוב.')}
+    finally {mutationLock.current=false;setMutationBusy(false)}
+  }
   const monthStart = new Date(month.getFullYear(), month.getMonth(), 1)
   const gridStart = new Date(monthStart)
   gridStart.setDate(monthStart.getDate() - monthStart.getDay())
@@ -137,7 +161,7 @@ export function CalendarPage({ workspace, setWorkspace, onProject, onTask, start
   })
   const selectedTasks = tasksFor(selectedDate)
 
-  return <div className="calendar-page">
+  return <div className="calendar-page">{mutationMessage && <p role="status" className="success-banner">{mutationMessage}</p>}
     <section className="card calendar-month-card">
       <div className="calendar-toolbar">
         <div><h2>יומן</h2><strong>{monthLabel}</strong></div>
@@ -176,12 +200,29 @@ export function CalendarPage({ workspace, setWorkspace, onProject, onTask, start
     <section className="card selected-day-card">
       <div className="card-head"><div><h2>{new Intl.DateTimeFormat('he-IL-u-ca-gregory', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(new Date(`${selectedDate}T12:00:00`))}</h2><p>אירועים ומשימות לתאריך שנבחר</p></div></div>
       <div className="selected-day-list">
-        {selectedEvents.map((item) => <article key={item.id} className="selected-day-item"><div className="calendar-date"><strong>{new Intl.DateTimeFormat('he-IL', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jerusalem' }).format(new Date(item.start))}</strong><span>אירוע</span></div><div><strong>{item.title}</strong><small>{dateTimeLabel(item.start)}{item.location ? ` · ${item.location}` : ''}</small><div className="context-links">{item.projectId && onProject && <button type="button" onClick={() => onProject(item.projectId!)}>פרויקט: {workspace.projects.find((project) => project.id === item.projectId)?.address || workspace.projects.find((project) => project.id === item.projectId)?.name || 'פתיחה'}</button>}{item.taskId && onTask && <button type="button" onClick={() => onTask(item.taskId!)}>פתיחת המשימה</button>}</div></div>{calendarPermissions.delete && !item.googleEventId && <DeleteButton message={`למחוק את האירוע "${item.title}"?`} onConfirm={() => setWorkspace((current) => ({ ...current, events: current.events.filter((event) => event.id !== item.id) }))} />}{item.googleEventId && <Chip tone="brand">Google</Chip>}{item.googleHtmlLink && <a className="icon-btn" href={item.googleHtmlLink} target="_blank" rel="noreferrer" aria-label={`פתיחת ${item.title} ב-Google Calendar`}><ExternalLink /></a>}</article>)}
+        {selectedEvents.map((item) => <article key={item.id} className="selected-day-item"><div className="calendar-date"><strong>{new Intl.DateTimeFormat('he-IL', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jerusalem' }).format(new Date(item.start))}</strong><span>אירוע</span></div><div><strong>{item.title}</strong><small>{dateTimeLabel(item.start)}{item.location ? ` · ${item.location}` : ''}</small><div className="context-links">{item.projectId && onProject && <button type="button" onClick={() => onProject(item.projectId!)}>פרויקט: {workspace.projects.find((project) => project.id === item.projectId)?.address || workspace.projects.find((project) => project.id === item.projectId)?.name || 'פתיחה'}</button>}{item.taskId && onTask && <button type="button" onClick={() => onTask(item.taskId!)}>פתיחת המשימה</button>}</div></div>{calendarPermissions.delete && !item.googleEventId && <DeleteButton message={`למחוק את האירוע "${item.title}"?`} onConfirm={() => setWorkspace((current) => ({ ...current, events: current.events.filter((event) => event.id !== item.id) }))} />}{calendarPermissions.edit && (!item.googleEventId || item.googleEditable) && <button type="button" className="secondary" disabled={mutationBusy} onClick={() => {setError('');setEditingEvent(item)}}>{item.googleEventId ? 'עריכה ב-Google' : 'עריכת אירוע'}</button>}{calendarPermissions.delete && item.googleEventId && item.googleEditable && !mutationBusy && <DeleteButton label="מחיקה ב-Google" message={`למחוק את האירוע "${item.title}" ב-Google${item.googleLocalEventId ? ' ואת האירוע המקושר במערכת' : ' בלבד'}?`} onConfirm={() => void mutateEvent(item)} />}{item.googleEventId && <Chip tone="brand">Google</Chip>}{item.googleHtmlLink && <a className="icon-btn" href={item.googleHtmlLink} target="_blank" rel="noreferrer" aria-label={`פתיחת ${item.title} ב-Google Calendar`}><ExternalLink /></a>}</article>)}
         {selectedTasks.map((task) => <article key={task.id} className="selected-day-item task-day-item"><div className="calendar-date"><strong>משימה</strong><span>{task.status}</span></div><div><strong>{task.title}{taskCalendarTime(task, selectedDate) && ` · ${taskCalendarTime(task, selectedDate)}`}</strong><small>{task.startDate === selectedDate ? 'תאריך התחלה' : task.dueDate === selectedDate ? 'תאריך סיום' : 'מועד מעקב'}{task.emailTo ? ` · ${task.emailTo}` : ''}</small><div className="context-links">{task.projectId && onProject && <button type="button" onClick={() => onProject(task.projectId!)}>פרויקט: {workspace.projects.find((project) => project.id === task.projectId)?.address || workspace.projects.find((project) => project.id === task.projectId)?.name || 'פתיחה'}</button>}{onTask && <button type="button" onClick={() => onTask(task.id)}>פתיחת המשימה</button>}</div></div><Chip tone={['בוצע', 'סגור'].includes(task.status) ? 'good' : 'brand'}>{task.status}</Chip></article>)}
         {!selectedEvents.length && !selectedTasks.length && <EmptyState title="אין פריטים בתאריך הזה" text="בחרו יום אחר או הוסיפו אירוע חדש." />}
       </div>
     </section>
 
+    {editingEvent && <Modal title={editingEvent.googleEventId ? 'עריכת אירוע ב-Google' : 'עריכת אירוע'} onClose={() => !mutationBusy && setEditingEvent(null)}><form className="form-grid" onSubmit={event => {
+      event.preventDefault()
+      const data=new FormData(event.currentTarget)
+      try {
+        const rawStart=String(data.get('start')),rawEnd=String(data.get('end'))
+        const start=jerusalemInstant(rawStart.slice(0,10),rawStart.slice(11,16)),end=jerusalemInstant(rawEnd.slice(0,10),rawEnd.slice(11,16))
+        if (Date.parse(end)<=Date.parse(start)) throw new Error('מועד הסיום חייב להיות אחרי מועד ההתחלה')
+        void mutateEvent(editingEvent,{title:String(data.get('title')).trim(),start,end,location:String(data.get('location') || ''),notes:String(data.get('notes') || '')})
+      } catch (e) {setError(e instanceof Error ? e.message : 'תאריך לא תקין')}
+    }}>{error && <p role="alert" className="error-banner">{error}</p>}<p>התאריכים והשעות לפי ירושלים. עריכת Google משמרת משתתפים והגדרות אירוע.</p>
+      <Field label="כותרת"><input name="title" required defaultValue={editingEvent.title} /></Field>
+      <Field label="התחלה"><input name="start" type="datetime-local" required defaultValue={localInput(editingEvent.start)} /></Field>
+      <Field label="סיום"><input name="end" type="datetime-local" required defaultValue={localInput(editingEvent.end || new Date(Date.parse(editingEvent.start)+3600000).toISOString())} /></Field>
+      <Field label="מיקום"><input name="location" defaultValue={editingEvent.location || ''} /></Field>
+      <Field label="הערות"><textarea name="notes" defaultValue={editingEvent.notes || ''} /></Field>
+      <div className="form-actions"><button type="button" className="secondary" disabled={mutationBusy} onClick={() => setEditingEvent(null)}>ביטול</button><button type="submit" className="primary" disabled={mutationBusy}>{mutationBusy ? 'שומר...' : 'שמירת האירוע'}</button></div>
+    </form></Modal>}
     {canCreate && adding && <Modal title="אירוע חדש" onClose={() => { if (!submitting) { setAdding(false); setFormError('') } }}>
       <form className="form-grid" onSubmit={(e) => void submit(e)}>
         {formError && <div className="error-banner" role="alert">{formError}</div>}

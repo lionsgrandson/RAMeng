@@ -3,6 +3,7 @@ import { createRequire } from 'node:module'
 import { readFile, readdir } from 'node:fs/promises'
 import { resolve, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { runConcurrencyChecks } from './rpc-concurrency.mjs'
 const dependencyRoot = process.env.RAMENG_TEST_PG_RUNTIME
 if (!dependencyRoot) throw new Error('Set RAMENG_TEST_PG_RUNTIME to a local embedded-postgres installation')
 const require = createRequire(join(resolve(dependencyRoot), 'package.json'))
@@ -13,11 +14,12 @@ let client
 try {
   await pg.initialise(); await pg.start()
   client = pg.getPgClient(); await client.connect()
-  for (const file of ['tests/db-bootstrap.sql', 'supabase/setup.sql', ...(await readdir('supabase/migrations')).filter(name => name.endsWith('.sql')).sort().map(name => `supabase/migrations/${name}`), 'tests/project-workflows.sql']) {
+  for (const file of ['tests/db-bootstrap.sql', 'supabase/setup.sql', ...(await readdir('supabase/migrations')).filter(name => name.endsWith('.sql')).sort().map(name => `supabase/migrations/${name}`), 'tests/project-workflows.sql', 'tests/final-qa-workflows.sql']) {
     let sql = await readFile(file, 'utf8')
     // pg executes SQL directly; psql's success echo is not SQL.
     sql = sql.replace(/^\\echo.*$/gm, '')
-    await client.query(sql)
+    const result = await client.query(sql)
+    for (const item of (Array.isArray(result) ? result : [result])) for (const row of item.rows || []) if (row.suite === 'final-qa') console.log(`PASS final QA: ${row.assertions} assertions; ${row.denials} expected denials`)
     console.log(`PASS ${file}`)
   }
   // The normal migration pass also covers databases where the optional
@@ -26,6 +28,7 @@ try {
     await client.query(await readFile(file, 'utf8'))
     console.log(`PASS ${file}`)
   }
+  await runConcurrencyChecks(pg)
   console.log('PASS disposable PostgreSQL workflow integration')
 } finally {
   if (client) await client.end()
