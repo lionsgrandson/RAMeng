@@ -1,3 +1,4 @@
+import { storageObjectName } from './storageObjectName'
 import { createClient, type RealtimeChannel, type SupabaseClient, type User } from '@supabase/supabase-js'
 import type { RuntimeConfig } from './runtime'
 import type { Workspace, InspectionReport } from '../types'
@@ -261,7 +262,7 @@ export function subscribeWorkspace(orgId: string, onWorkspace: (workspace: Works
 
 export async function uploadFile(orgId: string, projectId: string, file: File) {
   if (!client || orgId === 'local') return { url: await fileToDataUrl(file), path: '' }
-  const safeName = file.name.replace(/[^\p{L}\p{N}._-]+/gu, '_')
+  const safeName = storageObjectName(file.name)
   const path = `${orgId}/${projectId || 'general'}/${Date.now()}-${safeName}`
   const { error } = await client.storage.from('crm-files').upload(path, file, { upsert: false })
   if (error) throw localizedBackendError(error, 'העלאת הקובץ נכשלה')
