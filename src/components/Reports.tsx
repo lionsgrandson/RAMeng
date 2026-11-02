@@ -1,3 +1,5 @@
+import DocumentColumns from './DocumentColumns'
+import { documentColumns, reportColumnDefaults } from '../lib/documentColumns'
 import { downloadTable } from '../lib/tableExport'
 import { reportWeekPeriod } from '../lib/reportPeriod'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
@@ -62,7 +64,8 @@ export default function ReportsPage({ workspace, setWorkspace, orgId, projectId,
     const selectedProjectId = projectId || String(data.get('projectId') || '')
     if (!selectedProjectId) return
     const project = workspace.projects.find((item) => item.id === selectedProjectId)
-    const template = workspace.reportTemplates.find((item) => item.id === String(data.get('templateId'))) || workspace.reportTemplates[0]
+    const selectedTemplate = String(data.get('templateId') || '') || project?.reportTemplateId
+    const template = workspace.reportTemplates.find((item) => item.id === selectedTemplate) || workspace.reportTemplates[0]
     const report: InspectionReport = {
       id: uid('report'),
       projectId: selectedProjectId,
@@ -72,6 +75,7 @@ export default function ReportsPage({ workspace, setWorkspace, orgId, projectId,
       updatedAt: nowIso(),
       inspector: String(data.get('inspector') || currentInspector),
       layout: template?.layout || 'table',
+      columns: template?.columns,
       sections: (template?.sectionTitles || ['בנייה']).map((title) => ({ id: uid('section'), title, items: [] })),
     }
     setWorkspace((current) => ({ ...current, reports: [...current.reports, report] }))
@@ -83,6 +87,7 @@ export default function ReportsPage({ workspace, setWorkspace, orgId, projectId,
   if (editing) return <ReportEditor workspace={workspace} setWorkspace={setWorkspace} report={editing} orgId={orgId} onBack={() => { setEditingId(null); onSelectReport?.(null) }} onProject={onProject} permissions={reportPermissions} canUploadFiles={canUploadFiles} focusItemId={focusItemId} />
 
   return <>
+    {projectId && workspace.projects.find(project => project.id === projectId)?.reportTemplateIds?.length ? <p className="info-banner">סוגי דוחות לפרויקט: {workspace.reportTemplates.filter(template => workspace.projects.find(project => project.id === projectId)?.reportTemplateIds?.includes(template.id)).map(template => template.name).join(' · ')}</p> : null}
     <div className="list-filter-panel card report-filter-panel">
       <label className="list-filter-field filter-grow"><span>חיפוש</span><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="כותרת, כתובת, פרויקט או מפקח" /></label>
       {!projectId && <label className="list-filter-field"><span>פרויקט</span><select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)}><option value="הכל">כל הפרויקטים</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.name} — {project.address || 'כתובת חסרה'}</option>)}</select></label>}
@@ -108,7 +113,7 @@ export default function ReportsPage({ workspace, setWorkspace, orgId, projectId,
       <Field label="כותרת"><input name="title" placeholder="דוח פיקוח" /></Field>
       <Field label="תאריך"><input name="inspectionDate" type="date" defaultValue={new Date().toISOString().slice(0, 10)} /></Field>
       <Field label="מפקח"><input name="inspector" defaultValue={currentInspector} /></Field>
-      <Field label="פורמט"><select name="templateId">{workspace.reportTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}</select></Field>
+      <Field label="פורמט"><select name="templateId"><option value="">ברירת המחדל של הפרויקט</option>{workspace.reportTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}</select></Field>
       <div className="form-actions"><button className="primary">יצירת דוח</button></div>
     </form></Modal>}
   </>
@@ -150,8 +155,12 @@ function ReportEditor({ workspace, setWorkspace, report, orgId, onBack, onProjec
   }
 
   const exportCsv = () => {
-    const rows = report.sections.flatMap(section => section.items.map(item => [section.title, item.description, item.status, item.treatment, item.responsible || '', item.dueDate || '', item.sourceTaskId || '', item.sourceTaskStatus || '']))
-    downloadTable(report.title, ['קטגוריה', 'תיאור', 'סטטוס', 'לטיפול / הערות', 'אחראי', 'תאריך יעד', 'מזהה משימת מקור', 'סטטוס משימה במועד ההפקה'], rows)
+    const columns = documentColumns(report.columns, reportColumnDefaults).filter(column => column.visible)
+    const rows = report.sections.flatMap(section => section.items.map((item, index) => {
+      const values: Record<string, string> = { number: String(index + 1), description: item.description + (item.sourceTaskId ? `\nמשימת מקור: ${item.sourceTaskId} · ${item.sourceTaskStatus || ''}` : ''), status: item.status, treatment: item.treatment, responsible: [item.responsible, item.dueDate].filter(Boolean).join(' · '), photos: item.photos.map(photo => photo.caption || 'תמונה').join(', ') }
+      return [section.title, ...columns.map(column => values[column.key] || '')]
+    }))
+    downloadTable(report.title, ['קטגוריה', ...columns.map(column => column.label)], rows)
   }
 
   const print = async () => {
@@ -178,13 +187,14 @@ function ReportEditor({ workspace, setWorkspace, report, orgId, onBack, onProjec
       event.preventDefault()
       const name = templateName.trim()
       if (!name || workspace.reportTemplates.some(template => template.name === name)) { setPhotoError('יש לבחור שם תבנית חדש.'); return }
-      setWorkspace(current => ({ ...current, reportTemplates: [...current.reportTemplates, { id: uid('report-template'), name, layout: report.layout, sectionTitles: report.sections.map(section => section.title) }] }))
+      setWorkspace(current => ({ ...current, reportTemplates: [...current.reportTemplates, { id: uid('report-template'), name, layout: report.layout, sectionTitles: report.sections.map(section => section.title), columns: documentColumns(report.columns, reportColumnDefaults) }] }))
       setTemplateName(''); setPhotoError('')
-    }}><p>יישמרו הפורמט ושמות המקצועות בלבד, ללא ממצאים, תמונות או פרטי לקוחות.</p><label>שם התבנית<input required value={templateName} onChange={e => setTemplateName(e.target.value)} /></label><button type="submit" className="secondary">שמירת תבנית</button></form></details>}
+    }}><p>יישמרו הפורמט, העמודות ושמות המקצועות בלבד, ללא ממצאים, תמונות או פרטי לקוחות.</p><label>שם התבנית<input required value={templateName} onChange={e => setTemplateName(e.target.value)} /></label><button type="submit" className="secondary">שמירת תבנית</button></form></details>}
     {photoError && <div className="error-banner" role="alert">{photoError}</div>}
     {uploadingPhoto && <div className="info-banner" role="status">מעלה תמונה...</div>}
     {project && onProject && <div className="context-links report-project-links"><span>פרויקט:</span><button type="button" onClick={() => onProject(project.id)}>{project.name}</button></div>}
-    <div className="editor-top"><button type="button" className="secondary" onClick={onBack}><ArrowRight /> דוחות</button><div className="editor-actions">{(canUpdate || canStatus) && <SaveButton />}{canDelete && <DeleteButton label="מחיקת דוח" message={`למחוק את הדוח "${report.title}" וכל סעיפיו?`} onConfirm={() => setWorkspace((current) => ({ ...current, reports: current.reports.filter((item) => item.id !== report.id) }))} />}<select aria-label="פורמט הדוח" disabled={!canUpdate} value={report.layout} onChange={(e) => patchReport({ layout: e.target.value as ReportLayout })}><option value="table">טבלה</option><option value="cards">כרטיסים</option><option value="photo">תמונות</option></select><button type="button" className="secondary" onClick={() => setShowPrevious((value) => !value)}>פתוחים קודמים {unresolved.length ? `(${unresolved.length})` : ''}</button><button type="button" className="secondary" onClick={exportCsv}><Download /> CSV</button><button type="button" className="primary" onClick={() => void print()}><Printer /> הדפסה</button></div></div>
+    <div className="editor-top"><button type="button" className="secondary" onClick={onBack}><ArrowRight /> דוחות</button><div className="editor-actions">{(canUpdate || canStatus) && <SaveButton />}{canDelete && <DeleteButton label="מחיקת דוח" message={`למחוק את הדוח "${report.title}" וכל סעיפיו?`} onConfirm={() => setWorkspace((current) => ({ ...current, reports: current.reports.filter((item) => item.id !== report.id) }))} />}<select aria-label="פורמט הדוח" disabled={!canUpdate} value={report.layout} onChange={(e) => patchReport({ layout: e.target.value as ReportLayout })}><option value="table">טבלה</option><option value="cards">כרטיסים</option><option value="photo">תמונות</option></select><button type="button" className="secondary" onClick={() => setShowPrevious((value) => !value)}>פתוחים קודמים {unresolved.length ? `(${unresolved.length})` : ''}</button><button type="button" className="secondary" onClick={exportCsv}><Download /> CSV</button><button type="button" className="primary" onClick={() => void print()}><Printer /> הדפסה / PDF</button></div></div>
+    <DocumentColumns value={report.columns} defaults={reportColumnDefaults} disabled={!canUpdate} onChange={columns => patchReport({ columns })} />
     <section className="card report-meta"><div><label>כותרת<input disabled={!canUpdate} value={report.title} onChange={(e) => patchReport({ title: e.target.value })} /></label><label>כתובת<input disabled={!canUpdate} value={report.siteAddress} onChange={(e) => patchReport({ siteAddress: e.target.value })} /></label><label>תאריך<input disabled={!canUpdate} type="date" value={report.inspectionDate} onChange={(e) => patchReport({ inspectionDate: e.target.value })} /></label><label>מפקח<input disabled={!canUpdate} value={report.inspector} onChange={(e) => patchReport({ inspector: e.target.value })} /></label></div></section>
     {showPrevious && <section className="card previous-issues"><div className="card-head"><h2>פתוחים מדוחות קודמים</h2></div><div className="previous-grid">{unresolved.map((item) => <article key={`${item.oldReport.id}-${item.id}`}><div><strong>{item.description}</strong><small>{item.oldReport.title} · {item.sectionTitle} · {item.status}</small></div>{canUpdate && <button type="button" className="secondary" onClick={() => { const target = report.sections.find((section) => section.title === item.sectionTitle) || report.sections[0]; if (target) addItem(target.id, item) }}>הוספה לדוח</button>}</article>)}{!unresolved.length && <div className="table-empty">אין פריטים פתוחים.</div>}</div></section>}
     <section className="card report-meta"><label>תחילת תקופת הדיווח<input type="date" disabled={!canUpdate} value={report.periodStart || ''} max={report.periodEnd || undefined} onChange={event => patchReport({ periodStart: event.target.value })} /></label><label>סיום תקופת הדיווח<input type="date" disabled={!canUpdate} min={report.periodStart || undefined} value={report.periodEnd || ''} onChange={event => patchReport({ periodEnd: event.target.value })} /></label><label>סיכום והערות<textarea rows={3} disabled={!canUpdate} value={report.notes || ''} onChange={event => patchReport({ notes: event.target.value })} /></label></section>
@@ -197,9 +207,19 @@ function ReportEditor({ workspace, setWorkspace, report, orgId, onBack, onProjec
 }
 
 export function PrintableReport({ report, projectName, settings }: { report: InspectionReport; projectName: string; settings: Workspace['settings'] }) {
+  const columns = documentColumns(report.columns, reportColumnDefaults).filter(column => column.visible)
+  const field = (key: string, item: InspectionItem, index: number) => {
+    if (key === 'number') return index + 1
+    if (key === 'description') return <>{item.description}{item.sourceTaskId && <small className="print-source">משימת מקור: <bdi>{item.sourceTaskId}</bdi> · {item.sourceTaskStatus}</small>}</>
+    if (key === 'status') return <span className={`print-status ${isClosed(item.status) ? 'closed' : 'open'}`}>{item.status}</span>
+    if (key === 'treatment') return item.treatment
+    if (key === 'responsible') return <>{item.responsible}<br />{item.dueDate && dateLabel(item.dueDate)}</>
+    return <div className="print-photos">{item.photos.map(photo => <figure key={photo.id}><StoredImage photo={photo} alt={photo.caption || ''} />{photo.caption && <figcaption>{photo.caption}</figcaption>}</figure>)}</div>
+  }
   return <div className={`print-report layout-${report.layout}`} data-report-id={report.id}>
     <header className="print-header"><div className="print-brand"><img className="print-logo-image" src="/ram-engineering-logo.png" alt="ראם הנדסה" /><div><strong>{settings.organizationName}</strong><span>ניהול ופיקוח פרויקטים</span></div></div><div className="print-title"><h1>{report.title}</h1><p>{projectName}</p></div><div className="print-meta"><span><b>כתובת האתר:</b> {report.siteAddress || '—'}</span><span><b>תאריך עדכון:</b> {dateLabel(report.inspectionDate)}</span><span><b>מפקח:</b> {report.inspector}</span></div></header>
-    {(report.periodStart || report.periodEnd) && <p className="print-period">תקופת דיווח: {dateLabel(report.periodStart)} — {dateLabel(report.periodEnd)}</p>}<main>{report.sections.filter(section => section.items.length > 0).map((section, sectionIndex) => <section className="print-section" key={section.id}><h2>{sectionIndex + 1}. {section.title}</h2>{report.layout === 'table' ? <table><thead><tr><th>#</th><th>תיאור</th><th>סטטוס</th><th>לטיפול / הערות</th><th>אחראי / יעד</th><th>תמונות</th></tr></thead><tbody>{section.items.map((item, index) => <tr key={item.id}><td>{index + 1}</td><td>{item.description}{item.sourceTaskId && <small className="print-source">משימת מקור: <bdi>{item.sourceTaskId}</bdi> · {item.sourceTaskStatus}</small>}</td><td><span className={`print-status ${isClosed(item.status) ? 'closed' : 'open'}`}>{item.status}</span></td><td>{item.treatment}</td><td>{item.responsible}<br />{item.dueDate && dateLabel(item.dueDate)}</td><td><div className="print-photos">{item.photos.map((photo) => <StoredImage key={photo.id} photo={photo} alt="" />)}</div></td></tr>)}</tbody></table> : <div className="print-card-grid">{section.items.map((item, index) => <article key={item.id}><div className="print-card-head"><b>{index + 1}. {item.description}</b><span className={`print-status ${isClosed(item.status) ? 'closed' : 'open'}`}>{item.status}</span></div><p>{item.treatment}</p><small>{item.responsible} {item.dueDate && dateLabel(item.dueDate)} {item.sourceTaskId && `משימת מקור: ${item.sourceTaskId}`}</small><div className="print-photos large">{item.photos.map((photo) => <figure key={photo.id}><StoredImage photo={photo} alt="" />{photo.caption && <figcaption>{photo.caption}</figcaption>}</figure>)}</div></article>)}</div>}</section>)}</main>
+    {(report.periodStart || report.periodEnd) && <p className="print-period">תקופת דיווח: {dateLabel(report.periodStart)} — {dateLabel(report.periodEnd)}</p>}
+    <main>{report.sections.filter(section => section.items.length > 0).map((section, sectionIndex) => <section className="print-section" key={section.id}><h2>{sectionIndex + 1}. {section.title}</h2>{report.layout === 'table' ? <table><thead><tr>{columns.map(column => <th key={column.key} data-column={column.key}>{column.label}</th>)}</tr></thead><tbody>{section.items.map((item, index) => <tr key={item.id}>{columns.map(column => <td key={column.key} data-column={column.key}>{field(column.key, item, index)}</td>)}</tr>)}</tbody></table> : <div className="print-card-grid">{section.items.map((item, index) => <article key={item.id}>{columns.map(column => <div className={`print-card-field field-${column.key}`} key={column.key}><b>{column.label}</b><div>{field(column.key, item, index)}</div></div>)}</article>)}</div>}</section>)}</main>
     {report.notes && <section className="print-summary"><h2>סיכום והערות</h2><p>{report.notes}</p></section>}<footer className="print-footer">{settings.email && <span>{settings.email}</span>}{settings.secondaryEmail && <span>{settings.secondaryEmail}</span>}{settings.phone && <span>{settings.phone}</span>}{settings.website && <span>{settings.website.replace(/^https?:\/\//, '')}</span>}</footer>
   </div>
 }

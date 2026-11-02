@@ -26,7 +26,7 @@ export function createReportFromTasks(
   const tasks = taskIds.map((id) => workspace.tasks.find((item) => item.id === id && item.projectId === projectId)).filter((task) => task !== undefined)
   if (!tasks.length) throw new Error('יש לבחור משימות מהפרויקט')
 
-  const template = workspace.reportTemplates.find((item) => item.id === options.templateId) || workspace.reportTemplates[0]
+  const template = workspace.reportTemplates.find((item) => item.id === (options.templateId || project.reportTemplateId)) || workspace.reportTemplates[0]
   const sections: InspectionSection[] = (template?.sectionTitles || []).map((title) => ({ id: generateId('section'), title, items: [] }))
   for (const task of tasks) {
     const category = workspace.categories.find((item) => task.categoryIds?.includes(item.id))
@@ -64,6 +64,7 @@ export function createReportFromTasks(
     updatedAt: new Date().toISOString(),
     inspector: options.inspector || workspace.settings.defaultInspector || '',
     layout: template?.layout || 'table',
+    columns: template?.columns?.map(column => ({ ...column })),
     periodStart: options.periodStart || undefined,
     periodEnd: options.periodEnd || undefined,
     sections,

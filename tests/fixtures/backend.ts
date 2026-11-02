@@ -59,7 +59,8 @@ export async function saveOrganizationWorkspace(_org: string, _user: string, wor
 }
 export async function uploadFile(_org: string, _project: string, file: File) {
   if (params.get('qaUpload') === 'error') throw new Error('העלאת התמונה נכשלה. נסו שוב.')
-  return { url: URL.createObjectURL(file), path: '' }
+  const url = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = reject; reader.readAsDataURL(file) })
+  return { url, path: '' }
 }
 export const refreshSignedUrl = async () => ''
 

@@ -45,6 +45,9 @@ export interface Project {
   clientIds: ID[]
   contactIds?: ID[]
   meetingTemplate?: string
+  meetingColumns?: DocumentColumn[]
+  reportTemplateId?: ID
+  reportTemplateIds?: ID[]
   categoryIds?: ID[]
   managerId?: ID
   status: ProjectStatus
@@ -197,6 +200,7 @@ export interface InspectionReport {
   updatedAt: string
   inspector: string
   layout: ReportLayout
+  columns?: DocumentColumn[]
   sections: InspectionSection[]
   notes?: string
   periodStart?: string
@@ -208,7 +212,10 @@ export interface ReportTemplate {
   name: string
   layout: ReportLayout
   sectionTitles: string[]
+  columns?: DocumentColumn[]
 }
+
+export interface DocumentColumn { key: string; label: string; visible: boolean }
 
 export interface AuditEntry {
   id: ID
@@ -244,7 +251,7 @@ export interface AppSettings {
 }
 
 export interface Category { id: ID; name: string }
-export interface MeetingSummary { id: ID; projectId: ID; title: string; date: string; taskIds: ID[]; notes: string; taskNotes: Record<string, string>; updatedAt: string }
+export interface MeetingSummary { id: ID; projectId: ID; title: string; date: string; taskIds: ID[]; notes: string; taskNotes: Record<string, string>; updatedAt: string; columns?: DocumentColumn[]; photos?: InspectionPhoto[] }
 
 export interface Workspace {
   categories: Category[]

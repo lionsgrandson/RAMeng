@@ -2408,3 +2408,17 @@ textarea::placeholder {
 .report-version-readonly img { max-width:100%; max-height:24rem; object-fit:contain; }
 .report-version-readonly article { padding-block:.5rem; border-bottom:1px solid var(--line); white-space:pre-wrap; }
 @media print { body[data-print-report] .report-history, body[data-print-report] .report-template-controls { display:none!important; } }
+
+.document-columns{border:1px solid #d6dfd9;border-radius:10px;padding:12px;margin:12px 0;min-width:0;max-width:100%}
+.document-columns summary{cursor:pointer;font-weight:600}
+.document-column-row{display:flex;align-items:center;gap:8px;margin:6px 0;min-width:0}
+.document-column-row label{display:flex;align-items:center;gap:8px;flex:1;min-width:0;overflow-wrap:anywhere}
+.document-column-row input[type=checkbox]{width:18px;height:18px;flex:none;margin:0}
+.document-column-row button{min-width:36px;padding:5px 10px}
+.meeting-photo-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(220px,100%),1fr));gap:12px}
+.meeting-photo-grid figure{margin:0;min-width:0;max-width:100%}
+.meeting-photo-grid img{width:100%;height:180px;object-fit:contain}
+.meeting-photos{margin:14px 0}
+
+.project-report-type{display:flex;align-items:center;gap:8px;margin:8px 0;min-width:0}
+.project-report-type input[type=checkbox]{width:18px;height:18px;flex:none;margin:0}
