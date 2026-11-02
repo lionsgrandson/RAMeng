@@ -14,7 +14,7 @@ let client
 try {
   await pg.initialise(); await pg.start()
   client = pg.getPgClient(); await client.connect()
-  for (const file of ['tests/db-bootstrap.sql', 'supabase/setup.sql', ...(await readdir('supabase/migrations')).filter(name => name.endsWith('.sql')).sort().map(name => `supabase/migrations/${name}`), 'tests/project-workflows.sql', 'tests/final-qa-workflows.sql']) {
+  for (const file of ['tests/db-bootstrap.sql', 'supabase/setup.sql', ...(await readdir('supabase/migrations')).filter(name => name.endsWith('.sql')).sort().map(name => `supabase/migrations/${name}`), 'tests/project-workflows.sql', 'tests/final-qa-workflows.sql', 'tests/document-layouts.sql']) {
     let sql = await readFile(file, 'utf8')
     // pg executes SQL directly; psql's success echo is not SQL.
     sql = sql.replace(/^\\echo.*$/gm, '')

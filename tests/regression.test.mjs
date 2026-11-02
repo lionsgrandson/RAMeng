@@ -1544,3 +1544,49 @@ test('primary Google calendar reads all pages and preserves owner-specific provi
   assert.equal(response.status,200);assert.deepEqual(pages,[null,'next'])
   const body=await response.json();assert.deepEqual(body.items.map(item=>item.id),['first','second']);assert.equal(body.partial,false);assert.equal(body.items[0].localEventId,'local-id');assert.equal(body.items[0].etag,'etag')
 })
+
+
+test('document column choices preserve order, visibility, legacy defaults and immutable input', async () => {
+  const { documentColumns, reportColumnDefaults } = await server.ssrLoadModule('/src/lib/documentColumns.ts')
+  const value = [{ key: 'status', visible: false }, { key: 'description', visible: true }, { key: 'status', visible: true }, { key: 'unknown', visible: true }]
+  const before = JSON.stringify(value)
+  const columns = documentColumns(value, reportColumnDefaults)
+  assert.equal(JSON.stringify(value), before)
+  assert.deepEqual(columns.slice(0, 2).map(column => column.key), ['status', 'description'])
+  assert.equal(columns[0].visible, false)
+  assert.equal(new Set(columns.map(column => column.key)).size, reportColumnDefaults.length)
+  assert.deepEqual(documentColumns(undefined, reportColumnDefaults), reportColumnDefaults)
+  assert.equal(documentColumns(reportColumnDefaults.map(column => ({ ...column, visible: false })), reportColumnDefaults).filter(column => column.visible).length, 1)
+})
+
+test('report print and meeting export honor hidden and reordered fields without losing source data', async () => {
+  const React = await import('react'); const { renderToStaticMarkup } = await import('react-dom/server')
+  const { PrintableReport } = await server.ssrLoadModule('/src/components/Reports.tsx')
+  const { meetingHtml } = await server.ssrLoadModule('/src/components/MeetingSummaries.tsx')
+  const { reportColumnDefaults, meetingColumnDefaults } = await server.ssrLoadModule('/src/lib/documentColumns.ts')
+  const workspace = cloneWorkspace()
+  const columns = [{ key:'treatment', visible:true }, ...reportColumnDefaults.filter(column => column.key !== 'treatment').map(column => ({...column,visible:column.key!=='status'}))]
+  const report = {id:'r',title:'בדיקה',inspectionDate:'2026-11-02',layout:'table',columns,sections:[{id:'s',title:'בנייה',items:[{id:'i',description:'ממצא',status:'סטטוס פרטי',treatment:'טיפול',photos:[]}]}]}
+  const html = renderToStaticMarkup(React.createElement(PrintableReport, {report, projectName:'בדיקה',settings:workspace.settings}))
+  assert.ok(html.indexOf('data-column="treatment"') < html.indexOf('data-column="number"'))
+  assert.doesNotMatch(html,/סטטוס פרטי/)
+  for (const layout of ['cards','photo']) assert.doesNotMatch(renderToStaticMarkup(React.createElement(PrintableReport,{report:{...report,layout},projectName:'בדיקה',settings:workspace.settings})),/סטטוס פרטי/)
+  workspace.projects=[{id:'p',name:'בדיקה'}];workspace.tasks=[{id:'t',projectId:'p',title:'בדיקה',status:'סטטוס פרטי'}]
+  const summary={title:'סיכום',date:'2026-11-02',projectId:'p',taskIds:['t','removed'],notes:'',taskNotes:{},columns:[{key:'notes',visible:true},...meetingColumnDefaults.filter(column=>column.key!=='notes').map(column=>({...column,visible:column.key!=='status'}))],photos:[{url:'javascript:alert(1)',caption:'bad'},{url:'data:image/png;base64,abc',caption:'<script>caption</script>'}]}
+  const exported=meetingHtml(summary,workspace)
+  assert.ok(exported.indexOf('<th>הערות לפגישה')<exported.indexOf('<th>משימה'))
+  assert.match(exported,/colspan="5"/);assert.doesNotMatch(exported,/סטטוס פרטי|javascript:alert/);assert.match(exported,/&lt;script&gt;caption/)
+  assert.equal(report.sections[0].items[0].status,'סטטוס פרטי')
+})
+
+test('new task reports inherit the project template and copy its column layout', () => {
+  const workspace=cloneWorkspace()
+  workspace.projects=[{id:'p',name:'בדיקה',reportTemplateId:'chosen'}]
+  workspace.tasks=[{id:'t',projectId:'p',title:'בדיקה',status:'טרם התחיל'}]
+  workspace.reportTemplates=[{id:'first',layout:'table',sectionTitles:[]},{id:'chosen',layout:'cards',sectionTitles:[],columns:[{key:'status',visible:false}]}]
+  const report=createReportFromTasks(workspace,'p',['t'],{title:'בדיקה'})
+  assert.equal(report.layout,'cards');assert.equal(report.columns[0].visible,false)
+  report.columns[0].visible=true
+  assert.equal(workspace.reportTemplates[1].columns[0].visible,false)
+  assert.equal(createReportFromTasks(workspace,'p',['t'],{title:'בדיקה',templateId:'first'}).layout,'table')
+})
