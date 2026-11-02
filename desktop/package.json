@@ -9,7 +9,7 @@
     "dist": "electron-builder --win nsis"
   },
   "devDependencies": {
-    "electron": "44.3.0",
+    "electron": "44.10.1",
     "electron-builder": "26.15.3"
   },
   "build": {
@@ -29,7 +29,9 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "artifactName": "RAMeng-CRM-Setup.${ext}"

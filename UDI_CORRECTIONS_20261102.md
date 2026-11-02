@@ -10,6 +10,7 @@ Scope: the correction checklist resent by Udi and supplied by Moshe on 2 Novembe
 - New and existing projects can define required report types, a preferred report template/format, meeting notes and default summary columns. New reports, including selected-task reports, inherit the project default unless another template is explicitly selected.
 - Report output retains Hebrew RTL, source-task attribution, safe CSV escaping and existing report history. The report action explicitly says **הדפסה / PDF**. Browser PDF creation uses the print dialog's Save as PDF.
 - Updated DOMPurify 3.4.16 → 3.4.17 and the Vite lockfile 7.3.6 → 7.3.7 after install audits identified fixed advisories. Frontend production dependency audit reports zero vulnerabilities. No forced major upgrades.
+- The required GitHub check additionally identified an Electron certificate advisory in the existing desktop pin. Updated Electron 44.3.0 → 44.10.1 within the same major and regenerated its lockfile without installing/running a new desktop application. The desktop audit now has no high/critical findings; 16 moderate packaging-tool findings remain. Native installer packaging was not rebuilt or certified.
 
 ## Checklist reconciliation
 
