@@ -1590,3 +1590,27 @@ test('new task reports inherit the project template and copy its column layout',
   assert.equal(workspace.reportTemplates[1].columns[0].visible,false)
   assert.equal(createReportFromTasks(workspace,'p',['t'],{title:'בדיקה',templateId:'first'}).layout,'table')
 })
+
+
+test('private storage keys accept Hebrew, emoji and long filenames without altering display names', async () => {
+  const { storageObjectName } = await server.ssrLoadModule('/src/lib/storageObjectName.ts')
+  for (const name of ['תוכנית בעברית.pdf', 'צילום 📷 מהשטח.JPEG', 'plan?.pdf', '../תוכנית.pdf', 'תוכנית'.repeat(500)+'.pdf', 'שם ללא סיומת', '.hidden', 'drawing.TIFF']) {
+    const stored=storageObjectName(name)
+    assert.match(stored,/^[a-f0-9-]{36}(\.[a-z0-9]{1,12})?$/)
+    assert.ok(stored.length<=49)
+    assert.notEqual(stored,storageObjectName(name))
+    if (name.endsWith('.pdf')) assert.ok(stored.endsWith('.pdf'))
+  }
+})
+
+test('project file rows keep their project context when no navigation callback is supplied', async () => {
+  const React=await import('react'); const {renderToStaticMarkup}=await import('react-dom/server')
+  const { FilesPage }=await server.ssrLoadModule('/src/components/CalendarFiles.tsx')
+  const workspace=cloneWorkspace();workspace.projects=[{id:'p',name:'פרויקט בדיקה',address:'כתובת בדיקה',clientIds:[]}]
+  workspace.files=[{id:'f',projectId:'p',name:'תוכנית.pdf',type:'application/pdf',url:'data:application/pdf;base64,JVBERi0=',version:1,uploadedAt:'2026-11-02'}]
+  const savedWindow=globalThis.window;globalThis.window={}
+  try {
+    const html=renderToStaticMarkup(React.createElement(FilesPage,{workspace,setWorkspace:()=>{},orgId:'org',projectId:'p',canEdit:true}))
+    assert.match(html,/פרויקט: פרויקט בדיקה/)
+  } finally {globalThis.window=savedWindow}
+})
