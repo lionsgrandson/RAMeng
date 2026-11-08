@@ -43,7 +43,7 @@ If a release must be rolled back, deploy the recorded prior Worker version using
 ## Verification boundaries and genuine remaining acceptance
 
 - The connected Supabase MCP account lists a different application and does not expose RAMENG project `qvunspguudkhwgbjvvuf`. No unrelated database was queried or modified. Database tests above use a disposable local PostgreSQL instance; live schema/advisor checks were not repeated through MCP.
-- Google provider write lifecycles are verified with mocks, not a new real customer-recipient invitation, notification, external-account completion, folder-share/revoke or Drive move. A designated controlled recipient/mailbox is required to close those end-to-end acceptance cases without sending test messages to customers or changing their folders.
+- Gmail read/unread provider writes were verified live and restored to the original state (details below). Other provider write lifecycles use mocks: no new real customer-recipient invitation, notification, external-account completion, folder-share/revoke or Drive move was performed. A designated controlled recipient/mailbox is required to close those end-to-end acceptance cases without sending test messages to customers or changing their folders.
 - Udi's production session verified authenticated CRM access, Gmail inbox/thread UI already open, and the real Deborah calendar task. It does not constitute a new password login, expired-link or invitation lifecycle test.
 - Browser column preferences persist across reloads/sessions on the same browser/account; they are not synchronized across devices. Existing organization-wide display defaults remain in Settings.
 - Upload progress reports completed files, not byte-by-byte network progress. The private Storage backend enforces permissions and its 50 MB cap; extension validation in this release is client-side. Existing download links and permissions remain enforced by Storage.
@@ -53,4 +53,21 @@ If a release must be rolled back, deploy the recorded prior Worker version using
 
 ## Production release evidence
 
-Pending deployment; replace this paragraph with observed source SHA, main push, CI, Worker version and live checks after release.
+- Production URL: https://rameng-crm.rameng-crm-worker.workers.dev
+- Deployed source commit: `7e5bbef56d1bf334641e602a8b4d1704f1c5d409` (implementation commit `b11cf9576f24bca5f5de16801b0da0242bd45e8f`, followed by the tooling patch).
+- Source push to `main` verified using `git ls-remote`. GitHub accepted the direct push with an administrative bypass of its pending required check; deployment waited until the actual check completed successfully. Branch protection settings were not changed.
+- [Source CI run](https://github.com/lionsgrandson/RAMeng/actions/runs/42452821790): **success**, including 151 regressions, database workflows, 70 browser scenarios, build and expanded dependency audits.
+- Cloudflare Worker version: **`77ee2b6b-a10f-4c76-927a-4d06c414bae8`**, observed at **100%** in `wrangler deployments list`.
+- Deployment timestamp: **8 November 2026, 08:02:12 Jerusalem** (06:02:12 UTC). Existing CONFIG namespace, secrets/variables and five-minute schedule preserved.
+- **24/24 non-mutating production HTTP checks passed**: live HTML and every built static file matched local SHA-256 hashes; public configuration targeted RAMENG without privileged credential fields; seven anonymous API accesses were denied; PATCH preflight passed. Reproducible command: `node tests/production-smoke.mjs` after a production build.
+- Fresh unauthenticated Chromium contexts at **390 and 1440 pixels** loaded the live login, toggled visibility without changing the input value, returned to hidden mode, had no horizontal overflow and captured no browser exceptions. No login form was submitted. Screenshots: `artifacts/audit/live-login-390-20261108.png` and `live-login-1440-20261108.png`.
+- **Authenticated live Gmail round trip in Udi's Chrome profile:** selected an already-read existing message; marked unread; confirmed unread after reload; reopened/marked read; confirmed read after another reload. The original state was restored, and no composer opened or message was sent. The message body is not copied into this report.
+- **Authenticated live personal columns:** moved the first task column to the end using its keyboard control; reloaded and verified persistence; used the personal reset action and confirmed the original organization-defined column order was restored. No task fields or organization display defaults were changed.
+- **Authenticated post-deployment calendar:** the Deborah project's current partial-account task still appears on 13 October 2026 at 09:00. No Google event was created.
+- The authenticated pages showed **zero application alerts** during these checks. The browser log contained four older messaging-channel errors timestamped 05:42:30 UTC, preceding this deployment; no new exception was observed in the fresh live login contexts. This is not a claim to have audited all historic browser logs or all provider APIs.
+- Release evidence logs: `artifacts/audit/deployment-20261108.log`, `production-deployments-20261108.log`, `production-smoke-20261108.json`, `live-login-smoke-20261108.log`, `ci-main-20261108.log`.
+
+Administrator follow-up is limited to providing a designated controlled external test account/recipient and approved Drive test folder for remaining real invitation/status/notification/sharing/move acceptance, and testing the installed desktop/Foxit integration if that native workflow is required. No schema installation, credential reconfiguration or customer-data migration is required for this release.
+
+API references used during implementation: [Gmail thread labels](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.threads/modify), [Gmail attachment download](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages.attachments/get), [Drive file/folder moves](https://developers.google.com/workspace/drive/api/reference/rest/v3/files/update).
+
