@@ -63,3 +63,19 @@
 .rich-editor [data-resize-container]:hover [data-resize-handle], .rich-editor .ProseMirror-selectednode [data-resize-handle] { opacity: 1; }
 .rich-editor [data-resize-handle="top-left"], .rich-editor [data-resize-handle="bottom-right"] { cursor: nwse-resize; }
 .rich-editor [data-resize-handle="top-right"], .rich-editor [data-resize-handle="bottom-left"] { cursor: nesw-resize; }
+
+/* Account-specific column order, shared drag/keyboard controls and auth visibility. */
+.password-input { display: flex; align-items: center; gap: .35rem; min-width: 0; }
+.password-input input { flex: 1; min-width: 0; }
+.password-input .icon-btn { flex: 0 0 44px; width: 44px; height: 44px; }
+.column-drag-handle { cursor: grab; vertical-align: middle; touch-action: pan-x pan-y; }
+.column-drag-handle:active { cursor: grabbing; }
+.column-drag-handle:focus-visible { outline: 3px solid #167649; outline-offset: 2px; }
+[data-column-drop="true"] { box-shadow: inset -4px 0 #167649; background: #e2f3e8 !important; }
+.column-reorder-status { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.task-personal-columns .toolbar label { display: inline-flex; align-items: center; gap: .4rem; }
+.task-personal-columns input[type="checkbox"] { width: 18px; height: 18px; }
+.personal-column-moves { display: flex; flex-wrap: wrap; gap: .6rem; }
+.personal-column-moves > div { display: flex; align-items: center; gap: .3rem; }
+.email-attachments { display: flex; flex-wrap: wrap; gap: .5rem; margin-block: .75rem; }
+.email-attachments button { max-width: 100%; overflow-wrap: anywhere; }

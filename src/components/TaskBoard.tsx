@@ -5,6 +5,8 @@ import { taskColumnChoices } from '../lib/taskProfession'
 import { jerusalemInstant } from '../lib/taskTime'
 import { percentageTaskColumns, taskTableMinWidth, visibleTaskColumns } from '../lib/taskColumns'
 import { DisplayContext } from './DisplaySettings'
+import { orderedColumns, reorderColumn } from '../lib/columnOrder'
+import { useColumnReorder } from './ColumnReorder'
 import { TaskDeliveryStatus } from './TaskNotifications'
 import { CategoryManager, CategoryPicker } from './Categories'
 import MeetingSummaries from './MeetingSummaries'
@@ -70,7 +72,7 @@ export default function TaskBoard({ canUploadFiles = false, canInviteExternal = 
   const [columnFilters, setColumnFilters] = useState<Record<string, string>>({})
   const [scheduleError, setScheduleError] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('')
-  const { groupBy, density } = useContext(DisplayContext)
+  const { groupBy, density, taskColumnOrder, hiddenTaskColumns, update: updateDisplay } = useContext(DisplayContext)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [newCategories, setNewCategories] = useState<string[]>([])
   const [search, setSearch] = useState('')
@@ -78,6 +80,7 @@ export default function TaskBoard({ canUploadFiles = false, canInviteExternal = 
   const [projectFilter, setProjectFilter] = useState('הכל')
   const [addressFilter, setAddressFilter] = useState('')
   const [assigneeFilter, setAssigneeFilter] = useState('הכל')
+  const [assigneeKind, setAssigneeKind] = useState('all')
   const [colorFilter, setColorFilter] = useState('הכל')
   const [priorityFilter, setPriorityFilter] = useState('הכל')
   const [clientFilter, setClientFilter] = useState('הכל')
@@ -91,7 +94,9 @@ export default function TaskBoard({ canUploadFiles = false, canInviteExternal = 
   const [periodStart, setPeriodStart] = useState('')
   const [periodEnd, setPeriodEnd] = useState('')
   const [taskReportTemplate, setTaskReportTemplate] = useState('')
-  const visibleColumns = useMemo(() => percentageTaskColumns(visibleTaskColumns(workspace.taskColumns, projectId)).map(column => ({ ...column, options: taskColumnChoices(column, workspace) })), [workspace.taskColumns, workspace.categories, projectId])
+  const availableColumns = useMemo(() => orderedColumns(visibleTaskColumns(workspace.taskColumns, projectId), taskColumnOrder), [workspace.taskColumns, projectId, taskColumnOrder])
+  const visibleColumns = useMemo(() => percentageTaskColumns(availableColumns.filter(column => !hiddenTaskColumns.includes(column.key))).map(column => ({ ...column, options: taskColumnChoices(column, workspace) })), [availableColumns, hiddenTaskColumns, workspace.categories])
+  const columnReorder = useColumnReorder(visibleColumns, columns => updateDisplay({ taskColumnOrder: [...columns.map(column => column.key), ...taskColumnOrder.filter(key => !columns.some(column => column.key === key))] }))
   const activeCount = workspace.tasks.filter((task) => {
     if (projectId && task.projectId !== projectId) return false
     return !isCompleted(task)
@@ -113,6 +118,9 @@ export default function TaskBoard({ canUploadFiles = false, canInviteExternal = 
       if (projectFilter === '__none__' && task.projectId) return false
       if (projectFilter !== '__none__' && task.projectId !== projectFilter) return false
     }
+    const external = workspace.team.some(member => member.id === task.assigneeId && member.external)
+    if (assigneeKind === 'external' && !external) return false
+    if (assigneeKind === 'internal' && (!task.assigneeId || external)) return false
     if (assigneeFilter !== 'הכל') {
       if (assigneeFilter === '__none__' && task.assigneeId) return false
       if (assigneeFilter !== '__none__' && task.assigneeId !== assigneeFilter) return false
@@ -160,6 +168,7 @@ export default function TaskBoard({ canUploadFiles = false, canInviteExternal = 
     setSearch('')
     setStatusFilter('הכל')
     setAssigneeFilter('הכל')
+    setAssigneeKind('all')
     setCategoryFilter('')
     setColorFilter('הכל')
     setPriorityFilter('הכל')
@@ -359,13 +368,14 @@ export default function TaskBoard({ canUploadFiles = false, canInviteExternal = 
       {!projectId && <label className="task-filter-field"><span>פרויקט</span><select aria-label="סינון לפי פרויקט" value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)}><option value="הכל">כל הפרויקטים</option><option value="__none__">ללא פרויקט</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.name} — {project.address || 'כתובת חסרה'}</option>)}</select></label>}
       <label className="task-filter-field"><span>סטטוס</span><select aria-label="סינון לפי סטטוס" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}><option>הכל</option>{workspace.taskStatuses.map((status) => <option key={status}>{status}</option>)}</select></label>
       <label className="task-filter-field"><span>אחראי</span><select aria-label="סינון לפי אחראי" value={assigneeFilter} onChange={(e) => setAssigneeFilter(e.target.value)}><option value="הכל">כל האחראים</option><option value="__none__">ללא אחראי</option>{workspace.team.filter((member) => member.active).map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select></label>
+      <label className="task-filter-field"><span>סוג אחראי</span><select aria-label="סינון לפי אחראי חיצוני" value={assigneeKind} onChange={event => setAssigneeKind(event.target.value)}><option value="all">כל האחראים</option><option value="external">אחראים חיצוניים</option><option value="internal">אחראים פנימיים</option></select></label>
       <label className="task-filter-field"><span>צבע</span><select aria-label="סינון לפי צבע" value={colorFilter} onChange={(e) => setColorFilter(e.target.value)}><option value="הכל">כל הצבעים</option><option value="__none__">ללא צבע</option>{TASK_COLOR_OPTIONS.filter((item) => item.id).map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
       <label className="task-filter-field"><span>עדיפות</span><select value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value)}><option>הכל</option><option>נמוכה</option><option>רגילה</option><option>גבוהה</option><option>דחופה</option></select></label>
       {!projectId && <label className="task-filter-field"><span>לקוח</span><select value={clientFilter} onChange={(e) => setClientFilter(e.target.value)}><option value="הכל">כל הלקוחות</option><option value="__none__">ללא לקוח</option>{workspace.contacts.map((contact) => <option key={contact.id} value={contact.id}>{contact.name}</option>)}</select></label>}
       <label className="task-filter-field"><span>תאריך לפי</span><select value={dateField} onChange={(e) => setDateField(e.target.value as 'start' | 'due' | 'follow' | 'created' | 'completed')}><option value="start">תאריך התחלה</option><option value="due">תאריך סיום</option><option value="follow">מועד מעקב</option><option value="created">תאריך יצירה</option><option value="completed">תאריך השלמה</option></select></label>
       <label className="task-filter-field"><span>מתאריך</span><input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} /></label>
       <label className="task-filter-field"><span>עד תאריך</span><input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} /></label>
-      <button type="button" className="secondary compact-filter-clear" onClick={() => { setColumnFilters({}); setSearch(''); setStatusFilter('הכל'); setProjectFilter('הכל'); setAddressFilter(''); setAssigneeFilter('הכל'); setColorFilter('הכל'); setPriorityFilter('הכל'); setClientFilter('הכל'); setDateFrom(''); setDateTo(''); setCategoryFilter('') }}>ניקוי סינון</button>
+      <button type="button" className="secondary compact-filter-clear" onClick={() => { setColumnFilters({}); setSearch(''); setStatusFilter('הכל'); setProjectFilter('הכל'); setAddressFilter(''); setAssigneeFilter('הכל'); setAssigneeKind('all'); setColorFilter('הכל'); setPriorityFilter('הכל'); setClientFilter('הכל'); setDateFrom(''); setDateTo(''); setCategoryFilter('') }}>ניקוי סינון</button>
       {canCreate && projectId && <label className="task-filter-field"><span>תבנית</span><select aria-label="החלת צ׳ק ליסט" defaultValue="" onChange={(e) => { const template = workspace.checklistTemplates.find((item) => item.id === e.target.value); if (template) applyTemplate(template.items); e.target.value = '' }}><option value="">בחירת צ׳ק ליסט</option>{workspace.checklistTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}</select></label>}
 
     </div>
@@ -373,11 +383,13 @@ export default function TaskBoard({ canUploadFiles = false, canInviteExternal = 
     {scheduleError && <div className="error-banner" role="alert">{scheduleError}</div>}
     <details className="card"><summary>סינון לפי עמודות מוצגות</summary><div className="toolbar">{visibleColumns.filter(column => !column.key.startsWith('__')).map(column => <label key={column.key}>{column.label}<input aria-label={`סינון עמודה ${column.label}`} value={columnFilters[column.key] || ''} onChange={event => setColumnFilters(current => ({ ...current, [column.key]: event.target.value }))} /></label>)}</div></details>
     <div className="toolbar task-scroll-controls" aria-label="ניווט אופקי בטבלה"><button type="button" className="secondary" onClick={() => tableRef.current?.scrollBy({ left: 400, behavior: 'smooth' })}>גלילה ימינה →</button><button type="button" className="secondary" onClick={() => tableRef.current?.scrollBy({ left: -400, behavior: 'smooth' })}>← גלילה שמאלה</button>{onEmail && <label>פתיחת מייל למשימה<select aria-label="פתיחת מייל למשימה" value="" onChange={event => { const task = rows.find(row => row.task.id === event.target.value)?.task; if (task) onEmail(task) }}><option value="">בחירת משימה</option>{rows.map(({ task }) => <option key={task.id} value={task.id}>{task.title}</option>)}</select></label>}</div>
+    <details className="card task-personal-columns"><summary>העמודות שלי</summary><p>גררו את הידית בכותרת עמודה, או התמקדו בה והשתמשו בחצים. הסדר נשמר לחשבון שלכם בדפדפן הזה.</p><div className="toolbar">{availableColumns.map(column => <label key={column.key}><input type="checkbox" aria-label={`הצגת עמודה אישית ${column.label}`} checked={!hiddenTaskColumns.includes(column.key)} disabled={visibleColumns.length === 1 && !hiddenTaskColumns.includes(column.key)} onChange={event => updateDisplay({ hiddenTaskColumns: event.target.checked ? hiddenTaskColumns.filter(key => key !== column.key) : [...hiddenTaskColumns, column.key] })} />{column.label}</label>)}<div className="personal-column-moves">{visibleColumns.map((column,index) => <div key={column.key}><span>{column.label}</span><button type="button" className="secondary" disabled={index===0} aria-label={`הקדמת עמודה אישית ${column.label}`} onClick={() => updateDisplay({taskColumnOrder: reorderColumn(availableColumns,column.key,visibleColumns[index-1].key).map(item=>item.key)})}>↑</button><button type="button" className="secondary" disabled={index===visibleColumns.length-1} aria-label={`איחור עמודה אישית ${column.label}`} onClick={() => updateDisplay({taskColumnOrder: reorderColumn(availableColumns,column.key,visibleColumns[index+1].key).map(item=>item.key)})}>↓</button></div>)}</div><button type="button" className="secondary" onClick={() => updateDisplay({ taskColumnOrder: [], hiddenTaskColumns: [] })}>שחזור תצוגת הארגון</button></div></details>
+    <span className="column-reorder-status" role="status" aria-live="polite">{columnReorder.message}</span>
     {!visibleColumns.length && <p className="field-help">כל העמודות מוסתרות. ניתן להציג אותן בהגדרות ← תצוגה.</p>}
     <div ref={tableRef} tabIndex={0} aria-label="טבלת משימות — גלילה אופקית" className={`table-scroll task-table-wrap table-density-${density}`}>
       <table className="data-table task-table task-table-percent" style={{ minWidth: taskTableMinWidth(visibleColumns) }}>
         <colgroup>{visibleColumns.map(column => <col key={column.id} style={{ width: `${column.widthPercent}%` }} />)}</colgroup>
-        <thead><tr>{visibleColumns.map(column => <th key={column.id} data-column-key={column.key} className={column.key === '__actions' ? 'actions-col' : column.key === '__completed' ? 'complete-col' : column.key === '__color' ? 'color-col' : ''}>{column.label}{column.key === '__select' && <input type="checkbox" aria-label="בחירת כל המשימות המסוננות לסיכום" checked={rows.length > 0 && rows.every(row => selectedIds.includes(row.task.id))} onChange={event => setSelectedIds(event.target.checked ? rows.map(row => row.task.id) : [])} />}</th>)}</tr></thead>
+        <thead><tr>{visibleColumns.map(column => <th key={column.id} {...columnReorder.dropProps(column.key)} data-column-key={column.key} className={column.key === '__actions' ? 'actions-col' : column.key === '__completed' ? 'complete-col' : column.key === '__color' ? 'color-col' : ''}>{columnReorder.handle(column)}{column.label}{column.key === '__select' && <input type="checkbox" aria-label="בחירת כל המשימות המסוננות לסיכום" checked={rows.length > 0 && rows.every(row => selectedIds.includes(row.task.id))} onChange={event => setSelectedIds(event.target.checked ? rows.map(row => row.task.id) : [])} />}</th>)}</tr></thead>
         <tbody>
           {rows.map(({ task, depth }, index) => <Fragment key={task.id}>{groupBy !== 'none' && (index === 0 || (groupBy === 'assignee' ? rows[index - 1].task.assigneeId !== task.assigneeId : rows[index - 1].task.projectId !== task.projectId)) && <tr className="task-group-row"><th colSpan={Math.max(1, visibleColumns.length)}>{groupBy === 'assignee' ? workspace.team.find(member => member.id === task.assigneeId)?.name || 'ללא אחראי' : workspace.projects.find(project => project.id === task.projectId)?.name || 'ללא פרויקט'} · {rows.filter(row => groupBy === 'assignee' ? row.task.assigneeId === task.assigneeId : row.task.projectId === task.projectId).length}</th></tr>}<tr key={task.id} data-task-id={task.id} className={`${task.parentId ? 'subtask-row' : ''} ${isCompleted(task) ? 'completed-row' : ''} ${focusTaskId === task.id ? 'focused-task-row' : ''}`} style={{ borderInlineStartColor: task.colorTag ? taskColor(task.colorTag).hex : 'transparent' }}>
             {visibleColumns.map((column) => <td key={column.id} data-column-key={column.key} className={column.key === '__completed' ? 'complete-cell' : column.key === '__color' ? 'color-cell' : column.key === '__actions' ? 'task-actions-cell' : ''}>

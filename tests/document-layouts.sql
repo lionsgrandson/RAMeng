@@ -25,10 +25,30 @@ perform pg_temp.check_layout(d#>>'{reports,0,columns,0,key}'='description');
 perform pg_temp.check_layout(d#>>'{reports,0,columns,1,visible}'='true');
 perform pg_temp.deny_layout(format('select public.save_workspace_state(%L,%L,%s)','60000000-0000-0000-0000-000000000001',jsonb_set(d,'{meetingSummaries,0,photos}','[]'),v));
 end$$;
+-- Optional plan fields use the existing file permission boundary and JSON storage.
+select set_config('request.jwt.claim.sub','50000000-0000-0000-0000-000000000001',true);
+do $$declare d jsonb; v bigint; begin
+select data,version into d,v from public.get_workspace_state('60000000-0000-0000-0000-000000000001');
+d:=jsonb_set(d,'{files}','[{"id":"plan","projectId":"p","name":"plan.pdf","url":"https://example.test/plan.pdf","version":1,"uploadedAt":"2026-11-08","planRevision":"A-01","revisionNotes":"first","planHistory":[]}]');
+perform public.save_workspace_state('60000000-0000-0000-0000-000000000001',d,v);
+end$$;
+select set_config('request.jwt.claim.sub','50000000-0000-0000-0000-000000000002',true);
+do $$declare d jsonb; v bigint; begin
+select data,version into d,v from public.get_workspace_state('60000000-0000-0000-0000-000000000001');
+d:=jsonb_set(d,'{files,0,planRevision}','"A-02"');
+d:=jsonb_set(d,'{files,0,revisionNotes}','"updated"');
+d:=jsonb_set(d,'{files,0,updatedBy}','"50000000-0000-0000-0000-000000000002"');
+d:=jsonb_set(d,'{files,0,planHistory}','[{"version":1,"planRevision":"A-01","revisionNotes":"first","recordedAt":"2026-11-08T00:00:00Z"}]');
+perform public.save_workspace_state('60000000-0000-0000-0000-000000000001',d,v);
+select data,version into d,v from public.get_workspace_state('60000000-0000-0000-0000-000000000001');
+perform pg_temp.check_layout(d#>>'{files,0,planRevision}'='A-02');
+perform pg_temp.check_layout(d#>>'{files,0,planHistory,0,revisionNotes}'='first');
+end$$;
 select set_config('request.jwt.claim.sub','50000000-0000-0000-0000-000000000003',true);
 do $$declare d jsonb; v bigint; begin
 select data,version into d,v from public.get_workspace_state('60000000-0000-0000-0000-000000000001');
 perform pg_temp.deny_layout(format('select public.save_workspace_state(%L,%L,%s)','60000000-0000-0000-0000-000000000001',jsonb_set(d,'{reports,0,columns}','[{"key":"status","visible":true}]'),v));
+perform pg_temp.deny_layout(format('select public.save_workspace_state(%L,%L,%s)','60000000-0000-0000-0000-000000000001',jsonb_set(d,'{files,0,planRevision}','"forbidden"'),v));
 end$$;
 reset role;
 rollback;

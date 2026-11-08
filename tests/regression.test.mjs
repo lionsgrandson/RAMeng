@@ -17,6 +17,18 @@ const options = { canManageUsers: false, isDeveloper: false }
 const { deleteProject, deleteContact } = await server.ssrLoadModule('/src/lib/records.ts')
 const { createReportFromTasks } = await server.ssrLoadModule('/src/lib/reportTasks.ts')
 
+test('personal column order tolerates new/deleted keys and moves without changing business data', async () => {
+  const { orderedColumns, reorderColumn } = await server.ssrLoadModule('/src/lib/columnOrder.ts')
+  const columns = [{ key: 'title', value: 'שם' }, { key: 'owner', value: 'אחראי' }, { key: 'new', value: 'חדש' }]
+  const original = JSON.stringify(columns)
+  assert.deepEqual(orderedColumns(columns, ['removed', 'owner']).map(column => column.key), ['owner', 'title', 'new'])
+  assert.deepEqual(reorderColumn(columns, 'title', 'new').map(column => column.key), ['owner', 'new', 'title'])
+  assert.deepEqual(reorderColumn(columns, 'new', 'title').map(column => column.key), ['new', 'title', 'owner'])
+  assert.equal(reorderColumn(columns, 'missing', 'title'), columns)
+  assert.equal(reorderColumn(columns, 'title', 'title'), columns)
+  assert.equal(JSON.stringify(columns), original)
+})
+
 test('every task column can move and persisted layouts keep their order and visibility', async () => {
   const { normalizeTaskColumns, moveTaskColumn, visibleTaskColumns, taskSystemColumns } = await server.ssrLoadModule('/src/lib/taskColumns.ts')
   const legacy = cloneWorkspace().taskColumns
@@ -889,6 +901,71 @@ test('Gmail read failures do not invalidate the cache or claim success', async t
   assert.equal((await worker.fetch(request('/api/google/gmail/read', { threadId: 'thread' }), privateEnv)).status, 403)
   assert.equal(kv.has('google-read-epoch:qa'), false)
   assert.equal((await worker.fetch(request('/api/google/gmail/read', { threadId: '../another-user' }), privateEnv)).status, 400)
+})
+
+test('mark unread adds the Gmail label in the caller mailbox and persists linked state', async t => {
+  const { privateEnv, kv } = projectMailFixture(t, async (url, init) => {
+    if (url.pathname.endsWith('/labels/INBOX')) return Response.json({ messagesUnread: 18 })
+    assert.equal(url.pathname, '/gmail/v1/users/me/threads/thread/modify')
+    assert.deepEqual(JSON.parse(init.body), { addLabelIds: ['UNREAD'] })
+    return Response.json({ id: 'thread' })
+  })
+  kv.set('gmail-project-mail:qa:thread', { threadId: 'thread', unread: false })
+  const result = await worker.fetch(request('/api/google/gmail/unread', { threadId: 'thread', userId: 'other' }), privateEnv)
+  assert.equal(result.status, 200)
+  assert.equal(kv.get('gmail-project-mail:qa:thread').unread, true)
+  assert.equal(kv.has('google-read-epoch:other'), false)
+})
+
+test('incoming attachment metadata and download use only provider-verified MIME parts', async t => {
+  const attachment = { partId: '1.2', filename: 'תוכנית.pdf', mimeType: 'application/pdf', body: { size: 4, attachmentId: 'provider-id' } }
+  const { privateEnv } = projectMailFixture(t, async url => {
+    if (url.pathname.endsWith('/attachments/provider-id')) return Response.json({ data: 'dGVzdA' })
+    if (url.pathname.includes('/messages/message')) return Response.json({ payload: { parts: [attachment] } })
+    return Response.json({ messages: [{ id: 'message', payload: { parts: [attachment], headers: [{ name: 'Cc', value: 'copy@example.test' }] } }] })
+  })
+  const thread = await worker.fetch(request('/api/google/gmail/thread?threadId=thread'), privateEnv)
+  const message = (await thread.json()).messages[0]
+  assert.equal(message.cc, 'copy@example.test')
+  assert.equal(message.attachments[0].name, 'תוכנית.pdf')
+  const result = await worker.fetch(request('/api/google/gmail/attachment?messageId=message&partId=1.2&attachmentId=forged&userId=other'), privateEnv)
+  assert.equal(result.status, 200)
+  assert.deepEqual(await result.json(), { name: 'תוכנית.pdf', type: 'application/pdf', data: 'dGVzdA' })
+  assert.equal((await worker.fetch(request('/api/google/gmail/attachment?messageId=message&partId=9'), privateEnv)).status, 404)
+  assert.equal((await worker.fetch(request('/api/google/gmail/attachment?messageId=../other&partId=1'), privateEnv)).status, 400)
+})
+
+test('plan revisions preserve metadata and file data; upload validation rejects unsupported or oversized files', async () => {
+  const { updatePlan, validateProjectUpload } = await server.ssrLoadModule('/src/lib/planRevision.ts')
+  const file = { id: 'file', name: 'תוכנית.pdf', url: 'private', version: 1, uploadedAt: '2026-10-13', planStatus: 'טיוטה', revisionNotes: 'old' }
+  const next = updatePlan(file, { planRevision: 'A-02', revisionNotes: 'new', planStatus: 'לביצוע' }, 'actor', '2026-11-08T00:00:00Z')
+  assert.equal(file.planStatus, 'טיוטה'); assert.equal(next.updatedBy, 'actor'); assert.equal(next.url, file.url)
+  assert.equal(next.planHistory[0].revisionNotes, 'old')
+  assert.equal(updatePlan(next, { planStatus: 'לביצוע' }, 'actor', 'later'), next)
+  validateProjectUpload({ name: 'תוכנית.dwg', size: 10 })
+  assert.throws(() => validateProjectUpload({ name: 'test.exe', size: 10 }))
+  assert.throws(() => validateProjectUpload({ name: 'test.pdf', size: 51 * 1024 * 1024 }))
+  assert.throws(() => validateProjectUpload({ name: 'test.pdf', size: 0 }))
+})
+
+for (const outcome of ['create', 'move', 'outside', 'read-only', 'cycle', 'external']) test(`nested folder mutations enforce project boundaries: ${outcome}`, async t => {
+  const writes = []
+  const ancestry = { target: ['root'], source: ['root'], descendant: ['source'], unrelated: [] }
+  const { privateEnv, kv } = projectMailFixture(t, async (url, init) => {
+    const id = url.pathname.split('/').at(-1)
+    if ((init.method || 'GET') === 'GET') return Response.json({ id, parents: ancestry[id] || [], mimeType: 'application/vnd.google-apps.folder', trashed: false })
+    writes.push({ url, body: JSON.parse(init.body) })
+    return Response.json({ id: 'created', name: 'תיקיית משנה', mimeType: 'application/vnd.google-apps.folder' })
+  }, outcome === 'external' ? 'external' : 'admin', false, ancestry)
+  kv.set('drive-project-folder:qa:project', { id: 'root', readOnly: outcome === 'read-only' })
+  const payload = { orgId: 'org', projectId: 'project', parentId: outcome === 'outside' ? 'unrelated' : outcome === 'cycle' ? 'descendant' : 'target', fileId: 'source', name: 'תיקיית משנה' }
+  const response = await worker.fetch(new Request(request('/api/google/drive/folder', payload), {method:outcome === 'create' ? 'POST' : 'PATCH'}), privateEnv)
+  if (['create','move'].includes(outcome)) {
+    assert.equal(response.status, 200)
+    assert.equal(writes.length, 1)
+    if (outcome === 'create') assert.deepEqual(writes[0].body.parents, ['target'])
+    else { assert.equal(writes[0].url.searchParams.get('addParents'), 'target'); assert.equal(writes[0].url.searchParams.get('removeParents'), 'root') }
+  } else { assert.equal(response.status, outcome === 'cycle' ? 400 : 403); assert.equal(writes.length, 0) }
 })
 
 test('successful Gmail trash remains successful if fetching its new count fails', async t => {

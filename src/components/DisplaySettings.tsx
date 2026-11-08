@@ -8,8 +8,8 @@ import { Chip, confirmDelete, uid } from './common'
 import { SaveButton } from './WorkspaceSave'
 
 export type TaskGrouping = 'none' | 'assignee' | 'project'
-type DisplayPreferences = { groupBy: TaskGrouping; density: 'comfortable' | 'compact'; contactColumns: string[]; hiddenContactColumns: string[] }
-const defaults: DisplayPreferences = { groupBy: 'none', density: 'comfortable', contactColumns: ['name', 'role', 'company', 'phone', 'mobile', 'email', 'address'], hiddenContactColumns: [] }
+type DisplayPreferences = { groupBy: TaskGrouping; density: 'comfortable' | 'compact'; contactColumns: string[]; hiddenContactColumns: string[]; taskColumnOrder: string[]; hiddenTaskColumns: string[] }
+const defaults: DisplayPreferences = { groupBy: 'none', density: 'comfortable', contactColumns: ['name', 'role', 'company', 'phone', 'mobile', 'email', 'address'], hiddenContactColumns: [], taskColumnOrder: [], hiddenTaskColumns: [] }
 export const DisplayContext = createContext({ ...defaults, update: (_patch: Partial<DisplayPreferences>) => {} })
 
 export function useDisplayPreferences(owner?: string) {
@@ -18,7 +18,8 @@ export function useDisplayPreferences(owner?: string) {
     let value = defaults
     try {
       const saved = JSON.parse(localStorage.getItem(`rameng-display:${owner || 'guest'}`) || '{}')
-      value = { groupBy: ['none', 'assignee', 'project'].includes(saved.groupBy) ? saved.groupBy : 'none', density: saved.density === 'compact' ? 'compact' : 'comfortable', contactColumns: [...new Set([...(Array.isArray(saved.contactColumns) ? saved.contactColumns.filter((key: unknown) => typeof key === 'string' && defaults.contactColumns.includes(key)) : []), ...defaults.contactColumns])], hiddenContactColumns: Array.isArray(saved.hiddenContactColumns) ? saved.hiddenContactColumns.filter((key: unknown) => typeof key === 'string' && defaults.contactColumns.includes(key)) : [] }
+      const taskPreferences = { taskColumnOrder: Array.isArray(saved.taskColumnOrder) ? [...new Set<string>(saved.taskColumnOrder.filter((key: unknown) => typeof key === 'string'))] : [], hiddenTaskColumns: Array.isArray(saved.hiddenTaskColumns) ? saved.hiddenTaskColumns.filter((key: unknown) => typeof key === 'string') : [] }
+      value = { ...taskPreferences, groupBy: ['none', 'assignee', 'project'].includes(saved.groupBy) ? saved.groupBy : 'none', density: saved.density === 'compact' ? 'compact' : 'comfortable', contactColumns: [...new Set([...(Array.isArray(saved.contactColumns) ? saved.contactColumns.filter((key: unknown) => typeof key === 'string' && defaults.contactColumns.includes(key)) : []), ...defaults.contactColumns])], hiddenContactColumns: Array.isArray(saved.hiddenContactColumns) ? saved.hiddenContactColumns.filter((key: unknown) => typeof key === 'string' && defaults.contactColumns.includes(key)) : [] }
     } catch { /* Keep usable defaults if storage is unavailable. */ }
     setStored({ owner, value })
   }, [owner])

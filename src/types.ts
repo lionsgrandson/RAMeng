@@ -114,6 +114,10 @@ export interface FileRecord {
   categoryIds?: ID[]
   planStatus?: string
   planUpdatedAt?: string
+  planRevision?: string
+  revisionNotes?: string
+  updatedBy?: string
+  planHistory?: { version: number; planRevision?: string; planStatus?: string; planUpdatedAt?: string; revisionNotes?: string; updatedBy?: string; recordedAt: string }[]
   previousVersions?: { name: string; url: string; storagePath?: string; type?: string; size?: number; version: number; uploadedAt: string }[]
   version: number
   uploadedAt: string

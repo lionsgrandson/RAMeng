@@ -18,6 +18,8 @@ export default function ProjectMail({ workspace, orgId, project, initialTask, pe
   const [actionableOnly, setActionableOnly] = useState(false)
   const [emailDraft, setEmailDraft] = useState<{ message: GmailApiMessage; mailboxUserId: string } | null>(null)
   const [categoryIds, setCategoryIds] = useState<string[]>([])
+  const [draftProjectId, setDraftProjectId] = useState('')
+  const [draftCategories, setDraftCategories] = useState<string[]>([])
   const [categoryFilter, setCategoryFilter] = useState(initialCategoryFilter)
   const [search, setSearch] = useState('')
   const [unreadCount, setUnreadCount] = useState<number | null>(null)
@@ -95,6 +97,21 @@ export default function ProjectMail({ workspace, orgId, project, initialTask, pe
     setCreatedTaskId(''); setSelected(threadId); setComposing(false); setError(''); setNotice('')
     setProjectId(project?.id || link?.projectId || ''); setTaskId(link?.taskId || ''); setCategoryIds(link?.categoryIds || [])
   }
+  const setReadState = async (unread: boolean) => {
+    if (operation.current || loadingThread || !selected) return
+    operation.current = true; setBusy(true); setError('')
+    const threadId = selected
+    try {
+      const state = await (unread ? integrationsApi.markMailUnread(threadId) : integrationsApi.readMail(threadId))
+      setInbox(current => current.map(row => row.threadId === threadId ? { ...row, unread } : row))
+      setLinks(current => current.map(row => row.threadId === threadId ? { ...row, unread } : row))
+      setMessages(current => current.map(row => ({ ...row, unread })))
+      if (state.unreadCount !== null) { setUnreadCount(state.unreadCount); window.dispatchEvent(new CustomEvent('rameng-mail-count', { detail: state.unreadCount })) }
+      setNotice(unread ? 'ההתכתבות סומנה כלא נקראה ב-Gmail' : 'ההתכתבות סומנה כנקראה ב-Gmail')
+      if (unread) { setSelected(''); setComposing(false) }
+    } catch (error) { setError(error instanceof Error ? error.message : 'עדכון מצב הקריאה נכשל') }
+    finally { operation.current = false; setBusy(false) }
+  }
   const assign = async (threadId = selected, target = { projectId, taskId, categoryIds }) => {
     if (operation.current || composeBusy || !target.projectId || !threadId) return
     operation.current = true; setBusy(true); setError(''); setNotice('')
@@ -122,6 +139,7 @@ export default function ProjectMail({ workspace, orgId, project, initialTask, pe
       if (!actor) throw new Error('נדרשת התחברות')
       const existing = workspace.tasks.find(task => task.sourceEmail?.messageId === message.id && task.sourceEmail.mailboxUserId === actor.id)
       if (existing) { setNotice(`כבר קיימת משימה מהודעה זו: ${existing.title}`); return }
+      setDraftProjectId(projectId); setDraftCategories(categoryIds)
       setEmailDraft({message,mailboxUserId:actor.id})
     } catch (e) { setError(e instanceof Error ? e.message : 'לא ניתן להכין את המשימה') }
     finally { setBusy(false) }
@@ -142,7 +160,7 @@ export default function ProjectMail({ workspace, orgId, project, initialTask, pe
       {rows.map(row => <button type="button" key={'id' in row ? row.id : row.threadId} className={`mailbox-row ${row.unread ? 'unread' : 'read'} ${selected === row.threadId ? 'active' : ''}`} aria-pressed={selected === row.threadId} onClick={() => open(row.threadId)}><strong className="mailbox-subject" dir="auto">{row.unread ? '● ' : ''}{emailText(row.subject) || 'ללא נושא'}</strong><small className="mailbox-sender" dir="auto">{emailAddressLabel(row.from)} → {emailAddressLabel(row.to)}</small><small className="mailbox-date">{dateTimeLabel(row.date)} · {row.incoming === false ? 'נשלח' : 'התקבל'} {row.unread ? '· לא נקרא' : ''}</small><p className="mailbox-preview" dir="auto">{emailText(row.snippet)}</p>{(() => { const link = links.find(link => link.threadId === row.threadId && link.orgId === orgId); const linkedProject = workspace.projects.find(item => item.id === link?.projectId); return linkedProject ? <small>פרויקט: {linkedProject.name}{link?.taskId ? ` · ${workspace.tasks.find(task => task.id === link.taskId)?.title || 'משימה'}` : ''}</small> : null })()}</button>)}
       {!rows.length && !busy && <EmptyState title="אין מיילים להצגה" text={project ? 'שלחו מייל חדש או שייכו התכתבות מתיבת הדואר הנכנס.' : 'אין הודעות נכנסות בחשבון Google המחובר.'} />}
       {!project && pageToken && <button type="button" className="secondary" disabled={busy} onClick={() => void refresh(true)}>הודעות נוספות</button>}
-    </div><div className="contact-thread-body" hidden={!selected && !composing}>{selected && <div className="mail-thread-toolbar"><button type="button" className="secondary" disabled={composeBusy} onClick={() => { setSelected(''); setComposing(false) }}>חזרה לרשימת המיילים</button><strong>שרשור מלא · {messages.length} הודעות</strong></div>}
+    </div><div className="contact-thread-body" hidden={!selected && !composing}>{selected && <div className="mail-thread-toolbar"><button type="button" className="secondary" disabled={composeBusy} onClick={() => { setSelected(''); setComposing(false) }}>חזרה לרשימת המיילים</button><strong>שרשור מלא · {messages.length} הודעות</strong><button type="button" className="secondary" disabled={busy || composeBusy || loadingThread} onClick={() => void setReadState(true)}>סימון כלא נקרא</button><button type="button" className="secondary" disabled={busy || composeBusy || loadingThread} onClick={() => void setReadState(false)}>סימון כנקרא</button></div>}
       {association && <div><p>פרויקט: {onProject ? <button type="button" className="secondary" onClick={() => onProject(association.projectId)}>{workspace.projects.find(item => item.id === association.projectId)?.name || 'פרויקט משויך'}</button> : workspace.projects.find(item => item.id === association.projectId)?.name || 'פרויקט משויך'}</p>{permissions.delete && <DeleteButton label="ביטול שיוך ההתכתבות" message="לבטל את שיוך ההתכתבות לפרויקט? הודעות Gmail יישמרו." onConfirm={() => {
         if (operation.current) return; operation.current = true; setBusy(true)
         void (async () => { try { await integrationsApi.unlinkProjectMail({ ...association, orgId }); if (association.taskId) await integrationsApi.unlinkGmailTask(association.taskId); setLinks(current => current.filter(link => link.threadId !== selected)); setNotice('השיוך בוטל') } catch (e) { setError(e instanceof Error ? e.message : 'ביטול השיוך נכשל') } finally { operation.current = false; setBusy(false) } })()
@@ -164,7 +182,7 @@ export default function ProjectMail({ workspace, orgId, project, initialTask, pe
         if (existing) { setNotice(`כבר קיימת משימה מהודעה זו: ${existing.title}`); setEmailDraft(null); return }
         const id = uid('task')
         const source = {provider:'gmail' as const,messageId:emailDraft.message.id,threadId:selected,mailboxUserId:emailDraft.mailboxUserId,importedAt:nowIso()}
-        const task: Task = {id,projectId:chosenProject,title:String(form.get('title')).trim(),description:String(form.get('description') || ''),assigneeId:String(form.get('assigneeId') || '') || undefined,dueDate:String(form.get('dueDate') || '') || undefined,sourceEmail:source,gmailThreadId:selected,categoryIds:chosenProject === projectId ? categoryIds : [],status:workspace.taskStatuses[0] || 'טרם התחיל',priority:'רגילה',custom:{},order:workspace.tasks.length+1,createdAt:nowIso()}
+        const task: Task = {id,projectId:chosenProject,title:String(form.get('title')).trim(),description:String(form.get('description') || ''),assigneeId:String(form.get('assigneeId') || '') || undefined,dueDate:String(form.get('dueDate') || '') || undefined,sourceEmail:source,gmailThreadId:selected,categoryIds:draftCategories.filter(id => workspace.projects.find(project=>project.id===chosenProject)?.categoryIds?.includes(id)),status:workspace.taskStatuses[0] || 'טרם התחיל',priority:String(form.get('priority') || 'רגילה') as Task['priority'],custom:{},order:workspace.tasks.length+1,createdAt:nowIso()}
         setWorkspace(current => ({...current,tasks:[...current.tasks,task]}))
         pendingCreatedLink.current={threadId:selected,projectId:chosenProject,taskId:id,categoryIds:task.categoryIds || []}
         setProjectId(chosenProject); setTaskId(id); setCreatedTaskId(id); setEmailDraft(null)
@@ -172,10 +190,11 @@ export default function ProjectMail({ workspace, orgId, project, initialTask, pe
       }}>
         <p>בדקו את התוכן לפני שמירתו במשימה משותפת. לא נשלח תוכן לספק AI. מקור: <bdi>{emailDraft.message.id}</bdi></p>
         <label>כותרת המשימה<input name="title" required defaultValue={emailText(emailDraft.message.subject) || 'טיפול במייל'} /></label>
-        <label>תיאור המשימה<textarea name="description" rows={6} defaultValue={emailText(emailDraft.message.body || emailDraft.message.snippet)} /></label>
-        <label>פרויקט למשימה<select name="projectId" required defaultValue={projectId}>{workspace.projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
+        <label>תיאור המשימה<textarea name="description" rows={6} defaultValue={`מאת: ${emailAddressLabel(emailDraft.message.from)}\n${emailText(emailDraft.message.body || emailDraft.message.snippet)}`} /></label>
+        <label>פרויקט למשימה<select name="projectId" required value={draftProjectId} onChange={event => {setDraftProjectId(event.target.value);setDraftCategories([])}}>{workspace.projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
+        <fieldset><legend>מקצועות למשימה</legend>{workspace.categories.filter(category=>workspace.projects.find(project=>project.id===draftProjectId)?.categoryIds?.includes(category.id)).map(category=><label key={category.id}><input type="checkbox" checked={draftCategories.includes(category.id)} onChange={event=>setDraftCategories(current=>event.target.checked?[...current,category.id]:current.filter(id=>id!==category.id))} />{category.name}</label>)}</fieldset>
         <label>אחראי למשימה<select name="assigneeId" defaultValue=""><option value="">ללא אחראי</option>{workspace.team.filter(member => member.active && !member.external).map(member => <option key={member.id} value={member.id}>{member.name}</option>)}</select></label>
-        <label>תאריך יעד<input type="date" name="dueDate" /></label>
+        <label>עדיפות למשימה<select name="priority" defaultValue="רגילה"><option>נמוכה</option><option>רגילה</option><option>גבוהה</option><option>דחופה</option></select></label><label>תאריך יעד<input type="date" name="dueDate" /></label>
         <div className="form-actions"><button type="button" className="secondary" onClick={() => setEmailDraft(null)}>ביטול</button><button type="submit" className="primary">אישור ויצירת משימה</button></div>
       </form></Modal>}
 

@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { Building2, KeyRound, LockKeyhole } from 'lucide-react'
+import { Building2, Eye, EyeOff, KeyRound, LockKeyhole } from 'lucide-react'
 import { bootstrapServer } from '../lib/api'
 import { requestPasswordReset, signIn, updatePassword } from '../lib/backend'
 import { Field } from './common'
@@ -68,6 +68,7 @@ export function SetupScreen() {
 }
 
 export function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
+  const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
@@ -104,9 +105,9 @@ export function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
       {message && <div className="success-banner">{message}</div>}
       <form className="form-grid" onSubmit={(e) => void submit(e)}>
         <Field label="מייל"><input name="email" type="email" required autoComplete="email" /></Field>
-        {!resetMode && <Field label="סיסמה"><input name="password" type="password" required autoComplete="current-password" /></Field>}
+        {!resetMode && <Field label="סיסמה"><span className="password-input"><input id="login-password" name="password" type={showPassword ? 'text' : 'password'} required autoComplete="current-password" /><button type="button" className="icon-btn" aria-label={showPassword ? 'הסתרת סיסמה' : 'הצגת סיסמה'} aria-controls="login-password" aria-pressed={showPassword} onClick={() => setShowPassword(value => !value)}>{showPassword ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}</button></span></Field>}
         <button className="primary login-submit" disabled={loading}>{loading ? 'שולח...' : resetMode ? 'שליחת קישור' : 'כניסה'}</button>
-        <button className="secondary" type="button" disabled={loading} onClick={() => { setResetMode((value) => !value); setError(''); setMessage('') }}>{resetMode ? 'חזרה להתחברות' : 'שכחתי סיסמה'}</button>
+        <button className="secondary" type="button" disabled={loading} onClick={() => { setResetMode((value) => !value); setShowPassword(false); setError(''); setMessage('') }}>{resetMode ? 'חזרה להתחברות' : 'שכחתי סיסמה'}</button>
       </form>
     </section>
   </div>

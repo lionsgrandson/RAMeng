@@ -9,7 +9,7 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",
-    "sanitize-html": "2.18.0"
+    "sanitize-html": "2.18.1"
   },
   "devDependencies": {
     "wrangler": "^4.45.0"

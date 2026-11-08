@@ -33,6 +33,8 @@ export const integrationsApi = {
   taskComments: (orgId: string, taskId: string, cursor = '') => request<{ comments: { id: string; body: string; authorId: string; at: string }[]; cursor: string }>(`/api/task-comments?orgId=${encodeURIComponent(orgId)}&taskId=${encodeURIComponent(taskId)}&cursor=${encodeURIComponent(cursor)}`),
   addTaskComment: (orgId: string, taskId: string, body: string) => request<{ comment: { id: string; body: string; authorId: string; at: string } }>('/api/task-comments', { method: 'POST', body: JSON.stringify({ orgId, taskId, body }) }),
   renameDrive: (payload: { orgId: string; projectId: string; fileId: string; name: string }) => request<{ file: GoogleDriveFile }>('/api/google/drive/rename', { method: 'PATCH', body: JSON.stringify(payload) }),
+  createDriveFolder: (payload: {orgId: string; projectId: string; parentId: string; name: string}) => request<{file: GoogleDriveFile}>('/api/google/drive/folder', {method:'POST',body:JSON.stringify(payload)}),
+  moveDriveFile: (payload: {orgId: string; projectId: string; parentId: string; fileId: string}) => request<{file: GoogleDriveFile}>('/api/google/drive/folder', {method:'PATCH',body:JSON.stringify(payload)}),
   driveCategory: (payload: { orgId: string; projectId: string; folderId: string; categoryId: string; name: string }) => request<{ id: string; name: string }>('/api/google/drive/category', { method: 'POST', body: JSON.stringify(payload) }),
   driveSharing: (orgId: string, projectId: string, fileId: string) => request<{ permissions: { id: string; emailAddress?: string; role: string; canRevoke: boolean }[] }>(`/api/google/drive/sharing?orgId=${encodeURIComponent(orgId)}&projectId=${encodeURIComponent(projectId)}&fileId=${encodeURIComponent(fileId)}`),
   shareDrive: (payload: { orgId: string; projectId: string; fileId: string; email: string; role: string }) => request<{ id: string }>('/api/google/drive/sharing', { method: 'POST', body: JSON.stringify(payload) }),
@@ -41,6 +43,8 @@ export const integrationsApi = {
   inbox: (pageToken = '') => request<{ messages: GmailApiMessage[]; nextPageToken: string; unreadCount: number }>(`/api/google/gmail/inbox?pageToken=${encodeURIComponent(pageToken)}`),
   unreadMail: () => request<{ unreadCount: number }>('/api/google/gmail/unread'),
   readMail: (threadId: string) => request<{ ok: true; unreadCount: number | null }>('/api/google/gmail/read', { method: 'POST', body: JSON.stringify({ threadId }) }),
+  markMailUnread: (threadId: string) => request<{ ok: true; unreadCount: number | null }>('/api/google/gmail/unread', { method: 'POST', body: JSON.stringify({ threadId }) }),
+  mailAttachment: (messageId: string, partId: string) => request<{ name: string; type: string; data: string }>(`/api/google/gmail/attachment?messageId=${encodeURIComponent(messageId)}&partId=${encodeURIComponent(partId)}`),
   trashMail: (threadId: string) => request<{ ok: true; unreadCount: number | null }>('/api/google/gmail/trash', { method: 'POST', body: JSON.stringify({ threadId }) }),
   projectMailLinks: () => request<{ links: ProjectMailLink[] }>('/api/google/gmail/project-links'),
   linkProjectMail: (payload: MailProjectContext & { threadId: string }) => request<{ link: ProjectMailLink }>('/api/google/gmail/project-links', { method: 'PUT', body: JSON.stringify(payload) }),
@@ -85,7 +89,7 @@ export const integrationsApi = {
   saveAdminConfig: (config: AdminConfig) => request<{ ok: true }>('/api/admin/config', { method: 'PUT', body: JSON.stringify(config) }),
 }
 
-export interface GmailApiMessage { id: string; threadId: string; from: string; to: string; subject: string; date: string; body: string; htmlBody?: string; snippet: string; unread?: boolean; incoming?: boolean }
+export interface GmailApiMessage { cc?: string; attachments?: { id: string; name: string; type: string; size: number }[]; id: string; threadId: string; from: string; to: string; subject: string; date: string; body: string; htmlBody?: string; snippet: string; unread?: boolean; incoming?: boolean }
 export interface MailAttachment { name: string; type: string; data: string }
 export interface GmailThreadSummary { id: string; subject: string; from: string; to: string; date: string; snippet: string }
 export interface DriveSettings { autoFiles: boolean; autoReports: boolean }

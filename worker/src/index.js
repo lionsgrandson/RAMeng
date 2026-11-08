@@ -389,7 +389,37 @@ function normalizeGmailMessage(message) {
     snippet: message.snippet || '',
     unread: (message.labelIds || []).includes('UNREAD'),
     incoming: !(message.labelIds || []).includes('SENT'),
+    attachments: gmailAttachments(message.payload),
+    cc: headerValue(headers, 'Cc'),
   }
+}
+
+function gmailAttachments(payload) {
+  if (!payload) return []
+  return [...(payload.filename ? [{ id: payload.partId || '0', attachmentId: payload.body?.attachmentId || '', name: payload.filename, type: payload.mimeType || 'application/octet-stream', size: Number(payload.body?.size || 0) }] : []), ...(payload.parts || []).flatMap(gmailAttachments)]
+}
+
+async function handleGmailAttachment(request, env, config) {
+  const user = await requireGoogleAreaAction(request, env, config, 'communication', 'view')
+  const params = new URL(request.url).searchParams
+  const messageId = params.get('messageId') || ''
+  const partId = params.get('partId') || ''
+  if (!/^[a-zA-Z0-9_-]{1,160}$/.test(messageId) || !/^[0-9.]{1,80}$/.test(partId)) throw Object.assign(new Error('מזהה קובץ מצורף לא תקין'), { status: 400 })
+  const response = await googleFetch(env, { ...config, dailyGoogleRead: false }, user.id, `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}?format=full`)
+  if (!response.ok) throw Object.assign(new Error('ההודעה אינה זמינה בחשבון שלך'), { status: response.status })
+  const message = await response.json()
+  const find = part => (part.partId || '0') === partId && part.filename ? part : (part.parts || []).map(find).find(Boolean)
+  const part = find(message.payload || {})
+  if (!part) throw Object.assign(new Error('הקובץ המצורף לא נמצא בהודעה'), { status: 404 })
+  if (Number(part.body?.size || 0) > 25 * 1024 * 1024) throw Object.assign(new Error('לקובץ מעל 25 MB השתמשו בפתיחה ב-Gmail'), { status: 413 })
+  let data = part.body?.data
+  if (!data && part.body?.attachmentId) {
+    const download = await googleFetch(env, { ...config, dailyGoogleRead: false }, user.id, `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(part.body.attachmentId)}`)
+    if (!download.ok) throw Object.assign(new Error('הורדת הקובץ המצורף נכשלה'), { status: download.status })
+    data = (await download.json()).data
+  }
+  if (typeof data !== 'string' || data.length > 35 * 1024 * 1024) throw Object.assign(new Error('הקובץ אינו זמין להורדה כאן. פתחו ב-Gmail'), { status: 413 })
+  return apiJson(request, { name: part.filename, type: part.mimeType || 'application/octet-stream', data })
 }
 
 async function handleGoogleAuthUrl(request, env, config) {
@@ -481,15 +511,21 @@ async function inboxUnread(env, config, userId) {
 
 async function handleGmailState(request, env, config) {
   const trash = new URL(request.url).pathname.endsWith('/trash')
+  const unread = new URL(request.url).pathname.endsWith('/unread')
   const user = await requireGoogleAreaAction(request, env, config, 'communication', trash ? 'delete' : 'view')
   if (request.method === 'GET') return apiJson(request, { unreadCount: await inboxUnread(env, config, user.id) })
   const body = await parseBody(request)
   if (!/^[a-zA-Z0-9_-]{1,160}$/.test(body.threadId || '')) throw Object.assign(new Error('מזהה התכתבות לא תקין'), { status: 400 })
   const response = await googleFetch(env, config, user.id, `https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(body.threadId)}/${trash ? 'trash' : 'modify'}`, {
-    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(trash ? {} : { removeLabelIds: ['UNREAD'] }),
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(trash ? {} : unread ? { addLabelIds: ['UNREAD'] } : { removeLabelIds: ['UNREAD'] }),
   })
   if (!response.ok) throw Object.assign(new Error(trash ? 'העברת המייל לאשפה נכשלה' : 'סנכרון סטטוס הקריאה עם Gmail נכשל'), { status: response.status })
   await env.CONFIG.put(`google-read-epoch:${user.id}`, crypto.randomUUID())
+  try {
+    const linkKey = `gmail-project-mail:${user.id}:${body.threadId}`
+    const link = await env.CONFIG.get(linkKey, 'json')
+    if (link && !trash) await env.CONFIG.put(linkKey, JSON.stringify({ ...link, unread }))
+  } catch { console.error('Gmail linked read state refresh pending') }
   // The mutation has succeeded. A subsequent counter failure must not imply it failed.
   const unreadCount = await inboxUnread(env, config, user.id).catch(() => null)
   return apiJson(request, { ok: true, unreadCount })
@@ -1122,6 +1158,57 @@ async function handleDriveRename(request, env, config) {
   return apiJson(request, { file })
 }
 
+async function handleDriveFolderMutation(request, env, config) {
+  const creating = request.method === 'POST'
+  const action = creating ? 'create' : 'edit'
+  const user = await requireGoogleAreaAction(request, env, config, 'files', action)
+  const body = await parseBody(request)
+  const validId = value => /^[a-zA-Z0-9_-]{1,200}$/.test(value || '')
+  const name = cleanString(body.name)
+  if (!validId(body.parentId) || (!creating && !validId(body.fileId)) || (creating && (!name || name.length > 255))) throw Object.assign(new Error('שם תיקייה או יעד לא תקינים'), { status: 400 })
+  await requireOrgAreaAction(request, env, config, user, body.orgId, 'files', [action])
+  await mailProjectContext(request, env, config, user, body)
+  const root = await projectDriveContent(request, env, config, user, body.projectId, body.parentId)
+  if (root.readOnly || await env.CONFIG.get(`drive-protected-folder:${root.id}`, 'json')) throw Object.assign(new Error('תיקיית הפרויקט מוגנת משינויים'), { status: 403 })
+  await assertDriveWritable(env, config, user.id, body.parentId)
+  const read = async id => {
+    const response = await googleFetch(env, { ...config, dailyGoogleRead: false }, user.id, `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?fields=id,parents,mimeType,trashed&supportsAllDrives=true`)
+    if (!response.ok) throw Object.assign(new Error('לא ניתן לאמת את התיקייה'), { status: 403 })
+    return response.json()
+  }
+  const parent = await read(body.parentId)
+  if (parent.trashed || parent.mimeType !== 'application/vnd.google-apps.folder') throw Object.assign(new Error('יש לבחור תיקיית יעד קיימת'), { status: 400 })
+  const base = 'https://www.googleapis.com/drive/v3/files'
+  let url = `${base}?supportsAllDrives=true&fields=id,name,mimeType,modifiedTime,webViewLink`
+  let payload = { name, mimeType: 'application/vnd.google-apps.folder', parents: [body.parentId] }
+  if (!creating) {
+    await projectDriveContent(request, env, config, user, body.projectId, body.fileId)
+    if (body.fileId === root.id) throw Object.assign(new Error('לא ניתן להעביר את תיקיית הפרויקט'), { status: 403 })
+    await assertDriveWritable(env, config, user.id, body.fileId)
+    const source = await read(body.fileId)
+    if (source.trashed) throw Object.assign(new Error('הפריט אינו זמין'), { status: 404 })
+    // Never move a folder into itself or one of its descendants.
+    let ancestors = [body.parentId]; const seen = new Set()
+    for (let depth = 0; ancestors.length && depth < 30; depth++) {
+      const next = []
+      for (const id of ancestors) {
+        if (id === body.fileId) throw Object.assign(new Error('אי אפשר להעביר תיקייה לתוך עצמה'), { status: 400 })
+        if (seen.has(id) || id === root.id) continue
+        seen.add(id); next.push(...((await read(id)).parents || []))
+      }
+      ancestors = next
+    }
+    if (ancestors.length) throw Object.assign(new Error('נתיב התיקייה ארוך מדי'), { status: 400 })
+    url = `${base}/${encodeURIComponent(body.fileId)}?supportsAllDrives=true&addParents=${encodeURIComponent(body.parentId)}&removeParents=${encodeURIComponent((source.parents || []).filter(id => id !== body.parentId).join(','))}&fields=id,name,mimeType,modifiedTime,webViewLink`
+    payload = {}
+  }
+  const response = await googleFetch(env, config, user.id, url, { method: creating ? 'POST' : 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) })
+  if (!response.ok) throw Object.assign(new Error(creating ? 'יצירת התיקייה נכשלה. בדקו הרשאת עריכה ב-Drive' : 'העברת הפריט נכשלה. בדקו את הרשאות המקור והיעד'), { status: response.status })
+  const file = await response.json()
+  try { await env.CONFIG.put(`google-read-epoch:${user.id}`, crypto.randomUUID()) } catch { console.error('Drive folder cache invalidation pending') }
+  return apiJson(request, { file })
+}
+
 async function handleTaskComments(request, env, config) {
   const user = await getAuthenticatedUser(request, env, config)
   const body = request.method === 'GET' ? Object.fromEntries(new URL(request.url).searchParams) : await parseBody(request)
@@ -1604,7 +1691,8 @@ async function routeApi(request, env) {
   })
   if (path === '/api/task-notifications/send' && request.method === 'POST') return handleTaskNotifications(request, env, config)
   if (path === '/api/google/gmail/unread' && request.method === 'GET') return handleGmailState(request, env, config)
-  if (['/api/google/gmail/read', '/api/google/gmail/trash'].includes(path) && request.method === 'POST') return handleGmailState(request, env, config)
+  if (['/api/google/gmail/read', '/api/google/gmail/unread', '/api/google/gmail/trash'].includes(path) && request.method === 'POST') return handleGmailState(request, env, config)
+  if (path === '/api/google/gmail/attachment' && request.method === 'GET') return handleGmailAttachment(request, env, config)
   if (path === '/api/google/gmail/project-links' && ['GET', 'PUT', 'DELETE'].includes(request.method)) return handleProjectMailLinks(request, env, config)
   if (path === '/api/google/gmail/thread' && request.method === 'GET') return handleGmailThread(request, env, config)
   if (path === '/api/google/gmail/links' && ['GET', 'PUT', 'DELETE'].includes(request.method)) return handleGmailLinks(request, env, config)
@@ -1633,6 +1721,7 @@ async function routeApi(request, env) {
   if (path === '/api/google/drive/rename' && request.method === 'PATCH') return handleDriveRename(request, env, config)
   if (path === '/api/google/drive/sharing' && ['GET','POST','DELETE'].includes(request.method)) return handleDriveSharing(request, env, config)
   if (path === '/api/google/drive/category' && request.method === 'POST') return handleDriveCategory(request, env, config)
+  if (path === '/api/google/drive/folder' && ['POST', 'PATCH'].includes(request.method)) return handleDriveFolderMutation(request, env, config)
   if (path === '/api/google/drive/folders' && request.method === 'GET') return handleDriveFolders(request, env, config)
   if (path === '/api/google/drive/picker' && request.method === 'GET') return handleDrivePicker(request, env, config)
   if (path === '/api/google/drive/settings' && ['GET', 'PUT'].includes(request.method)) return handleDriveSettings(request, env, config)
