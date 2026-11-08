@@ -1,3 +1,4 @@
+import { taskProfessionIds } from './taskProfession'
 import type { InspectionReport, InspectionSection, Workspace } from '../types'
 
 export interface TaskReportOptions {
@@ -29,14 +30,14 @@ export function createReportFromTasks(
   const template = workspace.reportTemplates.find((item) => item.id === (options.templateId || project.reportTemplateId)) || workspace.reportTemplates[0]
   const sections: InspectionSection[] = (template?.sectionTitles || []).map((title) => ({ id: generateId('section'), title, items: [] }))
   for (const task of tasks) {
-    const category = workspace.categories.find((item) => task.categoryIds?.includes(item.id))
+    const category = workspace.categories.find((item) => taskProfessionIds(task, workspace)[0] === item.id)
     const sectionTitle = category?.name || 'כללי'
     let section = sections.find((item) => item.title === sectionTitle)
     if (!section) {
       section = { id: generateId('section'), title: sectionTitle, items: [] }
       sections.push(section)
     }
-    const secondaryCategories = workspace.categories.filter((item) => item.id !== category?.id && task.categoryIds?.includes(item.id)).map((item) => item.name)
+    const secondaryCategories = workspace.categories.filter((item) => item.id !== category?.id && taskProfessionIds(task, workspace).includes(item.id)).map((item) => item.name)
     const details = [
       task.title,
       task.description || '',

@@ -1,3 +1,4 @@
+import { flushPendingReports, reportClientError, setErrorReportingContext } from './lib/errorReporting'
 import ExternalTaskPage from './components/ExternalTaskPage'
 import { DisplayContext, useDisplayPreferences } from './components/DisplaySettings'
 import { normalizeWorkspaceCategories } from './lib/contactCategories'
@@ -66,9 +67,9 @@ const reportSubItems: { id: Page; label: string; icon: typeof LayoutDashboard }[
 ]
 const routePages = new Set<Page>([...navItems.map((item) => item.id), ...reportSubItems.map((item) => item.id)])
 
-type ProjectTab = 'summary' | 'tasks' | 'mail' | 'calendar' | 'drive' | 'reports' | 'files' | 'contacts' | 'categories'
+type ProjectTab = 'summary' | 'tasks' | 'mail' | 'calendar' | 'drive' | 'reports' | 'files' | 'contacts' | 'categories' | 'meetings'
 type AppRoute = { page: Page; projectId?: string; clientId?: string; taskId?: string; reportId?: string; reportItemId?: string; tab?: ProjectTab; attention?: boolean }
-const projectTabs: ProjectTab[] = ['summary', 'tasks', 'mail', 'calendar', 'drive', 'reports', 'files', 'contacts', 'categories']
+const projectTabs: ProjectTab[] = ['summary', 'tasks', 'mail', 'calendar', 'drive', 'reports', 'files', 'contacts', 'categories', 'meetings']
 const readAppRoute = (): AppRoute | null => {
   if (!window.location.hash.startsWith('#app?')) return null
   const params = new URLSearchParams(window.location.hash.slice(5))
@@ -297,6 +298,15 @@ export default function App() {
     return () => { active = false }
   }, [user?.id])
 
+  setErrorReportingContext(orgId, page, user?.id)
+  useEffect(() => {
+    const onError = (event: ErrorEvent) => { void reportClientError('browser-error', new Error(event.message)) }
+    const onPromise = (event: PromiseRejectionEvent) => { void reportClientError('promise-error', event.reason instanceof Error ? event.reason : new Error(String(event.reason || 'Unhandled promise error'))) }
+    const onBackend = (event: Event) => { void reportClientError('database-or-storage', new Error((event as CustomEvent).detail || 'Backend error')) }
+    window.addEventListener('error', onError); window.addEventListener('unhandledrejection', onPromise); window.addEventListener('rameng-backend-error', onBackend)
+    return () => { window.removeEventListener('error', onError); window.removeEventListener('unhandledrejection', onPromise); window.removeEventListener('rameng-backend-error', onBackend) }
+  }, [])
+  useEffect(() => { if (loaded) void flushPendingReports(); const online = () => { void flushPendingReports() }; window.addEventListener('online', online); return () => window.removeEventListener('online', online) }, [orgId, user?.id, loaded])
   const canManageUsers = isDeveloper || role === 'developer' || role === 'admin' || role === 'manager'
   const permissions = useMemo(() => normalizePermissions(role, customPermissions, isDeveloper), [role, customPermissions, isDeveloper])
   const canViewAdminData = (isDeveloper || ['developer', 'admin', 'manager'].includes(role)) && permissionAreas.filter((area) => area !== 'connections' && area !== 'imports' && area !== 'settings').every((area) => permissions[area].view)
@@ -399,6 +409,7 @@ export default function App() {
           }
         } catch (error) {
           pendingSaveSnapshotRef.current = ''
+          void reportClientError('workspace-save', error)
           setSaveState(error instanceof Error && error.name === 'WorkspaceConflictError' ? 'conflict' : 'error')
         }
       })
@@ -523,7 +534,7 @@ export default function App() {
   if (loadError) return <div className="auth-screen"><section className="login-card"><h1>לא ניתן לטעון את סביבת העבודה</h1><div className="error-banner">{loadError}</div><p>נסו שוב או פנו למנהל המערכת.</p><button className="secondary" onClick={() => window.location.reload()}>ניסיון מחדש</button></section></div>
   if (!loaded) return <div className="app-loading"><span className="ram-logo-shell loading-logo-shell"><img src="/ram-engineering-logo.png" alt="ר.א.ם הנדסה" width="1024" height="276" decoding="async" fetchPriority="high" /></span><span>טוען פרויקטים...</span></div>
 
-  if (role === 'external') return <WorkspaceSaveContext.Provider value={{ save: saveNow, refresh: refreshWorkspace, state: saveState, allowed: canEdit, dirty: dirtyRef.current }}>{saveNotice}<ExternalTaskPage workspace={visibleWorkspace} userId={user.id} refreshWorkspace={refreshWorkspace} orgId={orgId} taskId={selectedTask} onTask={openTask} onLogout={() => void logout()} /></WorkspaceSaveContext.Provider>
+  if (role === 'external') return <WorkspaceSaveContext.Provider value={{ save: saveNow, refresh: refreshWorkspace, state: saveState, allowed: canEdit, dirty: dirtyRef.current }}>{saveNotice}<ExternalTaskPage workspace={visibleWorkspace} userId={user.id} userName={String(user.user_metadata?.full_name || user.email || 'משתמש')} refreshWorkspace={refreshWorkspace} orgId={orgId} taskId={selectedTask} onTask={openTask} onLogout={() => void logout()} /></WorkspaceSaveContext.Provider>
 
   if (selectedProject) return <WorkspaceSaveContext.Provider value={{ save: saveNow, refresh: refreshWorkspace, state: saveState, allowed: canEdit, dirty: dirtyRef.current }}><DisplayContext.Provider value={displayPreferences}><div className={`app-shell project-mode ${!canEdit ? 'read-only-mode' : ''}`}><Sidebar page={page} setPage={(next) => openPage(next)} workspace={visibleWorkspace} permissions={permissions} open={sidebarOpen} setOpen={setSidebarOpen} user={user} onLogout={() => void logout()} isDeveloper={isDeveloper} canManageUsers={canManageUsers} /><div className="main"><Topbar search={search} setSearch={setSearch} searchResults={searchResults} urgentCount={urgentCount} onMenu={() => setSidebarOpen(true)} onAttention={openUrgent} saveState={saveState} canEdit={canEdit} /><main className="page-wrap project-page-wrap">{saveNotice}<DriveAutoSync workspace={visibleWorkspace} enabled={permissions.files.create} reportsAllowed={permissions.reports.view} ready={saveState !== 'saving' && saveState !== 'error' && saveState !== 'conflict'} />{permissionNotice && <div className="error-banner permission-notice" role="alert">{permissionNotice}</div>}<ProjectWorkspace canInviteExternal={canManageUsers} key={selectedProject} initialEmailTask={mailTask?.projectId === selectedProject ? mailTask : null} projectId={selectedProject} initialTab={projectTab} workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} orgId={orgId} projectPermissions={permissions.projects} taskPermissions={permissions.tasks} calendarPermissions={permissions.calendar} filePermissions={permissions.files} reportPermissions={permissions.reports} communicationPermissions={permissions.communication} onBack={() => openPage('projects')} onClient={permissions.contacts.view ? openClient : undefined} onTabChange={(tab) => { setProjectTab(tab); writeAppRoute({ page: 'projects', projectId: selectedProject, tab }) }} /></main></div></div></DisplayContext.Provider></WorkspaceSaveContext.Provider>
 

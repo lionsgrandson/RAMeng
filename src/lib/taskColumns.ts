@@ -1,9 +1,10 @@
+import { isProfessionColumn } from './taskProfession'
 import type { TaskColumn } from '../types'
 
 export const taskSystemColumns: TaskColumn[] = [
   { id: 'col-time', key: 'scheduledTime', label: 'שעה', type: 'time', visible: true, removable: false, width: 110 },
   { id: 'col-select', key: '__select', label: 'בחירה לסיכום פגישה', type: 'text', visible: true, removable: false, width: 80 },
-  { id: 'col-categories', key: '__categories', label: 'מקצועות', type: 'text', visible: true, removable: false, width: 160 },
+  { id: 'col-categories', key: '__categories', label: 'מקצוע', type: 'text', visible: true, removable: false, width: 160 },
   { id: 'col-completed', key: '__completed', label: 'בוצע', type: 'text', visible: true, removable: false, width: 70 },
   { id: 'col-color', key: '__color', label: 'קטלוג', type: 'text', visible: true, removable: false, width: 110 },
   { id: 'col-project', key: '__project', label: 'פרויקט', type: 'text', visible: true, removable: false, width: 180 },
@@ -14,6 +15,7 @@ export const taskSystemColumns: TaskColumn[] = [
 // the complete order alongside the existing columns in the workspace document.
 export function normalizeTaskColumns(columns: TaskColumn[]) {
   const normalized = columns.map(column => {
+    if (column.key === '__categories') return { ...column, label: 'מקצוע' }
     if (column.key === 'scheduledTime' && ['שעה (ירושלים)', 'שעה (Asia/Jerusalem)'].includes(column.label)) return { ...column, label: 'שעה' }
     if (column.key === 'emailTo' && column.label === 'תיבת מייל') return { ...column, label: 'מייל לקוח' }
     if (column.key === 'followUpDate' && column.label === 'מועד מעקב / סיום') return { ...column, label: 'מועד מעקב' }
@@ -40,7 +42,8 @@ export function taskTableMinWidth(columns: TaskColumn[]) {
 }
 
 export function visibleTaskColumns(columns: TaskColumn[], projectId?: string) {
-  return normalizeTaskColumns(columns).filter(column => column.visible && (column.key !== '__select' || !!projectId) && (column.key !== '__project' || !projectId))
+  const primary = columns.find(isProfessionColumn)
+  return normalizeTaskColumns(columns).filter(column => column.visible && (!primary || (column.key !== '__categories' && (!isProfessionColumn(column) || column.key === primary.key))) && (column.key !== '__select' || !!projectId) && (column.key !== '__project' || !projectId))
 }
 
 // Legacy pixel widths become proportional percentages without rewriting saved data.

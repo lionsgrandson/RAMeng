@@ -1,3 +1,5 @@
+import PasswordInput from './PasswordInput'
+import { errorReportingOrganization } from '../lib/errorReporting'
 import DisplaySettings from './DisplaySettings'
 import { lazy, Suspense, useEffect, useState } from 'react'
 import type { User } from '@supabase/supabase-js'
@@ -57,10 +59,16 @@ export default function SettingsPage({
       {tab === 'profile' && <PersonalSettings user={user} onUserUpdated={onUserUpdated} />}
       {tab === 'display' && <DisplaySettings workspace={workspace} setWorkspace={setWorkspace} canViewTasks={canViewTasks} canEditTasks={canEditTasks} canCreateTasks={canCreateTasks} canDeleteTasks={canDeleteTasks} />}
       {tab === 'google' && <><GoogleWorkspaceSettings canConfigure={canConfigureGoogle} />{canViewDrive && <section className="card settings-card"><DriveSettingsPanel canEdit={canManageDrive} /></section>}</>}
-      {tab === 'organization' && canViewOrganization && <OrganizationSettings workspace={workspace} setWorkspace={setWorkspace} canEdit={canEditOrganization} />}
+      {tab === 'organization' && canViewOrganization && <><OrganizationSettings workspace={workspace} setWorkspace={setWorkspace} canEdit={canEditOrganization} /><ErrorReportingStatus /></>}
       {tab === 'system' && isDeveloper && <SystemSettings />}
     </main>
   </div>
+}
+
+function ErrorReportingStatus() {
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState('')
+  return <section className="card settings-card"><h2>דיווח תקלות למפתח</h2><p>תקלות שמירה ותקלות שירות מדווחות אוטומטית אל mosheschwartzberg@gmail.com, ללא סיסמאות או תוכן סביבת העבודה. השליחה תלויה בחיבור Gmail פעיל של משתמש מורשה בארגון.</p><button type="button" className="secondary" disabled={busy} onClick={() => { setBusy(true); setMessage(''); void integrationsApi.testErrorReporting(errorReportingOrganization()).then(result => setMessage(result.state === 'sent' ? 'הודעת הבדיקה נשלחה למפתח בהצלחה' : result.state === 'rate-limited' ? 'הגעתם למכסת הדיווחים היומית. דיווחים חוזרים מוגבלים כדי למנוע הצפה.' : result.state === 'failed' ? 'השליחה נכשלה. בדקו חיבור Gmail של מנהל או מפתח.' : result.state === 'uncertain' ? 'לא התקבל אישור ודאי. יש לבדוק את תיקיית נשלח לפני ניסיון נוסף.' : 'הדיווח נרשם לשליחה. בדקו חיבור Gmail של מנהל או מפתח.')).catch(error => setMessage(error.message)).finally(() => setBusy(false)) }}>{busy ? 'בודק...' : 'שליחת התראת בדיקה למפתח'}</button>{message && <p role="status">{message}</p>}</section>
 }
 
 function PersonalSettings({ user, onUserUpdated }: { user: User; onUserUpdated: (user: User) => void }) {

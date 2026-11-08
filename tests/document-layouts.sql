@@ -44,6 +44,18 @@ select data,version into d,v from public.get_workspace_state('60000000-0000-0000
 perform pg_temp.check_layout(d#>>'{files,0,planRevision}'='A-02');
 perform pg_temp.check_layout(d#>>'{files,0,planHistory,0,revisionNotes}'='first');
 end$$;
+-- The single profession selector persists its ID without rewriting project grants.
+select set_config('request.jwt.claim.sub','50000000-0000-0000-0000-000000000001',true);
+do $$declare d jsonb; v bigint; begin
+select data,version into d,v from public.get_workspace_state('60000000-0000-0000-0000-000000000001');
+d:=jsonb_set(d,'{categories}','[{"id":"electric","name":"חשמל"}]');
+d:=jsonb_set(d,'{taskStatuses}','["טרם התחיל","בוצע","סגור"]');
+d:=jsonb_set(d,'{tasks}','[{"id":"task-profession","projectId":"p","title":"QA","status":"טרם התחיל","priority":"רגילה","createdAt":"2026-11-08","categoryIds":[],"custom":{"profession":"חשמל"},"professionId":"electric"}]');
+perform public.save_workspace_state('60000000-0000-0000-0000-000000000001',d,v);
+select data,version into d,v from public.get_workspace_state('60000000-0000-0000-0000-000000000001');
+perform pg_temp.check_layout(d#>>'{tasks,0,professionId}'='electric');
+perform pg_temp.check_layout(d#>>'{tasks,0,custom,profession}'='חשמל');
+end$$;
 select set_config('request.jwt.claim.sub','50000000-0000-0000-0000-000000000003',true);
 do $$declare d jsonb; v bigint; begin
 select data,version into d,v from public.get_workspace_state('60000000-0000-0000-0000-000000000001');

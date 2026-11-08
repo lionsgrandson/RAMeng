@@ -62,6 +62,7 @@ export interface Project {
 }
 
 export interface Task {
+  professionId?: ID
   id: ID
   projectId?: ID
   parentId?: ID

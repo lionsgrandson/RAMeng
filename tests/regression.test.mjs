@@ -1691,3 +1691,110 @@ test('project file rows keep their project context when no navigation callback i
     assert.match(html,/פרויקט: פרויקט בדיקה/)
   } finally {globalThis.window=savedWindow}
 })
+
+
+test('one profession selector reconciles legacy dropdowns, keeps old links and follows renames', async () => {
+  const {taskProfessionIds,taskProfessionName,withTaskProfession,renameProfession}=await server.ssrLoadModule('/src/lib/taskProfession.ts')
+  const {visibleTaskColumns}=await server.ssrLoadModule('/src/lib/taskColumns.ts')
+  const w=cloneWorkspace();w.categories=[{id:'a',name:'אדריכלות'},{id:'e',name:'חשמל'}];w.projects=[{id:'p',name:'QA',categoryIds:['a']}]
+  w.taskColumns=[{id:'profession',key:'custom.profession',label:'מקצוע',type:'text',visible:true}]
+  const old={id:'task',projectId:'p',categoryIds:['a'],custom:{profession:'חשמל',other:'preserve'}};w.tasks=[old]
+  assert.equal(taskProfessionName(old,w),'חשמל');assert.deepEqual(taskProfessionIds(old,w),['e','a'])
+  assert.equal(visibleTaskColumns(w.taskColumns).some(column=>column.key==='__categories'),false)
+  const selected=withTaskProfession(old,'e',w)
+  assert.equal(selected.professionId,'e');assert.deepEqual(selected.categoryIds,[]);assert.equal(selected.custom.other,'preserve')
+  assert.equal(old.custom.profession,'חשמל')
+  w.tasks=[selected];const renamed=renameProfession(w,'e','חשמל ובקרה')
+  assert.equal(taskProfessionName(renamed.tasks[0],renamed),'חשמל ובקרה');assert.equal(renamed.tasks[0].custom.profession,'חשמל ובקרה')
+  const report=createReportFromTasks(renamed,'p',['task'],{title:'QA'})
+  assert.equal(report.sections.find(section=>section.items.length)?.title,'חשמל ובקרה')
+})
+
+test('developer error reports redact secrets, fix the recipient and deduplicate repeated failures', async () => {
+  const {enqueueApplicationError,deliverApplicationError,safeDiagnostic}=await import('../worker/src/applicationErrors.js')
+  const values=new Map();const local={CONFIG:{get:async key=>values.get(key)||null,put:async(key,value)=>values.set(key,JSON.parse(value))}}
+  const input={orgId:'org',userId:'user',operation:'workspace-save',code:'P0001',page:'tasks',message:'Category error token=private "password":"do-not-send" https://secret.test/?token=private sb_secret_private'}
+  const first=await enqueueApplicationError(local,input,['sender'])
+  assert.equal((await enqueueApplicationError(local,input,['other'])).duplicate,true)
+  const sent=[];const result=await deliverApplicationError(local,first.key,first.report,{tokens:async()=>({}),send:async(id,message)=>{sent.push({id,message});return new Response('{}')}})
+  assert.equal(result.state,'sent');assert.equal(sent.length,1);assert.equal(sent[0].message.to,'mosheschwartzberg@gmail.com')
+  assert.doesNotMatch(sent[0].message.body,/private|do-not-send|secret\.test/)
+  await deliverApplicationError(local,first.key,first.report,{tokens:async()=>({}),send:async()=>{throw Error('must not resend')}})
+  assert.equal(sent.length,1)
+  assert.match(safeDiagnostic('Bearer abc eyJabc.def.ghi'),/redacted/)
+})
+
+test('ambiguous diagnostic delivery is not automatically resent; disconnected reports stay queued', async()=>{
+  const {enqueueApplicationError,deliverApplicationError}=await import('../worker/src/applicationErrors.js')
+  const values=new Map();const local={CONFIG:{get:async key=>values.get(key)||null,put:async(key,value)=>values.set(key,JSON.parse(value))}}
+  const item=await enqueueApplicationError(local,{orgId:'org',userId:'u',operation:'save',message:'failed'},['sender'])
+  assert.equal((await deliverApplicationError(local,item.key,item.report,{tokens:async()=>null,send:async()=>{throw Error('must not send')}})).state,'pending')
+  const result=await deliverApplicationError(local,item.key,item.report,{tokens:async()=>({}),send:async()=>{throw Error('network interrupted')}})
+  assert.equal(result.state,'uncertain')
+  assert.equal((await deliverApplicationError(local,item.key,item.report,{tokens:async()=>({}),send:async()=>{throw Error('must not retry')}})).state,'uncertain')
+})
+
+test('external invitation uses a contextual Gmail message with secure Supabase setup and server verified names', async t=>{
+  const kv=new Map([['rameng:admin-config:v1',config],['rameng:google-tokens:v2:qa',{access_token:'qa-google-token',email:'qa@example.test',expires_at:Date.now()+3600000}]])
+  const local={SUPABASE_SECRET_KEY:'test-service-key',CONFIG:{get:async key=>kv.get(key)||null,put:async(key,value)=>kv.set(key,JSON.parse(value))}}
+  let mail='';let generated=0;let upserts=0
+  t.mock.method(globalThis,'fetch',async(input,init={})=>{
+    const url=new URL(input instanceof Request?input.url:String(input));const method=input instanceof Request?input.method:init.method||'GET'
+    const body=input instanceof Request?await input.clone().text():init.body
+    if(url.pathname.endsWith('/auth/v1/user'))return Response.json({id:'qa',email:'qa@example.test'})
+    if(url.pathname.endsWith('/rpc/is_org_admin'))return Response.json(true)
+    if(url.pathname.endsWith('/rpc/get_workspace_state'))return Response.json([{data:{projects:[{id:'p',name:'שם פרויקט מאומת'}],tasks:[{id:'task',projectId:'p',title:'משימה מאומתת',dueDate:'2026-11-20'}]}}])
+    if(url.pathname.endsWith('/auth/v1/admin/users'))return Response.json({users:[],aud:'authenticated'})
+    if(url.pathname.endsWith('/auth/v1/admin/generate_link')){generated++;return Response.json({id:'external',email:'external@example.test',action_link:'https://qa.supabase.co/auth/v1/verify?token=secret-link&type=invite',properties:{action_link:'https://qa.supabase.co/auth/v1/verify?token=secret-link&type=invite'}})}
+    if(url.pathname.endsWith('/memberships')){
+      if(method==='POST'){upserts++;return new Response(null,{status:201})}
+      return url.searchParams.get('select')==='role'?Response.json(null):Response.json([{role:'admin',permissions:null}])
+    }
+    if(url.hostname==='gmail.googleapis.com'&&url.pathname.endsWith('/messages/send')){const raw=JSON.parse(body).raw;mail=Buffer.from(raw,'base64url').toString('utf8');return Response.json({id:'sent'})}
+    throw Error(`Unexpected ${method} ${url.pathname}`)
+  })
+  t.mock.method(console,'error',()=>undefined)
+  const response=await worker.fetch(request('/api/users/invite',{orgId:'org',email:'external@example.test',name:'אחראי',role:'external',projectId:'p',taskId:'task',taskTitle:'forged'}),local)
+  assert.equal(response.status,200,await response.clone().text());assert.equal(generated,1);assert.equal(upserts,1)
+  const encoded=mail.split('Content-Transfer-Encoding: base64\r\n\r\n')[1].replace(/\r\n/g,'')
+  const text=Buffer.from(encoded,'base64').toString('utf8')
+  assert.match(text,/שם פרויקט מאומת/);assert.match(text,/משימה מאומתת/);assert.match(text,/עדכנו סטטוס/);assert.match(text,/secret-link/);assert.doesNotMatch(text,/forged/)
+  const reply=await response.json();assert.equal(reply.invited,true);assert.equal('action_link' in reply,false)
+})
+
+
+test('offline diagnostics retain sanitized account-scoped reports and flush after reconnect', async t=>{
+  const reporter=await server.ssrLoadModule('/src/lib/errorReporting.ts')
+  const saved=globalThis.localStorage;const values=new Map()
+  globalThis.localStorage={getItem:key=>values.get(key)||null,setItem:(key,value)=>values.set(key,value)}
+  backend.configureBackend({supabaseUrl:'https://qa.supabase.co',supabaseAnonKey:'qa-public'})
+  t.mock.method(backend.getBackend().auth,'getSession',async()=>({data:{session:{access_token:'qa-token'}}}))
+  t.mock.method(globalThis,'fetch',async()=>{throw Error('offline')})
+  reporter.setErrorReportingContext('org','tasks','qa')
+  try{
+    await reporter.reportClientError('workspace-save',new Error('save failed token=private'))
+    const queued=values.get('rameng-pending-errors:org:qa');assert.match(queued,/save failed/);assert.doesNotMatch(queued,/private/)
+    t.mock.method(globalThis,'fetch',async(_url,init)=>{assert.equal(JSON.parse(init.body).orgId,'org');return Response.json({state:'sent'})})
+    await reporter.flushPendingReports()
+    assert.deepEqual(JSON.parse(values.get('rameng-pending-errors:org:qa')),[])
+  }finally{globalThis.localStorage=saved;backend.configureBackend({});reporter.setErrorReportingContext('','','')}
+})
+
+
+test('application error endpoint is authenticated, fixes the recipient and derives the actor', async t=>{
+  let sends=0;let mime=''
+  const {privateEnv,kv}=projectMailFixture(t,async(url,init)=>{assert.ok(url.pathname.endsWith('/messages/send'));sends++;mime=Buffer.from(JSON.parse(init.body).raw,'base64url').toString('utf8');return Response.json({id:'diagnostic'})})
+  const body={orgId:'org',userId:'forged',to:'other@example.test',operation:'workspace-save',code:'P0001',message:'Category error token=do-not-send'}
+  assert.equal((await worker.fetch(request('/api/application-errors',body,false),privateEnv)).status,401)
+  const response=await worker.fetch(request('/api/application-errors',body),privateEnv)
+  assert.equal(response.status,200);assert.equal((await response.json()).state,'sent');assert.match(mime,/To: mosheschwartzberg@gmail.com/)
+  const item=[...kv.entries()].find(([key])=>key.startsWith('application-error:'))[1]
+  assert.equal(item.userId,'qa');assert.doesNotMatch(item.message,/do-not-send/)
+  await worker.fetch(request('/api/application-errors',body),privateEnv);assert.equal(sends,1)
+})
+
+test('application diagnostics cannot target an organization outside the caller membership', async t=>{
+  t.mock.method(globalThis,'fetch',async url=>String(url).endsWith('/auth/v1/user')?Response.json({id:'qa'}):String(url).includes('/rest/v1/memberships')?Response.json([]):Promise.reject(Error('No provider or service write permitted')))
+  t.mock.method(console,'error',()=>undefined)
+  assert.equal((await worker.fetch(request('/api/application-errors',{orgId:'unrelated',message:'forged'}),env)).status,403)
+})

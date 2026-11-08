@@ -46,6 +46,7 @@ await check('runtime configuration targets RAMENG without privileged credential 
 for (const [path, method, body] of [
   ['/api/google/gmail/thread?threadId=rameng-smoke-missing', 'GET'],
   ['/api/google/gmail/attachment?messageId=rameng-smoke-missing&partId=1', 'GET'],
+  ['/api/application-errors', 'POST', {orgId:'rameng-smoke-missing',operation:'unused',message:'unused'}],
   ['/api/google/gmail/read', 'POST', { threadId: 'rameng-smoke-missing' }],
   ['/api/google/gmail/unread', 'POST', { threadId: 'rameng-smoke-missing' }],
   ['/api/google/drive/folder', 'POST', { projectId: 'rameng-smoke-missing', parentId: 'rameng-smoke-missing', name: 'unused' }],

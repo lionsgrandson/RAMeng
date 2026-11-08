@@ -26,7 +26,7 @@ async function scenario(name, action, query = '', route = 'tasks', contextOption
   // Fixtures must not make any requests to production or Google services.
   await page.route('**/*', request => new URL(request.request().url()).origin === base ? request.continue() : request.abort())
   try {
-    await page.goto(route === '__auth' ? `${base}/tests/fixtures/auth.html` : `${base}/${query}#app?page=${route}`, { waitUntil: 'domcontentloaded' })
+    await page.goto(route === '__auth' ? `${base}/tests/fixtures/auth.html${query}` : `${base}/${query}#app?page=${route}`, { waitUntil: 'domcontentloaded' })
     await page.locator('.topbar, .external-task-page, .auth-screen').waitFor({ state: 'visible' })
     await action(page)
     assert.deepEqual(errors, [])
@@ -473,7 +473,7 @@ try {
   }, '', 'reports&report=qa-report')
   await scenario('meeting summary photos and columns survive reload and export with selected task data', async page => {
     await page.getByLabel('בחירת כל המשימות המסוננות לסיכום').check()
-    await page.getByRole('button',{name:'הוסף לסיכום פגישה חדש',exact:true}).click()
+    await page.getByRole('button',{name:'יצירת סיכום פגישה ממשימות',exact:true}).click()
     let dialog=page.getByRole('dialog')
     await dialog.getByText('עמודות להפקה — בחירה וסדר',{exact:true}).click()
     await dialog.getByRole('checkbox',{name:'סטטוס',exact:true}).uncheck()
@@ -490,7 +490,7 @@ try {
     await dialog.getByText('עמודות להפקה — בחירה וסדר',{exact:true}).click()
     assert.equal(await dialog.getByRole('checkbox',{name:'סטטוס',exact:true}).isChecked(),false)
     const popupEvent=page.waitForEvent('popup')
-    await dialog.getByRole('button',{name:'ייצוא PDF',exact:true}).click()
+    await dialog.getByRole('button',{name:'תצוגה מקדימה / ייצוא PDF',exact:true}).click()
     const popup=await popupEvent;await popup.getByRole('heading',{name:'תמונות מהפגישה',exact:true}).waitFor()
     assert.equal(await popup.locator('img').count(),1)
     assert.equal(await popup.getByRole('columnheader',{name:'סטטוס',exact:true}).count(),0)
@@ -498,7 +498,7 @@ try {
     await popup.screenshot({path:'artifacts/audit/meeting-photo-print.png',fullPage:true})
   }, '', 'projects&project=qa-project&tab=tasks')
   await scenario('failed meeting photo upload preserves summary and displays a retryable error', async page => {
-    await page.getByRole('button',{name:'הוסף לסיכום פגישה חדש',exact:true}).click()
+    await page.getByRole('button',{name:'יצירת סיכום פגישה ממשימות',exact:true}).click()
     const dialog=page.getByRole('dialog')
     await dialog.getByLabel('הוספת תמונה',{exact:true}).setInputFiles({name:'meeting.png',mimeType:'image/png',buffer:Buffer.from('synthetic')})
     await dialog.getByRole('alert').waitFor()
@@ -534,11 +534,11 @@ try {
   await scenario('scope task column order and visibility persist in project tables', async page => {
     await page.getByRole('tab', { name: 'תצוגה', exact: true }).click()
     const category = page.locator('.display-column-row[data-column-key="__categories"]')
-    for (let count = 0; count < 20 && await category.getByRole('button', { name: 'הזזת מקצועות למעלה', exact: true }).isEnabled(); count++) {
-      await category.getByRole('button', { name: 'הזזת מקצועות למעלה', exact: true }).click()
+    for (let count = 0; count < 20 && await category.getByRole('button', { name: 'הזזת מקצוע למעלה', exact: true }).isEnabled(); count++) {
+      await category.getByRole('button', { name: 'הזזת מקצוע למעלה', exact: true }).click()
     }
     await page.getByLabel('הצגת עמודה שעה', { exact: true }).uncheck()
-    await page.getByLabel('רוחב עמודה מקצועות', { exact: true }).fill('20')
+    await page.getByLabel('רוחב עמודה מקצוע', { exact: true }).fill('20')
     await page.getByRole('button', { name: 'שמירה', exact: true }).first().click()
     await page.waitForFunction(() => JSON.parse(localStorage.getItem('rameng-qa-developer') || '{}').taskColumns?.[0]?.key === '__categories')
     await page.goto(`${base}/#app?page=projects&project=qa-project&tab=tasks`)
@@ -654,6 +654,64 @@ try {
     const saved=await page.evaluate(()=>JSON.parse(localStorage.getItem('qa-moved-file')))
     assert.equal(saved.projectId,'qa-project');assert.equal(saved.fileId,'qa-subfolder')
   }, '', 'projects&project=qa-project&tab=drive')
+
+  await scenario('invitation password setup has independent accessible visibility controls', async page=>{
+    const first=page.getByLabel('סיסמה חדשה',{exact:true});const confirm=page.getByLabel('אימות סיסמה',{exact:true})
+    await first.fill('synthetic-first');await confirm.fill('synthetic-confirm')
+    await page.locator('.password-input').nth(0).getByRole('button').click()
+    assert.equal(await first.getAttribute('type'),'text');assert.equal(await confirm.getAttribute('type'),'password')
+    await page.locator('.password-input').nth(1).getByRole('button').focus();await page.keyboard.press('Enter')
+    assert.equal(await confirm.getAttribute('type'),'text');assert.equal(await first.inputValue(),'synthetic-first');assert.equal(await confirm.inputValue(),'synthetic-confirm')
+  },'?setPassword=1','__auth')
+  await scenario('profession dropdown saves without project category grants and filters after rename', async page=>{
+    await page.getByRole('textbox',{name:'שם משימה',exact:true}).fill('משימת מקצוע QA')
+    await page.getByRole('button',{name:'שמירה',exact:true}).first().click()
+    await page.waitForFunction(()=>!!localStorage.getItem('rameng-qa-developer'))
+    await page.evaluate(()=>{const key='rameng-qa-developer';const w=JSON.parse(localStorage.getItem(key));w.categories=[{id:'electric',name:'חשמל'}];w.taskColumns.push({id:'prof',key:'custom.profession',label:'מקצוע',type:'text',visible:true});w.tasks[0].custom={profession:'חשמל'};localStorage.setItem(key,JSON.stringify(w))})
+    await page.reload()
+    const profession=page.getByLabel('מקצוע עבור משימת מקצוע QA',{exact:true});await profession.waitFor()
+    assert.equal(await page.locator('.task-table thead [data-column-key="__categories"]').count(),0)
+    assert.equal(await profession.inputValue(),'חשמל')
+    await profession.selectOption('');await profession.selectOption('חשמל')
+    await page.getByRole('button',{name:'שמירה',exact:true}).first().click()
+    await page.waitForFunction(()=>JSON.parse(localStorage.getItem('rameng-qa-developer')).tasks[0].professionId==='electric')
+    await page.getByLabel('סינון משימות לפי מקצוע',{exact:true}).selectOption('electric')
+    assert.equal(await page.locator('[data-task-id]').count(),1)
+    await page.locator('.category-manager summary').click();await page.getByLabel('שם מקצוע חשמל',{exact:true}).fill('חשמל ובקרה');await page.getByRole('textbox',{name:'חיפוש משימות',exact:true}).focus()
+    await page.getByRole('button',{name:'שמירה',exact:true}).first().click();await page.waitForFunction(()=>JSON.parse(localStorage.getItem('rameng-qa-developer')).categories[0].name==='חשמל ובקרה')
+    await page.reload();assert.equal(await page.getByLabel('מקצוע עבור משימת מקצוע QA',{exact:true}).inputValue(),'חשמל ובקרה')
+    assert.equal(await page.getByRole('alert').count(),0)
+  })
+  await scenario('external comment appears in task row with an author and opens the conversation', async page=>{
+    await page.getByRole('textbox',{name:'שם משימה',exact:true}).scrollIntoViewIfNeeded()
+    await page.evaluate(()=>{localStorage.setItem('qa-comments:qa-task',JSON.stringify([{id:'external-comment',body:'הטיפול בוצע, מצורף עדכון חיצוני',authorId:'qa-external',at:new Date().toISOString()}]));window.dispatchEvent(new Event('rameng-task-comment'))})
+    await page.locator('.task-comment-preview').getByText('הטיפול בוצע, מצורף עדכון חיצוני',{exact:true}).waitFor()
+    await page.locator('.task-comment-preview button').click()
+    await page.getByRole('dialog').getByText('הטיפול בוצע, מצורף עדכון חיצוני',{exact:true}).waitFor()
+  })
+  await scenario('external task page identifies the signed in participant', async page=>{
+    await page.getByText('שלום, משתתף חיצוני לבדיקה',{exact:true}).waitFor()
+    await page.getByRole('heading',{name:'המשימות שהוקצו לי',exact:true}).waitFor()
+  },'?qaRole=external')
+  await scenario('meeting summaries tab exposes filtering task selection columns and layout preview', async page=>{
+    await page.getByRole('tab',{name:'סיכומי פגישה',exact:true}).click()
+    await page.getByRole('button',{name:'יצירת סיכום פגישה ממשימות',exact:true}).click()
+    const dialog=page.getByRole('dialog');await dialog.getByLabel('סינון סיכום לפי אחראי',{exact:true}).waitFor();await dialog.getByLabel('סינון סיכום לפי מקצוע',{exact:true}).waitFor()
+    await dialog.getByLabel('הכללת משימת בדיקה בסיכום',{exact:true}).check()
+    await dialog.locator('.document-columns summary').click()
+    await dialog.locator('.document-column-row').first().getByRole('button',{name:/הזזת עמודה/}).focus();await page.keyboard.press('End')
+    await dialog.locator('.meeting-preview summary').click();assert.match(await dialog.locator('iframe').getAttribute('srcdoc'),/משימת בדיקה/)
+    await page.screenshot({path:'artifacts/audit/followup-meeting-workflow.png',fullPage:true})
+  },'','projects&project=qa-project&tab=tasks')
+  await scenario('project files expose profession folders external sharing and readable filenames', async page=>{
+    await page.getByRole('heading',{name:'תיקיות הפרויקט לפי מקצוע',exact:true}).waitFor()
+    await page.getByRole('button',{name:'תיקיות הפרויקט ושיתוף חיצוני',exact:true}).click()
+    await page.getByRole('heading',{name:'Google Drive',exact:true}).waitFor()
+  },'','projects&project=qa-project&tab=files')
+  await scenario('report editor has a direct column configuration action before PDF', async page=>{
+    await page.getByRole('button',{name:'בחירת עמודות ועיצוב',exact:true}).click()
+    assert.equal(await page.locator('.document-column-row').first().isVisible(),true)
+  },'','reports&report=qa-report')
 } finally {
   await writeFile('artifacts/audit/browser-results.json', JSON.stringify(results, null, 2))
   await browser.close(); await server?.close()

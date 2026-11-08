@@ -1,14 +1,16 @@
 import { taskTreeRows } from '../lib/taskTree'
 import TaskComments from './TaskComments'
 import TaskContactAssignment from './TaskContactAssignment'
-import { taskColumnChoices } from '../lib/taskProfession'
+import TaskProfessionSelect from './TaskProfessionSelect'
+import TaskCommentPreview from './TaskCommentPreview'
+import { isProfessionColumn, taskProfessionIds, taskProfessionName, withTaskProfession, taskColumnChoices } from '../lib/taskProfession'
 import { jerusalemInstant } from '../lib/taskTime'
 import { percentageTaskColumns, taskTableMinWidth, visibleTaskColumns } from '../lib/taskColumns'
 import { DisplayContext } from './DisplaySettings'
 import { orderedColumns, reorderColumn } from '../lib/columnOrder'
 import { useColumnReorder } from './ColumnReorder'
 import { TaskDeliveryStatus } from './TaskNotifications'
-import { CategoryManager, CategoryPicker } from './Categories'
+import { CategoryManager } from './Categories'
 import MeetingSummaries from './MeetingSummaries'
 import DeleteButton from './RecordDelete'
 import { Fragment, useContext, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
@@ -55,7 +57,8 @@ const taskColor = (id?: string) => TASK_COLOR_OPTIONS.find((item) => item.id ===
 // is normalized by the server after save and can briefly retain its old value.
 export const isCompleted = (task: Task) => COMPLETED_STATUSES.includes(task.status) || (!task.status && Boolean(task.completedAt))
 
-const fieldValue = (task: Task, column: TaskColumn) => {
+const fieldValue = (task: Task, column: TaskColumn, workspace?: Workspace) => {
+  if (workspace && (column.key === '__categories' || isProfessionColumn(column))) return taskProfessionName(task,workspace)
   if (column.key.startsWith('custom.')) return task.custom?.[column.key.slice(7)] || ''
   return String((task as unknown as Record<string, unknown>)[column.key] ?? '')
 }
@@ -74,7 +77,6 @@ export default function TaskBoard({ canUploadFiles = false, canInviteExternal = 
   const [categoryFilter, setCategoryFilter] = useState('')
   const { groupBy, density, taskColumnOrder, hiddenTaskColumns, update: updateDisplay } = useContext(DisplayContext)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
-  const [newCategories, setNewCategories] = useState<string[]>([])
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('הכל')
   const [projectFilter, setProjectFilter] = useState('הכל')
@@ -107,9 +109,9 @@ export default function TaskBoard({ canUploadFiles = false, canInviteExternal = 
   }).length
 
   const filteredTasks = workspace.tasks.filter((task) => {
-    if (Object.entries(columnFilters).some(([key, value]) => { const column = visibleColumns.find(item => item.key === key); return value && column && !fieldValue(task, column).toLowerCase().includes(value.toLowerCase()) })) return false
+    if (Object.entries(columnFilters).some(([key, value]) => { const column = visibleColumns.find(item => item.key === key); return value && column && !fieldValue(task, column, workspace).toLowerCase().includes(value.toLowerCase()) })) return false
     if (projectId && task.projectId !== projectId) return false
-    if (categoryFilter && !task.categoryIds?.includes(categoryFilter)) return false
+    if (categoryFilter && !taskProfessionIds(task, workspace).includes(categoryFilter)) return false
     if (!projectId && addressFilter.trim()) {
       const projectAddress = workspace.projects.find((project) => project.id === task.projectId)?.address || ''
       if (!projectAddress.toLowerCase().includes(addressFilter.trim().toLowerCase())) return false
@@ -239,7 +241,7 @@ export default function TaskBoard({ canUploadFiles = false, canInviteExternal = 
       id: uid('task'),
       projectId: chosenProjectId,
       parentId,
-      categoryIds: newCategories.filter(id => workspace.projects.find(project => project.id === chosenProjectId)?.categoryIds?.includes(id)),
+      categoryIds: [],
       title: String(data.get('title') || '').trim(),
       description: String(data.get('description') || '').trim() || undefined,
       assigneeId: String(data.get('assigneeId') || '') || undefined,
@@ -259,8 +261,9 @@ export default function TaskBoard({ canUploadFiles = false, canInviteExternal = 
     if (!task.title) return
     try { if (task.scheduledTime) jerusalemInstant(task.startDate || task.dueDate || task.followUpDate || '', task.scheduledTime) } catch (error) { setScheduleError((error as Error).message); return }
     setScheduleError('')
-    setWorkspace((current) => ({ ...current, tasks: [...current.tasks, task] }))
-    setCreatingFor(null); setNewCategories([])
+    const profession = String(data.get('taskProfession') || '')
+    setWorkspace((current) => ({ ...current, tasks: [...current.tasks, withTaskProfession(task, profession, current)] }))
+    setCreatingFor(null)
     setView(isCompleted(task) ? 'archive' : 'active')
   }
 
@@ -394,20 +397,20 @@ export default function TaskBoard({ canUploadFiles = false, canInviteExternal = 
           {rows.map(({ task, depth }, index) => <Fragment key={task.id}>{groupBy !== 'none' && (index === 0 || (groupBy === 'assignee' ? rows[index - 1].task.assigneeId !== task.assigneeId : rows[index - 1].task.projectId !== task.projectId)) && <tr className="task-group-row"><th colSpan={Math.max(1, visibleColumns.length)}>{groupBy === 'assignee' ? workspace.team.find(member => member.id === task.assigneeId)?.name || 'ללא אחראי' : workspace.projects.find(project => project.id === task.projectId)?.name || 'ללא פרויקט'} · {rows.filter(row => groupBy === 'assignee' ? row.task.assigneeId === task.assigneeId : row.task.projectId === task.projectId).length}</th></tr>}<tr key={task.id} data-task-id={task.id} className={`${task.parentId ? 'subtask-row' : ''} ${isCompleted(task) ? 'completed-row' : ''} ${focusTaskId === task.id ? 'focused-task-row' : ''}`} style={{ borderInlineStartColor: task.colorTag ? taskColor(task.colorTag).hex : 'transparent' }}>
             {visibleColumns.map((column) => <td key={column.id} data-column-key={column.key} className={column.key === '__completed' ? 'complete-cell' : column.key === '__color' ? 'color-cell' : column.key === '__actions' ? 'task-actions-cell' : ''}>
               {column.key === '__select' ? <input type="checkbox" aria-label={`בחירת ${task.title} לסיכום פגישה`} checked={selectedIds.includes(task.id)} onChange={event => setSelectedIds(current => event.target.checked ? [...current, task.id] : current.filter(id => id !== task.id))} />
-                : column.key === '__categories' ? <CategoryPicker workspace={workspace} projectId={task.projectId} value={task.categoryIds || []} disabled={!canUpdate || !task.projectId} onChange={categoryIds => updateTask(task.id, { categoryIds })} />
+                : column.key === '__categories' || isProfessionColumn(column) ? <TaskProfessionSelect task={task} workspace={workspace} disabled={!canUpdate} onChange={next => updateTask(task.id, next)} />
                 : column.key === '__completed' ? <input type="checkbox" aria-label={isCompleted(task) ? `שחזור ${task.title} לאזור הפעיל` : `סימון ${task.title} כבוצעה`} checked={isCompleted(task)} disabled={!canStatus} onChange={(e) => toggleTaskCompleted(task, e.target.checked)} />
                 : column.key === '__color' ? <label className="task-color-picker"><span className="color-dot" style={{ backgroundColor: taskColor(task.colorTag).hex }} /><select aria-label={`צבע קטלוג עבור ${task.title}`} disabled={!canUpdate} value={task.colorTag || ''} onChange={(e) => updateTask(task.id, { colorTag: e.target.value || undefined })}>{TASK_COLOR_OPTIONS.map((item) => <option key={item.id || 'none'} value={item.id}>{item.label}</option>)}</select></label>
                 : column.key === '__project' ? <div className="task-project-cell"><select className="cell-input" disabled={!canUpdate} aria-label={`פרויקט עבור ${task.title}`} value={task.projectId || ''} onChange={(e) => changeTaskProject(task.id, e.target.value || undefined)}><option value="">ללא פרויקט</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.name} — {project.address || 'כתובת חסרה'}</option>)}</select>{task.projectId && onProject && <button type="button" className="text-button" onClick={() => onProject(task.projectId!)}>פתיחה</button>}</div>
                 : column.key === '__actions' ? (<div className="task-row-actions"><button className="secondary" onClick={() => setCommentTask(task)}>תגובות</button>{canUpdate && task.projectId && <button className="secondary" onClick={() => setContactTask(task)}>הקצאה לאיש קשר</button>}{canCreate && <button type="button" className="secondary task-action-btn" onClick={() => setCreatingFor({ parentId: task.id })}><Plus /> תת-משימה</button>}{canDelete && <DeleteButton message={`למחוק את המשימה "${task.title}" וכל תתי-המשימות שלה?`} onConfirm={() => removeTask(task.id)} />}</div>)
-                : column.key === 'title' ? <div><input className="cell-input task-title-input" disabled={!canUpdate} aria-label="שם משימה" style={{ paddingInlineStart: 8 + Math.min(depth, 8) * 22 }} value={task.title} onChange={(e) => updateTask(task.id, { title: e.target.value })} />{task.completedAt && <small className="task-completion-meta">הושלם: {dateLabel(task.completedAt)}{task.completedBy && ` · ${workspace.team.find(member => member.id === task.completedBy)?.name || 'משתתף חיצוני'}`}</small>}{task.sourceEmail && <small className="task-completion-meta">מקור Gmail: <bdi>{task.sourceEmail.messageId}</bdi></small>}</div>
-                : column.type === 'status' ? <select className="cell-input" disabled={!canStatus} aria-label={`${column.label} עבור ${task.title}`} value={fieldValue(task, column)} onChange={(e) => editCell(task, column, e.target.value)}>{workspace.taskStatuses.map((status) => <option key={status}>{status}</option>)}</select>
-                : column.type === 'member' ? <select className="cell-input" disabled={!canUpdate} aria-label={`${column.label} עבור ${task.title}`} value={fieldValue(task, column)} onChange={(e) => editCell(task, column, e.target.value)}><option value="">לא משויך</option>{workspace.team.filter((member) => member.active).map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select>
-                : column.type === 'time' ? <input className="cell-input" type="time" disabled={!canUpdate} aria-label={`${column.label} עבור ${task.title}`} value={fieldValue(task, column)} onChange={event => editCell(task, column, event.target.value)} />
-                : column.options !== undefined ? <select className="cell-input" disabled={!canUpdate} value={fieldValue(task, column)} aria-label={`${column.label} עבור ${task.title}`} onChange={event => editCell(task, column, event.target.value)}><option value="">ללא</option>{fieldValue(task, column) && !column.options.includes(fieldValue(task, column)) && <option>{fieldValue(task, column)}</option>}{column.options.map(value => <option key={value}>{value}</option>)}</select>
-                : column.type === 'date' ? <input className="cell-input" disabled={!canUpdate} aria-label={`${column.label} עבור ${task.title}`} type="date" value={dateInput(fieldValue(task, column))} onChange={(e) => editCell(task, column, e.target.value)} />
-                : column.type === 'priority' ? <select className="cell-input" disabled={!canUpdate} aria-label={`${column.label} עבור ${task.title}`} value={fieldValue(task, column)} onChange={(e) => editCell(task, column, e.target.value)}><option>נמוכה</option><option>רגילה</option><option>גבוהה</option><option>דחופה</option></select>
-                : column.type === 'email' ? <div className="email-cell"><input className="cell-input" disabled={!canUpdate} aria-label={`${column.label} עבור ${task.title}`} type="email" value={fieldValue(task, column)} onChange={(e) => editCell(task, column, e.target.value)} placeholder="name@example.com" />{onEmail && <button type="button" className="secondary task-action-btn" title="פתיחת התכתבות" aria-label="פתיחת התכתבות" onClick={() => onEmail(task)}><Mail /> מייל</button>}</div>
-                : <input className="cell-input" disabled={!canUpdate} aria-label={`${column.label} עבור ${task.title}`} value={fieldValue(task, column)} onChange={(e) => editCell(task, column, e.target.value)} />}
+                : column.key === 'title' ? <div><input className="cell-input task-title-input" disabled={!canUpdate} aria-label="שם משימה" style={{ paddingInlineStart: 8 + Math.min(depth, 8) * 22 }} value={task.title} onChange={(e) => updateTask(task.id, { title: e.target.value })} />{task.completedAt && <small className="task-completion-meta">הושלם: {dateLabel(task.completedAt)}{task.completedBy && ` · ${workspace.team.find(member => member.id === task.completedBy)?.name || 'משתתף חיצוני'}`}</small>}<TaskCommentPreview orgId={orgId} taskId={task.id} workspace={workspace} onOpen={() => setCommentTask(task)} />{task.sourceEmail && <small className="task-completion-meta">מקור Gmail: <bdi>{task.sourceEmail.messageId}</bdi></small>}</div>
+                : column.type === 'status' ? <select className="cell-input" disabled={!canStatus} aria-label={`${column.label} עבור ${task.title}`} value={fieldValue(task, column, workspace)} onChange={(e) => editCell(task, column, e.target.value)}>{workspace.taskStatuses.map((status) => <option key={status}>{status}</option>)}</select>
+                : column.type === 'member' ? <select className="cell-input" disabled={!canUpdate} aria-label={`${column.label} עבור ${task.title}`} value={fieldValue(task, column, workspace)} onChange={(e) => editCell(task, column, e.target.value)}><option value="">לא משויך</option>{workspace.team.filter((member) => member.active).map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select>
+                : column.type === 'time' ? <input className="cell-input" type="time" disabled={!canUpdate} aria-label={`${column.label} עבור ${task.title}`} value={fieldValue(task, column, workspace)} onChange={event => editCell(task, column, event.target.value)} />
+                : column.options !== undefined ? <select className="cell-input" disabled={!canUpdate} value={fieldValue(task, column, workspace)} aria-label={`${column.label} עבור ${task.title}`} onChange={event => editCell(task, column, event.target.value)}><option value="">ללא</option>{fieldValue(task, column, workspace) && !column.options.includes(fieldValue(task, column, workspace)) && <option>{fieldValue(task, column, workspace)}</option>}{column.options.map(value => <option key={value}>{value}</option>)}</select>
+                : column.type === 'date' ? <input className="cell-input" disabled={!canUpdate} aria-label={`${column.label} עבור ${task.title}`} type="date" value={dateInput(fieldValue(task, column, workspace))} onChange={(e) => editCell(task, column, e.target.value)} />
+                : column.type === 'priority' ? <select className="cell-input" disabled={!canUpdate} aria-label={`${column.label} עבור ${task.title}`} value={fieldValue(task, column, workspace)} onChange={(e) => editCell(task, column, e.target.value)}><option>נמוכה</option><option>רגילה</option><option>גבוהה</option><option>דחופה</option></select>
+                : column.type === 'email' ? <div className="email-cell"><input className="cell-input" disabled={!canUpdate} aria-label={`${column.label} עבור ${task.title}`} type="email" value={fieldValue(task, column, workspace)} onChange={(e) => editCell(task, column, e.target.value)} placeholder="name@example.com" />{onEmail && <button type="button" className="secondary task-action-btn" title="פתיחת התכתבות" aria-label="פתיחת התכתבות" onClick={() => onEmail(task)}><Mail /> מייל</button>}</div>
+                : <input className="cell-input" disabled={!canUpdate} aria-label={`${column.label} עבור ${task.title}`} value={fieldValue(task, column, workspace)} onChange={(e) => editCell(task, column, e.target.value)} />}
             </td>)}
 
           </tr></Fragment>)}
@@ -416,7 +419,7 @@ export default function TaskBoard({ canUploadFiles = false, canInviteExternal = 
       </table>
     </div>
 
-    {commentTask && <Modal title={`תגובות — ${commentTask.title}`} onClose={() => setCommentTask(null)}><TaskComments orgId={orgId} taskId={commentTask.id} canComment={canStatus} /></Modal>}
+    {commentTask && <Modal title={`תגובות — ${commentTask.title}`} onClose={() => setCommentTask(null)}><TaskComments team={workspace.team} orgId={orgId} taskId={commentTask.id} canComment={canStatus} /></Modal>}
     {contactTask && <TaskContactAssignment task={contactTask} workspace={workspace} setWorkspace={setWorkspace} orgId={orgId} canInvite={canInviteExternal} onContact={onContact} onClose={() => setContactTask(null)} />}
     {canCreate && creatingFor && <Modal title={creatingFor.parentId ? 'תת-משימה חדשה' : 'משימה חדשה'} onClose={() => setCreatingFor(null)} wide>
       <form className="form-grid two-col" onSubmit={submitTask}>
@@ -432,8 +435,8 @@ export default function TaskBoard({ canUploadFiles = false, canInviteExternal = 
         <Field label="תאריך סיום"><input name="dueDate" type="date" /></Field>
         <Field label="מועד מעקב"><input name="followUpDate" type="date" /></Field>
         <Field label="מייל לקוח"><input name="emailTo" type="email" placeholder="name@example.com" /></Field>
-        <div className="field"><span>מקצועות</span><CategoryPicker workspace={workspace} projectId={projectId || selectedParent?.projectId} value={newCategories} onChange={setNewCategories} /></div>
-        {workspace.taskColumns.filter(column => column.key.startsWith('custom.')).map(column => <Field key={column.id} label={column.label}>{taskColumnChoices(column, workspace) !== undefined ? <select name={column.key}><option value="">ללא</option>{taskColumnChoices(column, workspace)!.map(value => <option key={value}>{value}</option>)}</select> : <input name={column.key} />}</Field>)}
+        <Field label="מקצוע"><select name="taskProfession"><option value="">ללא מקצוע</option>{workspace.categories.map(category=><option key={category.id} value={category.id}>{category.name}</option>)}</select></Field>
+        {workspace.taskColumns.filter(column => column.key.startsWith('custom.') && !isProfessionColumn(column)).map(column => <Field key={column.id} label={column.label}>{taskColumnChoices(column, workspace) !== undefined ? <select name={column.key}><option value="">ללא</option>{taskColumnChoices(column, workspace)!.map(value => <option key={value}>{value}</option>)}</select> : <input name={column.key} />}</Field>)}
         <Field label="תיאור"><textarea name="description" rows={4} /></Field>
         <div className="form-actions full"><button type="button" className="secondary" onClick={() => setCreatingFor(null)}>ביטול</button><button className="primary"><Plus /> יצירת {creatingFor.parentId ? 'תת-משימה' : 'משימה'}</button></div>
       </form>

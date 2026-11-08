@@ -3,7 +3,7 @@ import TaskComments from './TaskComments'
 import type { Workspace } from '../types'
 import { updateExternalTaskStatus } from '../lib/backend'
 
-export default function ExternalTaskPage({ workspace, userId, refreshWorkspace, orgId, taskId, onTask, onLogout }: { workspace: Workspace; userId: string; refreshWorkspace: () => Promise<void>; orgId: string; taskId: string | null; onTask: (id: string) => void; onLogout: () => void }) {
+export default function ExternalTaskPage({ workspace, userId, userName, refreshWorkspace, orgId, taskId, onTask, onLogout }: { workspace: Workspace; userId: string; userName: string; refreshWorkspace: () => Promise<void>; orgId: string; taskId: string | null; onTask: (id: string) => void; onLogout: () => void }) {
   const tasks = workspace.tasks.filter(task => task.assigneeId === userId)
   const task = tasks.find(task => task.id === taskId)
   const [status, setStatus] = useState(task?.status || '')
@@ -23,10 +23,10 @@ export default function ExternalTaskPage({ workspace, userId, refreshWorkspace, 
     } catch (e) { setError(e instanceof Error ? e.message : 'השמירה נכשלה. נסו שוב.') }
     finally { setBusy(false) }
   }
-  return <main className="external-task-page" dir="rtl"><div className="toolbar"><strong>ר.א.ם הנדסה — המשימה שלי</strong><button className="secondary" disabled={busy} onClick={onLogout}>יציאה</button></div>
+  return <main className="external-task-page" dir="rtl"><div className="toolbar"><strong>ר.א.ם הנדסה — המשימות שלי</strong><span className="external-user-name">שלום, {userName}</span><button className="secondary" disabled={busy} onClick={onLogout}>יציאה</button></div>
     {!task && taskId && <section className="card"><h1>המשימה אינה זמינה</h1><p>המשימה לא הוקצתה לחשבון זה, הוסרה או שהגישה בוטלה.</p></section>}
     {!taskId && <section className="card"><h1>המשימות שהוקצו לי</h1>{tasks.map(task => <button className="secondary" key={task.id} onClick={() => onTask(task.id)}>{task.title}</button>)}{!tasks.length && <p>אין משימות שהוקצו לחשבון זה.</p>}</section>}
-    {task && <section className="card"><h1>{task.title}</h1><p>{workspace.projects.find(project => project.id === task.projectId)?.name}</p><p style={{ whiteSpace: 'pre-wrap' }}>{task.description}</p><p>תאריך יעד: {task.dueDate || 'לא נקבע'}</p><p>סטטוס נוכחי: {task.status}</p>
+    {task && <section className="card"><button className="secondary" type="button" onClick={() => onTask('')}>כל המשימות שהוקצו לי</button><h1>{task.title}</h1><p>{workspace.projects.find(project => project.id === task.projectId)?.name}</p><p style={{ whiteSpace: 'pre-wrap' }}>{task.description}</p><p>תאריך יעד: {task.dueDate || 'לא נקבע'}</p><p>סטטוס נוכחי: {task.status}</p>
       {task.completedAt && <p>הושלם: {new Date(task.completedAt).toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' })}</p>}
       <div className="external-task-actions"><button type="button" className="primary" disabled={busy || ['בוצע', 'סגור'].includes(task.status) || !workspace.taskStatuses.includes('בוצע')} onClick={() => void save('בוצע')}>{busy ? 'שומר...' : 'סמן כבוצע'}</button>
         <label>סטטוס<select aria-label="סטטוס המשימה שלי" disabled={busy} value={status} onChange={event => { setStatus(event.target.value); setMessage('') }}>{workspace.taskStatuses.map(status => <option key={status}>{status}</option>)}</select></label>
@@ -34,7 +34,7 @@ export default function ExternalTaskPage({ workspace, userId, refreshWorkspace, 
         <button type="button" className="secondary" disabled={busy} onClick={() => void refreshWorkspace().catch(e => setError(e.message))}>רענון המשימה</button></div>
       {message && <p role="status" className="success-banner">{message}</p>}
       {error && <div role="alert" className="error-banner"><p>{error}</p><button type="button" disabled={busy} onClick={() => void save(retryStatus)}>ניסיון נוסף</button></div>}
-      <TaskComments orgId={orgId} taskId={task.id} />
+      <TaskComments team={workspace.team} orgId={orgId} taskId={task.id} />
     </section>}
   </main>
 }

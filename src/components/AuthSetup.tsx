@@ -1,7 +1,8 @@
 import { useState, type FormEvent } from 'react'
-import { Building2, Eye, EyeOff, KeyRound, LockKeyhole } from 'lucide-react'
+import { Building2, KeyRound, LockKeyhole } from 'lucide-react'
 import { bootstrapServer } from '../lib/api'
 import { requestPasswordReset, signIn, updatePassword } from '../lib/backend'
+import PasswordInput from './PasswordInput'
 import { Field } from './common'
 import { invitationUrlError } from '../lib/runtime'
 
@@ -53,14 +54,14 @@ export function SetupScreen() {
       {error && <div className="error-banner">{error}</div>}
       {done && <div className="success-banner">ההגדרה נשמרה. המערכת נטענת מחדש...</div>}
       <form className="form-grid" onSubmit={(e) => void submit(e)}>
-        <Field label="קוד הגדרה"><input name="setupToken" type="password" required autoComplete="off" /></Field>
+        <Field label="קוד הגדרה"><PasswordInput name="setupToken"  required autoComplete="off" /></Field>
         <Field label="כתובת Supabase"><input name="supabaseUrl" inputMode="url" autoComplete="url" required placeholder="https://xxxxx.supabase.co" /></Field>
         <Field label="מפתח Supabase"><textarea name="supabaseAnonKey" rows={3} required /></Field>
         <Field label="מייל מנהל"><input name="adminEmails" type="email" required autoComplete="email" /></Field>
         <div className="setup-divider">Google — אפשר לחבר גם אחר כך</div>
         <Field label="מזהה Google"><input name="googleClientId" /></Field>
-        <Field label="מפתח Google"><input name="googleClientSecret" type="password" autoComplete="off" /></Field>
-        <Field label="מפתח Google Maps" hint="אופציונלי"><input name="googleMapsApiKey" type="password" autoComplete="off" /></Field>
+        <Field label="מפתח Google"><PasswordInput name="googleClientSecret"  autoComplete="off" /></Field>
+        <Field label="מפתח Google Maps" hint="אופציונלי"><PasswordInput name="googleMapsApiKey"  autoComplete="off" /></Field>
         <button className="primary setup-submit" disabled={loading}><KeyRound /> {loading ? 'שומר...' : 'שמירת הגדרה'}</button>
       </form>
     </section>
@@ -68,7 +69,6 @@ export function SetupScreen() {
 }
 
 export function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
-  const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
@@ -105,9 +105,9 @@ export function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
       {message && <div className="success-banner">{message}</div>}
       <form className="form-grid" onSubmit={(e) => void submit(e)}>
         <Field label="מייל"><input name="email" type="email" required autoComplete="email" /></Field>
-        {!resetMode && <Field label="סיסמה"><span className="password-input"><input id="login-password" name="password" type={showPassword ? 'text' : 'password'} required autoComplete="current-password" /><button type="button" className="icon-btn" aria-label={showPassword ? 'הסתרת סיסמה' : 'הצגת סיסמה'} aria-controls="login-password" aria-pressed={showPassword} onClick={() => setShowPassword(value => !value)}>{showPassword ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}</button></span></Field>}
+        {!resetMode && <Field label="סיסמה"><PasswordInput name="password" required autoComplete="current-password" /></Field>}
         <button className="primary login-submit" disabled={loading}>{loading ? 'שולח...' : resetMode ? 'שליחת קישור' : 'כניסה'}</button>
-        <button className="secondary" type="button" disabled={loading} onClick={() => { setResetMode((value) => !value); setShowPassword(false); setError(''); setMessage('') }}>{resetMode ? 'חזרה להתחברות' : 'שכחתי סיסמה'}</button>
+        <button className="secondary" type="button" disabled={loading} onClick={() => { setResetMode((value) => !value); setError(''); setMessage('') }}>{resetMode ? 'חזרה להתחברות' : 'שכחתי סיסמה'}</button>
       </form>
     </section>
   </div>
@@ -146,8 +146,8 @@ export function SetPasswordScreen({ onSuccess }: { onSuccess: () => void }) {
       <p>{linkError || 'בחרו סיסמה לחשבון שלכם.'}</p>
       {error && <div className="error-banner">{error}</div>}
       {!linkError && <form className="form-grid" onSubmit={(e) => void submit(e)}>
-        <Field label="סיסמה חדשה"><input name="password" type="password" required autoComplete="new-password" /></Field>
-        <Field label="אימות סיסמה"><input name="confirm" type="password" required autoComplete="new-password" /></Field>
+        <Field label="סיסמה חדשה"><PasswordInput name="password"  required autoComplete="new-password" /></Field>
+        <Field label="אימות סיסמה"><PasswordInput name="confirm"  required autoComplete="new-password" /></Field>
         <button className="primary login-submit" disabled={loading}>{loading ? 'שומר...' : 'שמירת סיסמה'}</button>
       </form>}
     </section>

@@ -10,7 +10,7 @@ let client: SupabaseClient | null = null
 let runtime: RuntimeConfig | null = null
 let clientConfigKey = ''
 
-function localizedBackendError(error: unknown, fallback: string) {
+function translatedBackendError(error: unknown, fallback: string) {
   const message = error && typeof error === 'object' && 'message' in error ? String(error.message) : ''
   const normalized = message.toLowerCase()
   if (/[\u0590-\u05ff]/.test(message)) return error instanceof Error ? error : new Error(message)
@@ -24,6 +24,14 @@ function localizedBackendError(error: unknown, fallback: string) {
   if (normalized.includes('row-level security') || normalized.includes('permission denied')) return new Error('אין הרשאה לבצע את הפעולה.')
   if (normalized.includes('already exists') || normalized.includes('duplicate')) return new Error('הפריט כבר קיים במערכת.')
   return new Error(fallback)
+}
+
+function localizedBackendError(error: unknown, fallback: string) {
+  const result = translatedBackendError(error, fallback)
+  const source = error as {message?: string; code?: string} | null
+  Object.defineProperty(result, 'diagnostic', {value:{message:source?.message || result.message,code:source?.code || result.name}})
+  if (typeof window !== 'undefined' && !['שמירת סביבת העבודה נכשלה','שמירת הנתונים נכשלה'].includes(fallback)) window.dispatchEvent(new CustomEvent('rameng-backend-error', {detail:source?.message || result.message}))
+  return result
 }
 
 export interface OrganizationMember {

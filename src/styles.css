@@ -79,3 +79,21 @@
 .personal-column-moves > div { display: flex; align-items: center; gap: .3rem; }
 .email-attachments { display: flex; flex-wrap: wrap; gap: .5rem; margin-block: .75rem; }
 .email-attachments button { max-width: 100%; overflow-wrap: anywhere; }
+
+.task-comment-preview { margin-block: 6px; max-width: 100%; }
+.task-comment-preview button { display: grid; gap: 3px; text-align: start; width: 100%; padding: 8px; border-inline-start: 3px solid #75927c; background: #f0f5f1; border-radius: 6px; }
+.task-comment-preview span { white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.task-comment-preview small { color: #526c5b; }
+.external-user-name { font-weight: 700; margin-inline: auto; }
+.meeting-task-picker, .project-folder-shortcuts { padding: 16px; margin-block: 16px; background: #f0f5f1; border: 1px solid #d6e1d8; border-radius: 12px; }
+.meeting-task-options { display: grid; gap: 8px; max-height: 320px; overflow-y: auto; margin-top: 12px; }
+.meeting-task-options label { display: flex; align-items: start; gap: 8px; padding: 8px; background: white; border-radius: 6px; }
+.meeting-task-options input[type="checkbox"] { width: 20px; height: 20px; flex-shrink: 0; }
+.linked-file-row strong, .project-drive-card td:nth-child(2) { overflow-wrap: anywhere; word-break: normal; white-space: normal; line-height: 1.6; }
+.linked-file-row strong { font-size: 1rem; }
+.document-columns summary { padding: 12px; color: #254a33; background: #e3eee6; border: 1px solid #bccfbe; border-radius: 8px; font-weight: 700; cursor: pointer; }
+.meeting-summaries > h2 { margin-bottom: 8px; }
+
+.meeting-preview iframe { width:100%; min-height:480px; border:1px solid #bccfbe; margin-block:12px; border-radius:8px; background:white; }
+.meeting-preview summary { padding:12px; background:#e3eee6; border-radius:8px; font-weight:700; cursor:pointer; }
+.linked-file-row > a strong { display:block; max-width:100%; overflow:visible; text-overflow:clip; }

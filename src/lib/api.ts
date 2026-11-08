@@ -1,3 +1,4 @@
+import { errorReportingOrganization, reportClientError } from './errorReporting'
 import { getAccessToken, getRuntime } from './backend'
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -9,16 +10,17 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       ...init,
       headers: {
         'content-type': 'application/json',
+        ...(errorReportingOrganization() ? {'x-rameng-org': errorReportingOrganization()} : {}),
         ...(token ? { authorization: `Bearer ${token}` } : {}),
         ...(init.headers || {}),
       },
     })
   } catch {
-    throw new Error('לא ניתן להתחבר כרגע. נסו שוב.')
+    const error = new Error('לא ניתן להתחבר כרגע. נסו שוב.'); void reportClientError(path.split('?')[0], error); throw error
   }
 
-  const body = await response.json().catch(() => ({})) as T & { error?: string }
-  if (!response.ok) throw new Error(body.error || 'הפעולה נכשלה.')
+  const body = await response.json().catch(() => ({})) as T & { error?: string; diagnosticQueued?: boolean }
+  if (!response.ok) { const error = new Error(body.error || 'הפעולה נכשלה.'); if (path !== '/api/application-errors' && !body.diagnosticQueued && response.status !== 401 && response.status !== 403) void reportClientError(path.split('?')[0], error); throw error }
   return body
 }
 
@@ -27,10 +29,11 @@ export interface MailProjectContext { orgId: string; projectId: string; taskId?:
 export interface MailSendResult { id: string; threadId: string; associationSaved?: boolean; subject?: string }
 export interface ProjectMailLink extends MailProjectContext { threadId: string; subject: string; from: string; to: string; date: string; snippet: string; incoming?: boolean; unread?: boolean }
 export const integrationsApi = {
+  testErrorReporting: (orgId: string) => request<{id:string;state:string}>('/api/application-errors', {method:'POST',body:JSON.stringify({orgId,operation:'diagnostic-test',code:'QA_TEST',message:'בדיקת מסלול דיווח התקלות. זוהי הודעת בדיקה יזומה; לא אירעה תקלה בנתוני הלקוח.',page:'settings'})}),
   communicationJournal: (orgId: string, projectId = '') => request<{ mailbox: { user_id: string; active: boolean; email: string; last_sync_at?: string; last_error_code?: string } | null; threads: JournalThread[] }>(`/api/communication-journal?orgId=${encodeURIComponent(orgId)}&projectId=${encodeURIComponent(projectId)}`),
   journalMessages: (orgId: string, threadId: string) => request<{ messages: JournalMessage[] }>(`/api/communication-journal?orgId=${encodeURIComponent(orgId)}&threadId=${encodeURIComponent(threadId)}`),
   shareJournalThread: (payload: { orgId: string; threadId: string; projectId: string; taskIds: string[]; contactIds: string[] }) => request<{ ok: boolean; threadId: string; messageCount: number }>('/api/communication-journal', { method: 'POST', body: JSON.stringify(payload) }),
-  taskComments: (orgId: string, taskId: string, cursor = '') => request<{ comments: { id: string; body: string; authorId: string; at: string }[]; cursor: string }>(`/api/task-comments?orgId=${encodeURIComponent(orgId)}&taskId=${encodeURIComponent(taskId)}&cursor=${encodeURIComponent(cursor)}`),
+  taskComments: (orgId: string, taskId: string, cursor = '') => request<{ latestComment?: {id:string;body:string;authorId:string;at:string} | null; comments: { id: string; body: string; authorId: string; at: string }[]; cursor: string }>(`/api/task-comments?orgId=${encodeURIComponent(orgId)}&taskId=${encodeURIComponent(taskId)}&cursor=${encodeURIComponent(cursor)}`),
   addTaskComment: (orgId: string, taskId: string, body: string) => request<{ comment: { id: string; body: string; authorId: string; at: string } }>('/api/task-comments', { method: 'POST', body: JSON.stringify({ orgId, taskId, body }) }),
   renameDrive: (payload: { orgId: string; projectId: string; fileId: string; name: string }) => request<{ file: GoogleDriveFile }>('/api/google/drive/rename', { method: 'PATCH', body: JSON.stringify(payload) }),
   createDriveFolder: (payload: {orgId: string; projectId: string; parentId: string; name: string}) => request<{file: GoogleDriveFile}>('/api/google/drive/folder', {method:'POST',body:JSON.stringify(payload)}),
@@ -82,7 +85,7 @@ export const integrationsApi = {
   uploadDrive: (payload: { orgId?: string; projectId: string; recordId: string; kind: 'file' | 'report'; file: MailAttachment; automatic?: boolean }) => request<{ id?: string; webViewLink?: string; skipped?: boolean; reason?: string; queued?: boolean }>('/api/google/drive/upload', { method: 'POST', body: JSON.stringify(payload) }),
   addressSuggestions: (query: string) => request<{ suggestions: { label: string; value: string }[] }>(`/api/address/suggest?q=${encodeURIComponent(query)}`),
   rewrite: (text: string, mode = 'inspection') => request<{ text: string }>('/api/ai/rewrite', { method: 'POST', body: JSON.stringify({ text, mode }) }),
-  inviteUser: (payload: { orgId: string; email: string; name?: string; role: string }) => request<{ ok: true; invited: boolean; existing: boolean; email: string; userId: string }>('/api/users/invite', { method: 'POST', body: JSON.stringify(payload) }),
+  inviteUser: (payload: { orgId: string; email: string; name?: string; role: string; taskId?: string; projectId?: string }) => request<{ ok: true; invited: boolean; existing: boolean; email: string; userId: string }>('/api/users/invite', { method: 'POST', body: JSON.stringify(payload) }),
   resetUserPassword: (payload: { orgId: string; userId: string }) => request<{ ok: true; email: string }>('/api/users/password-reset', { method: 'POST', body: JSON.stringify(payload) }),
   deleteUser: (payload: { orgId: string; userId: string }) => request<{ ok: true; email: string }>('/api/users/delete', { method: 'POST', body: JSON.stringify(payload) }),
   adminConfig: () => request<AdminConfig>('/api/admin/config'),

@@ -4,6 +4,7 @@ import { createClient } from '@supabase/supabase-js'
 import { cleanMailHtml, mailContent } from './mailHtml.js'
 import { handleCommunicationJournal } from './communicationJournal.js'
 import { calendarRequestId, handleCalendarMutation, invalidateCalendarCache } from './calendarMutations.js'
+import { enqueueApplicationError, deliverApplicationError } from './applicationErrors.js'
 
 const CONFIG_KEY = 'rameng:admin-config:v1'
 const GOOGLE_TOKENS_PREFIX = 'rameng:google-tokens:v2:'
@@ -19,7 +20,7 @@ const normalizeOrigin = (request) => request.headers.get('origin') || '*'
 const corsHeaders = (request) => ({
   'access-control-allow-origin': normalizeOrigin(request),
   'access-control-allow-methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
-  'access-control-allow-headers': 'authorization,content-type',
+  'access-control-allow-headers': 'authorization,content-type,x-rameng-org',
   'access-control-max-age': '86400',
   vary: 'Origin',
 })
@@ -1225,11 +1226,13 @@ async function handleTaskComments(request, env, config) {
     if (!text || text.length > 4000) throw Object.assign(new Error('תגובה נדרשת, עד 4000 תווים'), { status: 400 })
     const comment = { id: crypto.randomUUID(), body: text, authorId: user.id, at: new Date().toISOString() }
     await env.CONFIG.put(prefix + comment.at + ':' + comment.id, JSON.stringify(comment))
+    try { await env.CONFIG.put(`task-comment-latest:${body.orgId}:${body.taskId}`, JSON.stringify(comment)) } catch { console.error('Task comment preview refresh pending') }
     return apiJson(request, { comment })
   }
   const page = await env.CONFIG.list({ prefix, limit: 100, ...(body.cursor ? { cursor: body.cursor } : {}) })
   const comments = (await Promise.all(page.keys.map(key => env.CONFIG.get(key.name, 'json')))).filter(Boolean)
-  return apiJson(request, { comments, cursor: page.list_complete ? '' : page.cursor })
+  const latestComment = await env.CONFIG.get(`task-comment-latest:${body.orgId}:${body.taskId}`, 'json') || [...comments].sort((a,b) => b.at.localeCompare(a.at))[0] || null
+  return apiJson(request, { comments, latestComment, cursor: page.list_complete ? '' : page.cursor })
 }
 
 async function handleDriveCategory(request, env, config) {
@@ -1484,22 +1487,52 @@ async function handleUserInvite(request, env, config) {
   if (!orgId || !email || !email.includes('@')) throw Object.assign(new Error('יש להזין מייל תקין'), { status: 400 })
   if (!['admin', 'assistant', 'inspector', 'engineer', 'viewer', 'reviewer', 'external'].includes(requestedRole)) throw Object.assign(new Error('תפקיד לא תקין'), { status: 400 })
 
-  await requireOrgManager(request, env, config, orgId)
+  const actor = await requireOrgManager(request, env, config, orgId)
   const admin = supabaseAdmin(env, config)
 
   const listResult = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 })
   if (listResult.error) throw Object.assign(new Error('לא ניתן לבדוק את רשימת המשתמשים'), { status: 502 })
   let targetUser = (listResult.data.users || []).find((item) => String(item.email || '').toLowerCase() === email)
   const existed = Boolean(targetUser)
+  if (targetUser && requestedRole === 'external') {
+    const prior = await admin.from('memberships').select('role').eq('org_id', orgId).eq('user_id', targetUser.id).maybeSingle()
+    if (prior.error) throw Object.assign(new Error('לא ניתן לאמת חברות קיימת'), { status: 502 })
+    if (prior.data && prior.data.role !== 'external') throw Object.assign(new Error('למשתמש קיים תפקיד פנימי. אין לשנות אותו באמצעות הזמנה חיצונית.'), { status: 409 })
+  }
   let invited = false
+  let invitationLink = ''
+  let invitationContext = ''
+  let invitationSubject = ''
+  if (requestedRole === 'external') {
+    await requireOrgAreaAction(request, env, config, actor, orgId, 'communication', ['create'])
+    // Resolve task/project names from the caller's authorized workspace, never browser text.
+    if (body.projectId || body.taskId) {
+      const response = await fetch(`${config.supabaseUrl.replace(/\/$/, '')}/rest/v1/rpc/get_workspace_state`, { method: 'POST', headers: { authorization: request.headers.get('authorization'), apikey: config.supabaseAnonKey, 'content-type': 'application/json' }, body: JSON.stringify({ target_org: orgId }) })
+      const rows = response.ok ? await response.json() : null
+      const workspace = (Array.isArray(rows) ? rows[0] : rows)?.data
+      const task = body.taskId ? workspace?.tasks?.find(task => task.id === body.taskId && (!body.projectId || task.projectId === body.projectId)) : null
+      const project = workspace?.projects?.find(project => project.id === (body.projectId || task?.projectId))
+      if (!project || (body.taskId && !task)) throw Object.assign(new Error('המשימה או הפרויקט להזמנה אינם זמינים'), { status: 403 })
+      invitationSubject = task?.title || project.name
+      invitationContext = `פרויקט: ${project.name}\n${task ? `משימה: ${task.title}\nתאריך יעד: ${task.dueDate || 'לא נקבע'}\n` : ''}`
+    }
+    await validGoogleAccessToken(env, config, actor.id)
+  }
 
-  if (!targetUser) {
-    const invite = await admin.auth.admin.inviteUserByEmail(email, {
+  const pendingInvitation = targetUser && requestedRole === 'external' ? await env.CONFIG.get(`external-invitation:${orgId}:${targetUser.id}`, 'json') : null
+  if (pendingInvitation?.link && !targetUser.email_confirmed_at) invitationLink = pendingInvitation.link
+  if (!targetUser || (requestedRole === 'external' && !targetUser.email_confirmed_at && !invitationLink)) {
+    const invite = requestedRole === 'external' ? await admin.auth.admin.generateLink({ type: 'invite', email, options: { data: { full_name: name || targetUser?.user_metadata?.full_name || email, invitation_purpose: 'צפייה במשימות שהוקצו לך, עדכון סטטוס והוספת תגובות', invited_role: 'external' }, redirectTo: inviteRedirectUri(request) } }) : await admin.auth.admin.inviteUserByEmail(email, {
       data: name ? { full_name: name } : undefined,
       redirectTo: inviteRedirectUri(request),
     })
     if (invite.error || !invite.data.user) throw Object.assign(new Error('שליחת ההזמנה נכשלה'), { status: 502 })
     targetUser = invite.data.user
+    if (requestedRole === 'external') {
+      invitationLink = invite.data.properties?.action_link || ''
+      if (!invitationLink) throw Object.assign(new Error('יצירת קישור ההזמנה נכשלה'), { status: 502 })
+      await env.CONFIG.put(`external-invitation:${orgId}:${targetUser.id}`, JSON.stringify({link:invitationLink}), {expirationTtl:3600})
+    }
     invited = true
   } else if (name && !targetUser.user_metadata?.full_name) {
     const update = await admin.auth.admin.updateUserById(targetUser.id, { user_metadata: { ...(targetUser.user_metadata || {}), full_name: name } })
@@ -1513,7 +1546,55 @@ async function handleUserInvite(request, env, config) {
   const membership = await admin.from('memberships').upsert({ org_id: orgId, user_id: targetUser.id, role }, { onConflict: 'org_id,user_id' })
   if (membership.error) throw Object.assign(new Error('לא ניתן לשייך את המשתמש לארגון'), { status: 502 })
 
+  if (requestedRole === 'external') {
+    const link = invitationLink || `${PRODUCTION_APP_URL}/#app?page=tasks`
+    const bodyText = `שלום ${name || ''},\n\nהוזמנת על ידי ${actor.email || 'מנהל הפרויקט'} לשיתוף פעולה עם ר.א.ם הנדסה.\n${invitationContext}\nמה נדרש ממך?\n1. ${invitationLink ? 'פתחו את הקישור והגדירו סיסמה לחשבון.' : 'היכנסו באמצעות החשבון הקיים שלכם.'}\n2. פתחו את ״המשימות שהוקצו לי״.\n3. עדכנו סטטוס, הוסיפו תגובה וסמנו ביצוע כשהטיפול הושלם.\n\nהגישה מוגבלת למשימות שהוקצו לכם בלבד. אין גישה למשימות אחרות, לקבצים או למידע פנימי של הארגון.\nאם עדיין אין משימות ברשימה, המנהל ישלים את ההקצאה בקרוב.\n\n${invitationLink ? 'הגדרת סיסמה וכניסה מאובטחת' : 'כניסה למשימות'}:\n${link}\n\nאם הקישור פג תוקף, פנו למזמין לקבלת קישור חדש.\nר.א.ם הנדסה — ניהול ופיקוח פרויקטים`
+    const payload = await buildGmailMessage({ to: email, subject: `ר.א.ם הנדסה — הזמנה לטיפול במשימות${invitationSubject ? `: ${invitationSubject}` : ''}`, body: bodyText }, env, config, actor.id)
+    let response
+    try { response = await googleFetch(env, config, actor.id, 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) }) }
+    catch { throw Object.assign(new Error('לא התקבל אישור לשליחת ההזמנה. החשבון נוצר; בדקו את תיקיית נשלח לפני ניסיון נוסף.'), { status: 502 }) }
+    if (!response.ok) throw Object.assign(new Error('Google לא אישר את שליחת ההזמנה. החשבון קיים; בדקו את חיבור Gmail לפני ניסיון נוסף.'), { status: 502 })
+    invited = true
+  }
+
   return apiJson(request, { ok: true, invited, existing: existed, email, userId: targetUser.id, role })
+}
+
+function applicationErrorDelivery(env, config, orgId) {
+  return { tokens: async userId => {
+    if (cleanString(env.SUPABASE_SECRET_KEY)) { const member = await supabaseAdmin(env,config).from('memberships').select('role,permissions').eq('org_id',orgId).eq('user_id',userId).maybeSingle(); if (member.error || !member.data || !rolePermissionAllowed(member.data.role,member.data.permissions,'communication','create')) return null }
+    const token = await googleTokens(env,userId); if (!token || !(token.access_token || token.refresh_token)) return null; await validGoogleAccessToken(env,config,userId); return token
+  }, send: async (userId, message) => {
+    const payload = await buildGmailMessage(message, env, config, userId)
+    return googleFetch(env, config, userId, 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) })
+  } }
+}
+
+async function handleApplicationError(request, env, config) {
+  const user = await getAuthenticatedUser(request, env, config)
+  const body = await parseBody(request)
+  const membership = await currentMembership(request, env, config, user, body.orgId)
+  if (!body.orgId || !membership) throw Object.assign(new Error('אין גישה לארגון'), { status: 403 })
+  const senders = []
+  if (rolePermissionAllowed(membership.role, membership.permissions, 'communication', 'create')) senders.push(user.id)
+  if (cleanString(env.SUPABASE_SECRET_KEY)) {
+    const members = await supabaseAdmin(env, config).from('memberships').select('user_id,role,permissions').eq('org_id', body.orgId)
+    for (const member of members.data || []) if (member.role === 'developer' || (['admin','manager'].includes(member.role) && rolePermissionAllowed(member.role, member.permissions, 'communication', 'create'))) senders.push(member.user_id)
+  }
+  const queued = await enqueueApplicationError(env, { ...body, userId: user.id }, senders)
+  const report = queued.key && !queued.duplicate ? await deliverApplicationError(env, queued.key, queued.report, applicationErrorDelivery(env, config, body.orgId)) : queued.report
+  return apiJson(request, { id: report.id, state: report.state })
+}
+
+async function deliverPendingApplicationErrors(env, config) {
+  const cursor = await env.CONFIG.get('application-error-scan-cursor', 'json')
+  const page = await env.CONFIG.list({ prefix: 'application-error:', limit: 20, ...(cursor ? {cursor} : {}) })
+  if (page.list_complete) await env.CONFIG.delete('application-error-scan-cursor')
+  else await env.CONFIG.put('application-error-scan-cursor', JSON.stringify(page.cursor), {expirationTtl:86400})
+  for (const key of page.keys) {
+    const report = await env.CONFIG.get(key.name, 'json')
+    if (report?.state === 'pending') await deliverApplicationError(env, key.name, report, applicationErrorDelivery(env, config, report.orgId))
+  }
 }
 
 async function managedOrganizationUser(request, env, config, body) {
@@ -1672,6 +1753,7 @@ async function routeApi(request, env) {
   if (request.method === 'GET' && ['/api/google/gmail/thread', '/api/google/gmail/search', '/api/google/gmail/contacts', '/api/google/calendar/contacts', '/api/google/calendar/events', '/api/google/drive/files', '/api/google/drive/folders'].includes(path)) config = { ...config, dailyGoogleRead: true, forceGoogleRead: url.searchParams.get('force') === 'true' }
 
   if (path === '/api/public-config' && request.method === 'GET') return apiJson(request, publicConfig(config))
+  if (path === '/api/application-errors' && request.method === 'POST') return handleApplicationError(request, env, config)
   if (path === '/api/task-comments' && ['GET', 'POST'].includes(request.method)) return handleTaskComments(request, env, config)
   if (path === '/api/admin/bootstrap' && request.method === 'POST') return handleAdminBootstrap(request, env)
   if (path === '/api/google/callback' && request.method === 'GET') return handleGoogleCallback(request, env, config)
@@ -1772,7 +1854,7 @@ async function deliverBackgroundTaskNotifications(env, config) {
 
 export default {
   async scheduled(_event, env, ctx) {
-    ctx.waitUntil((async () => { const config = await readConfig(env); try { await deliverBackgroundTaskNotifications(env, config) } catch { console.error('Task outbox temporarily unavailable') }; await refreshGoogleReads(env, (userId, url) => googleFetch(env, config, userId, url)); await runDriveQueue(env, (job) => executeQueuedDriveUpload(env, config, job)) })())
+    ctx.waitUntil((async () => { const config = await readConfig(env); try { await deliverPendingApplicationErrors(env, config) } catch { console.error('Application error delivery temporarily unavailable') }; try { await deliverBackgroundTaskNotifications(env, config) } catch { console.error('Task outbox temporarily unavailable') }; await refreshGoogleReads(env, (userId, url) => googleFetch(env, config, userId, url)); await runDriveQueue(env, (job) => executeQueuedDriveUpload(env, config, job)) })())
   },
   async fetch(request, env) {
     try {
@@ -1786,7 +1868,15 @@ export default {
       // Provider exceptions can contain tokens or message content. Log metadata only.
       console.error('API request failed', { status, path: new URL(request.url).pathname })
       const message = status === 500 ? 'הפעולה נכשלה. נסו שוב מאוחר יותר.' : error instanceof Error ? error.message : 'הפעולה נכשלה.'
-      return apiJson(request, { error: message }, status)
+      let diagnosticQueued = false
+      if (status >= 500 && request.headers.get('authorization') && request.headers.get('x-rameng-org') && new URL(request.url).pathname !== '/api/application-errors') {
+        try {
+          const diagnosticRequest = new Request(`${new URL(request.url).origin}/api/application-errors`, {method:'POST',headers:{authorization:request.headers.get('authorization'),'content-type':'application/json'},body:JSON.stringify({orgId:request.headers.get('x-rameng-org'),operation:new URL(request.url).pathname,code:`HTTP_${status}`,message:error instanceof Error?error.message:'Server error'})})
+          const reportResponse = await handleApplicationError(diagnosticRequest,env,await readConfig(env))
+          diagnosticQueued = reportResponse.ok
+        } catch { console.error('Application diagnostic queue unavailable') }
+      }
+      return apiJson(request, { error: message, ...(diagnosticQueued?{diagnosticQueued:true}:{}) }, status)
     }
   },
 }

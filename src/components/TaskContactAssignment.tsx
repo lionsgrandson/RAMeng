@@ -22,7 +22,7 @@ export default function TaskContactAssignment({ task, workspace, setWorkspace, o
     try {
       if (!contact.name || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contact.email)) throw new Error('יש להזין שם וכתובת מייל תקינים')
       if ((!member || member.external) && (!canInvite || !authorize)) throw new Error('נדרש מנהל לאישור הזמנה וגישה מוגבלת')
-      const result = member ? { userId: member.id } : await integrationsApi.inviteUser({ orgId, email: contact.email, name: contact.name, role: 'external' })
+      const result = member ? { userId: member.id } : await integrationsApi.inviteUser({ orgId, email: contact.email, name: contact.name, role: 'external', taskId: task.id, projectId: project.id })
       if (!member || member.external) await setProjectCollaborator(orgId, project.id, result.userId, true)
       setWorkspace(current => ({ ...current, team: current.team.some(item => item.id === result.userId) ? current.team : [...current.team, { id: result.userId, name: contact.name, email: contact.email!, role: 'צפייה', external: true, active: true }], tasks: current.tasks.map(item => item.id === task.id ? { ...item, assigneeId: result.userId } : item) }))
       onClose()
