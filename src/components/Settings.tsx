@@ -58,7 +58,7 @@ export default function SettingsPage({
     <main>
       {tab === 'profile' && <PersonalSettings user={user} onUserUpdated={onUserUpdated} />}
       {tab === 'display' && <DisplaySettings workspace={workspace} setWorkspace={setWorkspace} canViewTasks={canViewTasks} canEditTasks={canEditTasks} canCreateTasks={canCreateTasks} canDeleteTasks={canDeleteTasks} />}
-      {tab === 'google' && <><GoogleWorkspaceSettings canConfigure={canConfigureGoogle} />{canViewDrive && <section className="card settings-card"><DriveSettingsPanel canEdit={canManageDrive} /></section>}</>}
+      {tab === 'google' && <><GoogleWorkspaceSettings canConfigure={canConfigureGoogle} /><ErrorReportingStatus />{canViewDrive && <section className="card settings-card"><DriveSettingsPanel canEdit={canManageDrive} /></section>}</>}
       {tab === 'organization' && canViewOrganization && <><OrganizationSettings workspace={workspace} setWorkspace={setWorkspace} canEdit={canEditOrganization} /><ErrorReportingStatus /></>}
       {tab === 'system' && isDeveloper && <SystemSettings />}
     </main>
