@@ -1815,6 +1815,7 @@ test('outgoing Hebrew MIME gives every unformatted block an explicit right align
   const result = await worker.fetch(request('/api/google/gmail/send', {to:'qa@example.test',subject:'בדיקה',body:'שלום',html:'<p>שלום</p><script>bad()</script>',threadId:'incoming'}), privateEnv)
   assert.equal(result.status, 200)
   const html = mailContent('<p>שלום</p><p style="text-align:center">כותרת</p><div><p>תוכן</p></div>').html
+  assert.doesNotMatch(html, /max-width:640px/)
   assert.match(html, /style="direction:rtl;text-align:center"|style="direction:rtl;text-align:center;"/)
   assert.equal((html.match(/text-align:right/g) || []).length, 4)
 })

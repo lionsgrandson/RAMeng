@@ -29,5 +29,5 @@ export function mailContent(html) {
     const defaults = `${/text-align\s*:/i.test(style) ? '' : `text-align:${alignment};`}${/direction\s*:/i.test(style) ? '' : `direction:${direction};`}`
     return `<${name}${attributes.replace(/\sstyle="[^"]*"/i, '')}${/\sdir=/i.test(attributes) ? '' : ` dir="${direction}"`} style="${defaults}${style}">`
   })
-  return { html: cleaned ? `<div dir="${direction}" style="direction:${direction};text-align:${alignment};font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.5;max-width:640px;width:100%;">${aligned}</div>` : '', inline }
+  return { html: cleaned ? `<div dir="${direction}" style="direction:${direction};text-align:${alignment};font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.5;width:100%;">${aligned}</div>` : '', inline }
 }
