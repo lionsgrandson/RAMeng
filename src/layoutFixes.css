@@ -487,7 +487,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 }
 button:focus:not(:focus-visible),a:focus:not(:focus-visible){outline:none}
 .card,.card-head,.card-body,.toolbar,.list-toolbar,.project-title,.client-title-row,.mail-main-head,.editor-top{min-width:0}
-.card strong,.card p,.card small,.card span,.data-table td,.data-table th{overflow-wrap:anywhere}
+.data-table td,.data-table th{overflow-wrap:break-word}
 .table-scroll,.task-table-wrap{scrollbar-width:thin;-webkit-overflow-scrolling:touch;overscroll-behavior-x:contain}
 .table-scroll::-webkit-scrollbar,.task-table-wrap::-webkit-scrollbar{height:8px}
 .table-scroll::-webkit-scrollbar-thumb,.task-table-wrap::-webkit-scrollbar-thumb{background:#c9d2ca;border-radius:999px}

@@ -19,11 +19,15 @@ export function MailComposer({ to = '', subject = '', threadId, files = [], onSe
   useEffect(() => {
     const fit = () => {
       formRef.current?.style.setProperty('--mail-viewport-height', `${window.visualViewport?.height || window.innerHeight}px`)
+      const topbar = document.querySelector('.topbar')?.getBoundingClientRect().height || 68
+      const actions = formRef.current?.closest('.mailbox')?.querySelector('.mail-reading-actions')?.getBoundingClientRect().height || 0
+      formRef.current?.style.setProperty('--mail-compose-offset', `${topbar + actions + 12}px`)
     }
     fit()
+    formRef.current?.scrollIntoView({ block: 'start', behavior: 'instant' })
     // A reply opens after the message history. Bring the composer into view,
     // then scroll its content independently so the Send action stays visible.
-    const frame = window.requestAnimationFrame(() => formRef.current?.scrollIntoView({ block: 'start' }))
+    const frame = window.requestAnimationFrame(() => formRef.current?.scrollIntoView({ block: 'start', behavior: 'instant' }))
     window.visualViewport?.addEventListener('resize', fit)
     window.addEventListener('resize', fit)
     return () => { window.cancelAnimationFrame(frame); window.visualViewport?.removeEventListener('resize', fit); window.removeEventListener('resize', fit) }

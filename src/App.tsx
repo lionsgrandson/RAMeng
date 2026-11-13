@@ -3,6 +3,7 @@ import ExternalTaskPage from './components/ExternalTaskPage'
 import { DisplayContext, useDisplayPreferences } from './components/DisplaySettings'
 import { normalizeWorkspaceCategories } from './lib/contactCategories'
 import ProjectMail from './components/ProjectMail'
+import { lockPageScroll } from './lib/scrollLock'
 import DriveAutoSync from './components/DriveAutoSync'
 import TaskCalendarSync from './components/TaskCalendarSync'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
@@ -570,9 +571,12 @@ function Sidebar({ page, setPage, workspace, permissions, open, setOpen, user, o
   const sidebarRef = useRef<HTMLElement>(null)
   useEffect(() => {
     if (!open) return
+    const desktop = window.matchMedia('(min-width: 1181px)')
+    const closeOnDesktop = () => { if (desktop.matches) setOpen(false) }
+    desktop.addEventListener('change', closeOnDesktop)
+    closeOnDesktop()
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    const oldOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
+    const unlockScroll = lockPageScroll()
     const keydown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') { event.preventDefault(); setOpen(false) }
       if (event.key === 'Tab') {
@@ -584,7 +588,7 @@ function Sidebar({ page, setPage, workspace, permissions, open, setOpen, user, o
     }
     document.addEventListener('keydown', keydown)
     const timer = window.setTimeout(() => sidebarRef.current?.querySelector<HTMLElement>('.sidebar-close')?.focus(), 0)
-    return () => { window.clearTimeout(timer); document.removeEventListener('keydown', keydown); document.body.style.overflow = oldOverflow; previous?.focus() }
+    return () => { window.clearTimeout(timer); desktop.removeEventListener('change', closeOnDesktop); document.removeEventListener('keydown', keydown); unlockScroll(); previous?.focus() }
   }, [open])
   const [reportsOpen, setReportsOpen] = useState(page === 'reports' || page === 'reports-projects' || page === 'reports-finance')
   const [unreadCount, setUnreadCount] = useState<number | null>(null)

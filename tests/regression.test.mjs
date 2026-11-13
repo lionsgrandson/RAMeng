@@ -6,6 +6,7 @@ import { cachedGoogleRead, refreshGoogleReads } from '../worker/src/googleSync.j
 import { queueDriveUpload, runDriveQueue } from '../worker/src/driveQueue.js'
 
 const server = await createServer({ configFile: false, optimizeDeps: { noDiscovery: true, include: [], entries: [] }, cacheDir: 'node_modules/.vite-regression', server: { middlewareMode: true }, appType: 'custom' })
+const {lockPageScroll}=await server.ssrLoadModule('/src/lib/scrollLock.ts')
 after(() => server.close())
 const { normalizePermissions, workspaceMutationError } = await server.ssrLoadModule('/src/lib/permissions.ts')
 const { cloneWorkspace } = await server.ssrLoadModule('/src/seed.ts')
@@ -1958,4 +1959,20 @@ test('concurrent Google task sync and an uncertain creation response never creat
   assert.equal((await syncTaskCalendar(fixture.env, {}, 'u', 'o', workspace, google)).failed, 1)
   assert.equal((await run()).unchanged, 2)
   assert.equal(fixture.events.size, 2)
+})
+
+
+test('overlapping page scroll locks release safely in either order and preserve the original overflow', async () => {
+  const original=globalThis.document
+  globalThis.document={body:{style:{overflow:''}}}
+  try {
+    const menu=lockPageScroll(),dialog=lockPageScroll()
+    menu();assert.equal(document.body.style.overflow,'hidden')
+    dialog();assert.equal(document.body.style.overflow,'')
+    dialog();assert.equal(document.body.style.overflow,'')
+    document.body.style.overflow='auto'
+    const first=lockPageScroll(),second=lockPageScroll()
+    second();assert.equal(document.body.style.overflow,'hidden')
+    first();assert.equal(document.body.style.overflow,'auto')
+  } finally {globalThis.document=original}
 })

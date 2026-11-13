@@ -14,9 +14,9 @@
 .mailbox-reading .contact-mail-layout { grid-template-columns: minmax(240px, 30%) minmax(0, 1fr); }
 .mailbox-reading .contact-thread-list > .mailbox-row { grid-template-columns: minmax(0,1fr); padding: 12px; }
 .mailbox-reading .mailbox-row > .mailbox-sender, .mailbox-reading .mailbox-row > .mailbox-subject, .mailbox-reading .mailbox-row > .mailbox-date, .mailbox-reading .mailbox-row > .mailbox-preview { grid-column: 1; grid-row: auto; }
-.mailbox .contact-thread-body { padding: 16px; max-height: 75vh; overflow-y: auto; overscroll-behavior: contain; min-width: 0; }
+.mailbox .contact-thread-body { padding: 16px; max-height: none; overflow: visible; min-width: 0; }
 .mailbox .contact-thread-body[hidden] { display: none; }
-.mail-thread-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; position: sticky; top: -16px; z-index: 2; background: white; padding: 12px 0; border-bottom: 1px solid #e2e7ec; }
+.mail-thread-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; position: static; background: white; padding: 12px 0; border-bottom: 1px solid #e2e7ec; }
 .mailbox-composing .mail-thread-toolbar { position: static; }
 
 /* Keep the submit action outside the scrolling fields, including short windows
@@ -25,14 +25,14 @@
   display: flex;
   flex-direction: column;
   gap: 0;
-  max-block-size: max(160px, min(720px, calc(var(--mail-viewport-height, 100dvh) * .65), calc(var(--mail-viewport-height, 100dvh) - 100px)));
+  max-block-size: max(160px, min(720px, calc(var(--mail-viewport-height, 100dvh) * .65), calc(var(--mail-viewport-height, 100dvh) - var(--mail-compose-offset, 84px) - 24px)));
   min-width: 0;
   padding: 0;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: #fff;
   overflow: hidden;
-  scroll-margin-block-start: 84px;
+  scroll-margin-block-start: var(--mail-compose-offset, 84px);
 }
 .mail-compose > .mail-compose-head { flex: 0 0 auto; flex-wrap: wrap; padding: 10px 12px; gap: 8px; min-height: 56px; }
 .mail-compose-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
@@ -148,3 +148,14 @@ body:has(.preview-notice) .page-wrap { padding-bottom: 95px; }
 .project-contacts-table td { font-size: 13px; }
 .project-contacts-table th { font-size: 12px; }
 .contact-table-panel .secondary { font-size: 12px; }
+
+/* Mail uses the page scrollbar for messages, so the last message and actions
+   cannot be trapped below a second, viewport-sized scrolling panel. */
+.mailbox .contact-mail-layout { align-items: start; }
+.mailbox { scroll-margin-block-start: calc(var(--mail-topbar-height, 68px) + 12px); }
+.mailbox > .card-head > div:last-child { display: flex; flex-wrap: wrap; gap: 8px; }
+.mail-reading-actions { position: sticky; top: var(--mail-topbar-height, 68px); z-index: 6; display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 16px; background: #fff; border-block: 1px solid var(--line); }
+.mail-reading-actions button { flex: 0 1 auto; min-height: 40px; white-space: normal; overflow-wrap: normal; }
+.mailbox .contact-thread-body { padding-bottom: 32px; }
+.page-wrap { padding-bottom: max(64px, calc(env(safe-area-inset-bottom) + 24px)); }
+@media(max-width:600px) { .mail-reading-actions { padding-inline: 10px; }.mail-reading-actions button { flex: 1 1 140px; } }

@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import { lockPageScroll } from '../lib/scrollLock'
 import { Inbox, X } from 'lucide-react'
 import type { FileRecord } from '../types'
 import { refreshSignedUrl } from '../lib/backend'
@@ -76,8 +77,7 @@ export function Modal({ title, children, onClose, wide = false }: { title: strin
 
   useEffect(() => {
     const previous = returnFocusRef.current
-    const oldOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
+    const unlockScroll = lockPageScroll()
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onCloseRef.current()
       if (event.key === 'Tab' && dialogRef.current) {
@@ -98,7 +98,7 @@ export function Modal({ title, children, onClose, wide = false }: { title: strin
     return () => {
       window.clearTimeout(focusTimer)
       document.removeEventListener('keydown', onKeyDown)
-      document.body.style.overflow = oldOverflow
+      unlockScroll()
       previous?.focus()
     }
   }, [])
