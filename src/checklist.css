@@ -17,6 +17,44 @@
 .mailbox .contact-thread-body { padding: 16px; max-height: 75vh; overflow-y: auto; overscroll-behavior: contain; min-width: 0; }
 .mailbox .contact-thread-body[hidden] { display: none; }
 .mail-thread-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; position: sticky; top: -16px; z-index: 2; background: white; padding: 12px 0; border-bottom: 1px solid #e2e7ec; }
+.mailbox-composing .mail-thread-toolbar { position: static; }
+
+/* Keep the submit action outside the scrolling fields, including short windows
+   and the reduced visual viewport while a phone keyboard is open. */
+.mail-compose {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  max-block-size: max(160px, min(720px, calc(var(--mail-viewport-height, 100dvh) * .65), calc(var(--mail-viewport-height, 100dvh) - 100px)));
+  min-width: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  overflow: hidden;
+  scroll-margin-block-start: 84px;
+}
+.mail-compose > .mail-compose-head { flex: 0 0 auto; flex-wrap: wrap; padding: 10px 12px; gap: 8px; min-height: 56px; }
+.mail-compose-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.mail-compose-actions button { min-height: 40px; }
+.mail-compose > small { flex: 0 0 auto; padding: 6px 12px; overflow-wrap: anywhere; }
+.mail-compose > small:empty { display: none; }
+.mail-compose > .error-banner, .mail-compose > .success-banner { flex: 0 0 auto; margin: 6px 12px; }
+.mail-compose > .mail-compose-content:not([hidden]) {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 12px;
+  scroll-padding-block: 12px;
+  align-content: start;
+}
+@media (max-width: 600px) {
+  .mail-compose > .mail-compose-head { align-items: stretch; }
+  .mail-compose-actions { width: 100%; }
+  .mail-compose-actions .primary { flex: 1 1 auto; }
+  .mail-compose-actions .secondary { padding-inline: 8px; }
+}
 .field-help { display: block; color: #667085; line-height: 1.6; margin: 8px 0; max-width: 760px; }
 .mailbox > .toolbar { flex-wrap: wrap; }
 .mailbox > .toolbar > input { flex: 1 1 280px; width: auto; }

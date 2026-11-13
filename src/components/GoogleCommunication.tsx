@@ -15,6 +15,19 @@ export function MailComposer({ to = '', subject = '', threadId, files = [], onSe
   const [recipient, setRecipient] = useState(to); const [mailSubject, setMailSubject] = useState(subject)
   const [loadAttempt, setLoadAttempt] = useState(0)
   const [draftStatus, setDraftStatus] = useState(''); const [minimized, setMinimized] = useState(false)
+  const formRef = useRef<HTMLFormElement>(null)
+  useEffect(() => {
+    const fit = () => {
+      formRef.current?.style.setProperty('--mail-viewport-height', `${window.visualViewport?.height || window.innerHeight}px`)
+    }
+    fit()
+    // A reply opens after the message history. Bring the composer into view,
+    // then scroll its content independently so the Send action stays visible.
+    const frame = window.requestAnimationFrame(() => formRef.current?.scrollIntoView({ block: 'start' }))
+    window.visualViewport?.addEventListener('resize', fit)
+    window.addEventListener('resize', fit)
+    return () => { window.cancelAnimationFrame(frame); window.visualViewport?.removeEventListener('resize', fit); window.removeEventListener('resize', fit) }
+  }, [])
   const context = draftContext ? `compose:${draftContext}:${threadId || 'new'}` : `compose:${threadId || 'new'}:${to.toLowerCase()}:${subject}`
   const dirty = useRef(false); const sending = useRef(false); const mounted = useRef(true)
   useEffect(() => { onBusyChange?.(busy); return () => onBusyChange?.(false) }, [busy, onBusyChange])
@@ -64,18 +77,18 @@ export function MailComposer({ to = '', subject = '', threadId, files = [], onSe
       try { await onSent?.({ ...result, subject: String(data.get('subject') || '') }, recipient) } catch { setError('המייל נשלח. רענון או שיוך ההתכתבות נכשל; לחצו על סנכרון. אין לשלוח שוב.') }
     } catch (e) { setError(e instanceof Error ? e.message : 'שליחת המייל נכשלה') } finally { sending.current = false; setBusy(false) }
   }
-  return <form className="mail-compose" onSubmit={(event) => void send(event)}>
-    <div className="card-head"><strong>כתיבת מייל</strong><button type="button" className="secondary" aria-expanded={!minimized} onClick={() => setMinimized(!minimized)}>{minimized ? 'הרחבת המייל' : 'מזעור המייל'}</button></div>
+  return <form ref={formRef} className="mail-compose" aria-label={threadId ? 'תשובה למייל' : 'כתיבת מייל'} onSubmit={(event) => void send(event)}>
+    <div className="card-head mail-compose-head"><strong>כתיבת מייל</strong><div className="mail-compose-actions">{!minimized && <button type="submit" className="primary" disabled={busy || !signatureLoaded || (!text.trim() && !html.includes('<img'))}><Send /> {busy ? sending.current ? 'שולח...' : 'מעבד...' : threadId ? 'שליחה באותה התכתבות' : 'שליחת מייל'}</button>}<button type="button" className="secondary" aria-expanded={!minimized} onClick={() => setMinimized(!minimized)}>{minimized ? 'הרחבת המייל' : 'מזעור המייל'}</button></div></div>
     {!signatureLoaded && error && <button type="button" className="secondary" onClick={() => { setError(''); setLoadAttempt((value) => value + 1) }}>ניסיון טעינה נוסף</button>}
-    <small role="status">{draftStatus}</small><div hidden={minimized}>
+    <small role="status">{draftStatus}</small>
     {error && <div className="error-banner" role="alert">{error}</div>}{sent && <div className="success-banner" role="status">המייל נשלח בהצלחה</div>}
+    <div className="mail-compose-content" hidden={minimized}>
     <label className="inline-control-label"><span>נמען</span><input name="to" type="email" dir="ltr" list={`mail-contacts-${ownerId.current}`} required disabled={!signatureLoaded || busy} value={recipient} onChange={(event) => { markDirty(); setRecipient(event.target.value) }} /><datalist id={`mail-contacts-${ownerId.current}`}>{contacts.filter(contact => contact.email).map(contact => <option key={contact.id} value={contact.email}>{contact.name}</option>)}</datalist><small>אפשר להזין כל כתובת מייל, גם ללא איש קשר במערכת</small></label>
     <label className="inline-control-label"><span>נושא</span><input name="subject" required disabled={!signatureLoaded || busy} value={mailSubject} onChange={(event) => { markDirty(); setMailSubject(event.target.value) }} /></label>
     <div className="mail-body-label"><strong>תוכן ההודעה</strong><Suspense fallback={<p>טוען עורך...</p>}><RichTextEditor label="תוכן ההודעה" value={html} disabled={busy || !signatureLoaded} onChange={(html, text) => { markDirty(); setHtml(html); setText(text) }} /></Suspense></div>
     <div className="attachment-controls"><label className="secondary file-label"><Paperclip /> צירוף קבצים<input aria-label="צירוף קבצים למייל" type="file" multiple disabled={busy} onChange={(event) => { const selected = Array.from(event.target.files || []); event.target.value = ''; void add(() => Promise.all(selected.map((file) => fileAttachment(file, file.name)))) }} /></label>
     {files.length > 0 && <label className="inline-control-label"><span>קובץ מהמערכת</span><select disabled={busy} defaultValue="" onChange={(event) => { const file = files.find((item) => item.id === event.target.value); event.target.value = ''; if (file) void add(async () => [await storedAttachment(file)]) }}><option value="">בחירת קובץ לצירוף</option>{files.map((file) => <option key={file.id} value={file.id}>{file.name}</option>)}</select></label>}<small>עד 10 קבצים, 18 MB בסך הכול</small></div>
     <div className="attachment-list">{attachments.map((file, index) => <span key={`${index}-${file.name}`}>{file.name}<button type="button" className="icon-btn" aria-label={`הסרת קובץ מצורף ${file.name}`} disabled={busy} onClick={() => { markDirty(); setAttachments((current) => current.filter((_, i) => i !== index)) }}><X /></button></span>)}</div>
-    <button className="primary" disabled={busy || !signatureLoaded || (!text.trim() && !html.includes('<img'))}><Send /> {busy ? sending.current ? 'שולח...' : 'מעבד...' : threadId ? 'שליחה באותה התכתבות' : 'שליחת מייל'}</button>
     </div>
   </form>
 }
