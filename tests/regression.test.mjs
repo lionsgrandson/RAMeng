@@ -1829,3 +1829,133 @@ test('calendar derives deadlines from current tasks through move, clear, delete 
   assert.deepEqual(taskCalendarDates({dueDate:'2026-02-30'},'due'),[])
   assert.deepEqual([].flatMap(task=>taskCalendarDates(task,'due')),[])
 })
+
+
+const { taskGoogleEvents, syncTaskCalendar, handleTaskCalendarSync } = await import('../worker/src/taskCalendarSync.js')
+function taskGoogleFixture() {
+  const events = new Map(); const writes = []; let generation = 0
+  const google = async (_env, _config, _user, target, init = {}) => {
+    const url = new URL(target), id = url.pathname.split('/').at(-1)
+    if (!init.method) return id === 'events' ? Response.json({items:[...events.values()].filter(event=>event.status!=='cancelled')}) : events.has(id) ? Response.json(events.get(id)) : Response.json({}, {status:404})
+    writes.push({method:init.method,id,body:init.body?JSON.parse(init.body):null})
+    assert.equal(url.searchParams.get('sendUpdates'),'none')
+    if (init.method==='POST') {
+      const body = JSON.parse(init.body)
+      if (events.has(body.id)) return Response.json({}, {status:409})
+      assert.equal(body.attendees, undefined)
+      events.set(body.id,{...body,etag:`v${++generation}`})
+      return Response.json(events.get(body.id))
+    }
+    const current = events.get(id)
+    if (!current || current.status==='cancelled') return Response.json({}, {status:410})
+    assert.equal(init.headers['If-Match'],current.etag)
+    if (init.method==='DELETE') {events.set(id,{...current,status:'cancelled',etag:`v${++generation}`});return new Response(null,{status:204})}
+    events.set(id,{...current,...JSON.parse(init.body),etag:`v${++generation}`})
+    return Response.json(events.get(id))
+  }
+  return {events,writes,google,env:{CONFIG:{put:async()=>{}}}}
+}
+
+test('Google task plan includes start-only, distinct deadlines and follow-up days, deduplicates days and respects Jerusalem time', async()=>{
+  const workspace = {projects:[{id:'p',name:'פרויקט'}],tasks:[{id:'t',projectId:'p',title:'בדיקה',status:'בטיפול',startDate:'2026-11-13'}]}
+  let events = await taskGoogleEvents(workspace,'user','org')
+  assert.equal(events.length,1);assert.deepEqual(events[0].start,{date:'2026-11-13'});assert.deepEqual(events[0].end,{date:'2026-11-14'})
+  assert.match(events[0].summary,/תחילת משימה/)
+  workspace.tasks[0] = {...workspace.tasks[0],dueDate:'2026-11-13',followUpDate:'2026-11-14',scheduledTime:'09:30'}
+  events=await taskGoogleEvents(workspace,'user','org')
+  assert.equal(events.length,2);assert.match(events[0].summary,/תחילת משימה \/ סיום משימה/)
+  assert.equal(events[0].start.dateTime,'2026-11-13T07:30:00.000Z');assert.equal(events[0].end.dateTime,'2026-11-13T08:30:00.000Z')
+  await assert.rejects(taskGoogleEvents({...workspace,tasks:[{id:'t',title:'invalid',startDate:'2026-02-30'}]},'user','org'))
+  await assert.rejects(taskGoogleEvents({...workspace,tasks:[{id:'t',title:'invalid',startDate:'2026-03-27',scheduledTime:'02:30'}]},'user','org'))
+})
+
+test('Google task synchronization creates, retries without duplicates, moves, renames, clears, deletes and restores a deleted event', async()=>{
+  const fixture=taskGoogleFixture();const workspace={projects:[],tasks:[{id:'t',title:'בדיקה',startDate:'2026-11-13'}]}
+  const sync=()=>syncTaskCalendar(fixture.env,{},'user','org',workspace,fixture.google)
+  assert.equal((await sync()).created,1)
+  const initial=[...fixture.events.keys()][0]
+  assert.equal((await sync()).unchanged,1);assert.equal(fixture.writes.length,1)
+  workspace.tasks[0].startDate='2026-11-14';workspace.tasks[0].title='מעודכן'
+  assert.equal((await sync()).updated,1);assert.equal(fixture.events.get(initial).start.date,'2026-11-14')
+  workspace.tasks[0].startDate=''
+  assert.equal((await sync()).deleted,1)
+  workspace.tasks[0].startDate='2026-11-13'
+  assert.equal((await sync()).created,1)
+  assert.equal([...fixture.events.values()].filter(event=>event.status!=='cancelled').length,1)
+  assert.equal((await sync()).unchanged,1)
+  workspace.tasks=[];assert.equal((await sync()).deleted,1)
+})
+
+test('Google task synchronization never changes ordinary meetings, other organizations or other accounts', async()=>{
+  const fixture=taskGoogleFixture()
+  const markers=await taskGoogleEvents({projects:[],tasks:[{id:'other',title:'other',dueDate:'2026-11-13'}]},'user','other-org')
+  fixture.events.set('manual',{id:'manual',summary:'ordinary',etag:'v0'})
+  fixture.events.set('foreign', {...markers[0],id:'foreign',etag:'v1'})
+  const result=await syncTaskCalendar(fixture.env,{},'user','org',{tasks:[],projects:[]},fixture.google)
+  assert.equal(result.deleted,0);assert.equal(fixture.writes.length,0)
+  assert.equal(fixture.events.size,2)
+})
+
+test('Google task synchronization fails closed on partial lists and reports write conflicts without deleting the existing event', async()=>{
+  let writes=0
+  await assert.rejects(syncTaskCalendar({}, {},'u','o',{tasks:[],projects:[]},async(_e,_c,_u,_url,init)=>{if(init)writes++;return Response.json({items:[],nextPageToken:'loop'})}))
+  assert.equal(writes,0)
+  const fixture=taskGoogleFixture();const workspace={projects:[],tasks:[{id:'t',title:'task',dueDate:'2026-11-13'}]}
+  await syncTaskCalendar(fixture.env,{},'u','o',workspace,fixture.google)
+  workspace.tasks[0].dueDate='2026-11-14'
+  const result=await syncTaskCalendar(fixture.env,{},'u','o',workspace,async(...args)=>args[4]?.method==='PATCH'?Response.json({}, {status:412}):fixture.google(...args))
+  assert.equal(result.failed,1);assert.equal(result.deleted,0)
+  assert.equal([...fixture.events.values()][0].start.date,'2026-11-13')
+})
+
+test('Google task synchronization bounds provider writes and converges on a large workspace', async()=>{
+  const fixture=taskGoogleFixture();const workspace={projects:[],tasks:Array.from({length:23},(_,i)=>({id:`t${i}`,title:'task',dueDate:'2026-11-13'}))}
+  let result=await syncTaskCalendar(fixture.env,{},'u','o',workspace,fixture.google)
+  assert.equal(result.created,10);assert.equal(result.failed,13)
+  result=await syncTaskCalendar(fixture.env,{},'u','o',workspace,fixture.google)
+  assert.equal(result.created,10);assert.equal(result.failed,3)
+  result=await syncTaskCalendar(fixture.env,{},'u','o',workspace,fixture.google)
+  assert.equal(result.created,3);assert.equal(result.failed,0)
+})
+
+test('task Google sync endpoint rechecks org permissions and uses saved caller-filtered tasks, ignoring browser task payloads', async t=>{
+  const fixture=taskGoogleFixture();const org='40000000-0000-0000-0000-000000000001'
+  let reads=0
+  t.mock.method(globalThis,'fetch',async(url,init)=>{assert.match(String(url),/rpc\/get_workspace_state$/);assert.equal(init.headers.authorization,'Bearer caller');assert.deepEqual(JSON.parse(init.body),{target_org:org});reads++;return Response.json([{data:{tasks:[{id:'saved',title:'saved',startDate:'2026-11-13'}],projects:[]}}])})
+  const deps={requireUser:async()=>({id:'u'}),currentMembership:async()=>({role:'admin'}),allowed:()=>true,json:(_r,data,status=200)=>Response.json(data,{status}),googleFetch:fixture.google}
+  const req=payload=>new Request('https://qa.test/api/google/calendar/tasks/sync',{method:'POST',headers:{authorization:'Bearer caller'},body:JSON.stringify({orgId:org,...payload})})
+  const config={supabaseUrl:'https://qa.supabase.test',supabaseAnonKey:'anon'}
+  assert.equal((await handleTaskCalendarSync(req({ownerId:'other'}),fixture.env,config,deps)).status,409)
+  assert.equal((await handleTaskCalendarSync(req({}),fixture.env,config,{...deps,allowed:()=>false})).status,403)
+  assert.equal(reads,0)
+  const response=await handleTaskCalendarSync(req({tasks:[{id:'forged',title:'forged',dueDate:'2026-11-15'}]}),fixture.env,config,deps)
+  assert.equal((await response.json()).synced,true)
+  assert.equal([...fixture.events.values()][0].extendedProperties.private.ramengTaskId,'saved')
+  assert.equal(reads,1)
+})
+
+test('task Google sync route denies anonymous, viewer and hidden calendar access before touching Google', async t => {
+  mockAuth(t, 'admin', { calendar: { view: false, create: true, edit: true, delete: true } })
+  const body = { orgId: '40000000-0000-0000-0000-000000000001' }
+  assert.equal((await worker.fetch(request('/api/google/calendar/tasks/sync', body, false), env)).status, 401)
+  assert.equal((await worker.fetch(request('/api/google/calendar/tasks/sync', body), env)).status, 403)
+})
+
+test('concurrent Google task sync and an uncertain creation response never create duplicate events', async () => {
+  const fixture = taskGoogleFixture()
+  const workspace = { projects: [], tasks: [{ id: 't', title: 'task', startDate: '2026-11-13' }] }
+  const run = () => syncTaskCalendar(fixture.env, {}, 'u', 'o', workspace, fixture.google)
+  const results = await Promise.all([run(), run()])
+  assert.equal(results.reduce((sum, result) => sum + result.failed, 0), 0)
+  assert.equal(fixture.events.size, 1)
+  workspace.tasks.push({ id: 'uncertain', title: 'uncertain', startDate: '2026-11-13' })
+  let uncertain = true
+  const google = async (...args) => {
+    const response = await fixture.google(...args)
+    if (args[4]?.method === 'POST' && uncertain) { uncertain = false; throw Error('Response lost after provider creation') }
+    return response
+  }
+  assert.equal((await syncTaskCalendar(fixture.env, {}, 'u', 'o', workspace, google)).failed, 1)
+  assert.equal((await run()).unchanged, 2)
+  assert.equal(fixture.events.size, 2)
+})

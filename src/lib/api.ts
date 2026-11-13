@@ -71,6 +71,7 @@ export const integrationsApi = {
   contactMail: (emails: string[], pageToken = '', force = false) => request<{ threads: GmailThreadSummary[]; nextPageToken: string }>(`/api/google/gmail/contacts?emails=${encodeURIComponent(emails.join(','))}&pageToken=${encodeURIComponent(pageToken)}&force=${force}`),
   contactCalendar: (emails: string[], from: string, to: string, force = false) => request<{ items: GoogleCalendarEvent[]; partial?: boolean }>(`/api/google/calendar/contacts?emails=${encodeURIComponent(emails.join(','))}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&force=${force}`),
   calendarEvents: (from?: string, to?: string, force = false) => request<{ items: GoogleCalendarEvent[]; partial?: boolean }>(`/api/google/calendar/events?from=${encodeURIComponent(from || '')}&to=${encodeURIComponent(to || '')}&force=${force}`),
+  syncTaskCalendar: (orgId: string, ownerId: string) => request<{ synced: boolean; created: number; updated: number; deleted: number; unchanged: number; failed: number }>('/api/google/calendar/tasks/sync', { method: 'POST', body: JSON.stringify({ orgId, ownerId }) }),
   updateCalendarEvent: (payload: { orgId: string; id: string; etag: string; summary: string; start: string; end: string; description?: string; location?: string }) => request<{ id: string; etag: string; htmlLink?: string }>('/api/google/calendar/event', { method: 'PATCH', body: JSON.stringify(payload) }),
   deleteCalendarEvent: (payload: { orgId: string; id: string; etag: string }) => request<{ ok: boolean }>('/api/google/calendar/event', { method: 'DELETE', body: JSON.stringify(payload) }),
   createCalendarEvent: (payload: { orgId?: string; localEventId?: string; requestKey?: string; summary: string; start: string; end?: string; description?: string; location?: string }) => request<{ id: string; htmlLink?: string; etag?: string }>('/api/google/calendar/events', { method: 'POST', body: JSON.stringify(payload) }),
@@ -96,7 +97,7 @@ export interface GmailApiMessage { cc?: string; attachments?: { id: string; name
 export interface MailAttachment { name: string; type: string; data: string }
 export interface GmailThreadSummary { id: string; subject: string; from: string; to: string; date: string; snippet: string }
 export interface DriveSettings { autoFiles: boolean; autoReports: boolean }
-export interface GoogleCalendarEvent { etag?: string; editable?: boolean; description?: string; localEventId?: string; sourceOrgId?: string; id: string; summary: string; start: string; end?: string; htmlLink?: string; location?: string }
+export interface GoogleCalendarEvent { sourceTaskId?: string; etag?: string; editable?: boolean; description?: string; localEventId?: string; sourceOrgId?: string; id: string; summary: string; start: string; end?: string; htmlLink?: string; location?: string }
 export interface GoogleDriveFile { id: string; name: string; mimeType: string; size?: string; modifiedTime?: string; webViewLink?: string }
 export interface IntegrationStatus {
   google: { configured: boolean; connected: boolean; email?: string }

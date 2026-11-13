@@ -37,6 +37,16 @@ export const integrationsApi = {
   googleConfig: async () => ({ clientId: '', secretConfigured: false, redirectUri: 'http://127.0.0.1:4175/' }),
   addressSuggestions: async (query: string) => ({ suggestions: [{ label: `${query}, ירושלים`, value: `${query}, ירושלים` }] }),
   calendarEvents: async () => ({ items: JSON.parse(localStorage.getItem('qa-calendar-provider') || '[]') }),
+  syncTaskCalendar: async (orgId: string, ownerId: string) => {
+    if (orgId !== 'qa' || ownerId !== 'qa-user') throw new Error('QA: calendar owner mismatch')
+    if (new URLSearchParams(location.search).get('qaTaskSync') === 'error') throw new Error('Google Calendar אינו זמין כרגע')
+    const workspace = JSON.parse(localStorage.getItem('rameng-qa-developer') || '{}')
+    const existing = JSON.parse(localStorage.getItem('qa-calendar-provider') || '[]')
+    const events = (workspace.tasks || []).flatMap((task: any) => [...new Set([task.startDate, task.dueDate, task.followUpDate].filter(Boolean))].map((date: any) => ({ id: `qa-auto-${task.id}-${date}`, summary: `[RAMENG] ${task.title}`, start: date, end: date, sourceTaskId: task.id, sourceOrgId: orgId, htmlLink: 'https://calendar.google.com/calendar/event?qa=synthetic', editable: false })))
+    localStorage.setItem('qa-calendar-provider', JSON.stringify([...existing.filter((event: any) => !event.sourceTaskId), ...events]))
+    localStorage.setItem('qa-task-calendar-synced', JSON.stringify(workspace.tasks || []))
+    return { synced: true, created: events.length, updated: 0, deleted: existing.filter((event: any) => event.sourceTaskId && !events.some((next: any) => next.id === event.id)).length, unchanged: 0, failed: 0 }
+  },
   updateCalendarEvent: async (payload: any) => {const rows=JSON.parse(localStorage.getItem('qa-calendar-provider') || '[]');const updated=rows.map((row:any) => row.id===payload.id ? {...row,summary:payload.summary,start:payload.start,end:payload.end,location:payload.location,description:payload.description,etag:'qa-etag-2'} : row);localStorage.setItem('qa-calendar-provider',JSON.stringify(updated));return {id:payload.id,etag:'qa-etag-2'}},
   deleteCalendarEvent: async (payload: any) => {const rows=JSON.parse(localStorage.getItem('qa-calendar-provider') || '[]');localStorage.setItem('qa-calendar-provider',JSON.stringify(rows.filter((row:any) => row.id!==payload.id)));return {ok:true}},
   createCalendarEvent: async (payload: any) => { await delay(); const item = { id: `qa-google-event-${Date.now()}`,etag:'qa-etag-1',editable:true,localEventId:payload.localEventId,sourceOrgId:payload.orgId, summary: payload.summary, start: payload.start, end: payload.end, location: payload.location, htmlLink: 'https://example.test/qa-calendar' }; localStorage.setItem('qa-calendar-provider', JSON.stringify([...JSON.parse(localStorage.getItem('qa-calendar-provider') || '[]'), item])); return { id: item.id, htmlLink: item.htmlLink,etag:item.etag } },

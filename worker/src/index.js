@@ -4,6 +4,7 @@ import { createClient } from '@supabase/supabase-js'
 import { cleanMailHtml, mailContent } from './mailHtml.js'
 import { handleCommunicationJournal } from './communicationJournal.js'
 import { calendarRequestId, handleCalendarMutation, invalidateCalendarCache } from './calendarMutations.js'
+import { handleTaskCalendarSync } from './taskCalendarSync.js'
 import { enqueueApplicationError, deliverApplicationError } from './applicationErrors.js'
 
 const CONFIG_KEY = 'rameng:admin-config:v1'
@@ -858,7 +859,7 @@ async function handleCalendarList(request, env, config) {
     visited.add(cursor)
   } while (cursor && visited.size < 10)
   const body = { items: [...new Map(items.map(item => [item.id,item])).values()] }
-  return apiJson(request, { partial: Boolean(cursor), items: (body.items || []).map((item) => ({ id: item.id, summary: item.summary || '(ללא כותרת)', start: item.start?.dateTime || item.start?.date || '', end: item.end?.dateTime || item.end?.date || '', htmlLink: item.htmlLink || '', location: item.location || '', description: item.description || '', etag: item.etag || '', editable: Boolean(item.organizer?.self && item.start?.dateTime && !item.recurrence && !item.recurringEventId), localEventId: item.extendedProperties?.private?.ramengOwnerId === user.id ? item.extendedProperties.private.ramengLocalEventId || '' : '', sourceOrgId: item.extendedProperties?.private?.ramengOwnerId === user.id ? item.extendedProperties.private.ramengOrgId || '' : '' })) })
+  return apiJson(request, { partial: Boolean(cursor), items: (body.items || []).map((item) => ({ id: item.id, summary: item.summary || '(ללא כותרת)', start: item.start?.dateTime || item.start?.date || '', end: item.end?.dateTime || item.end?.date || '', htmlLink: item.htmlLink || '', location: item.location || '', description: item.description || '', etag: item.etag || '', editable: Boolean(item.organizer?.self && item.start?.dateTime && !item.recurrence && !item.recurringEventId && !item.extendedProperties?.private?.ramengTaskSync), sourceTaskId: item.extendedProperties?.private?.ramengOwnerId === user.id && item.extendedProperties.private.ramengTaskSync ? item.extendedProperties.private.ramengTaskId || '' : '', localEventId: item.extendedProperties?.private?.ramengOwnerId === user.id ? item.extendedProperties.private.ramengLocalEventId || '' : '', sourceOrgId: item.extendedProperties?.private?.ramengOwnerId === user.id ? item.extendedProperties.private.ramengOrgId || '' : '' })) })
 }
 
 function validEmail(value) { return typeof value === 'string' && /^[^\s<>@,;"()]+@[^\s<>@,;"()]+\.[^\s<>@,;"()]+$/.test(value) }
@@ -1796,6 +1797,7 @@ async function routeApi(request, env) {
   if (path === '/api/google/gmail/draft' && ['GET', 'PUT'].includes(request.method)) return handleGmailDraft(request, env, config)
   if (path === '/api/google/gmail/send' && request.method === 'POST') return handleGmailSend(request, env, config)
   if (path === '/api/google/calendar/events' && request.method === 'GET') return handleCalendarList(request, env, config)
+  if (path === '/api/google/calendar/tasks/sync' && request.method === 'POST') return handleTaskCalendarSync(request, env, config, { json: apiJson, requireUser, currentMembership, allowed: rolePermissionAllowed, googleFetch })
   if (path === '/api/google/calendar/events' && request.method === 'POST') return handleCalendarCreate(request, env, config)
   if (path === '/api/google/calendar/event' && ['PATCH', 'DELETE'].includes(request.method)) return handleCalendarMutation(request, env, config, { json: apiJson, requireUser, currentMembership, allowed: rolePermissionAllowed, googleFetch })
   if (path === '/api/google/drive/project-folder' && ['GET', 'DELETE'].includes(request.method)) return handleDriveProjectFolderRead(request, env, config)

@@ -96,6 +96,7 @@ export interface CalendarEvent {
   end?: string
   location?: string
   notes?: string
+  googleTaskManaged?: boolean
   googleEtag?: string
   googleEditable?: boolean
   googleLocalEventId?: string

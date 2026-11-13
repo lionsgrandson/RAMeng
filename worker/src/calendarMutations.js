@@ -21,6 +21,7 @@ export async function handleCalendarMutation(request, env, config, deps) {
   if (!currentResponse.ok) return deps.json(request, { error: 'האירוע אינו זמין בתיבת היומן שלך' }, 404)
   const current = await currentResponse.json()
   const marker = current.extendedProperties?.private
+  if (marker?.ramengTaskSync) return deps.json(request, { error: 'אירוע זה מסונכרן ממשימה. עדכנו את התאריך במשימה עצמה.' }, 409)
   if ((marker?.ramengOrgId && marker.ramengOrgId !== body.orgId) || (marker?.ramengOwnerId && marker.ramengOwnerId !== user.id)) return deps.json(request, { error: 'האירוע שייך לחשבון או לארגון אחר' }, 403)
   if (!current.organizer?.self || !current.start?.dateTime || current.recurrence || current.recurringEventId) return deps.json(request, { error: 'ניתן לערוך כאן אירוע מתוזמן יחיד שבבעלותך. לאירוע חוזר או יומי השתמשו בקישור ל-Google.' }, 403)
   if (current.etag !== body.etag) return deps.json(request, { error: 'האירוע השתנה בינתיים. רעננו לפני שמירת השינויים.' }, 409)
