@@ -727,7 +727,8 @@ async function buildGmailMessage(body, env, config, userId, draft = false) {
   if ((!draft && (!validEmail(to) || !subject || !text)) || /[\r\n]/.test(to)) throw Object.assign(new Error('יש להזין נמען תקין, נושא ותוכן'), { status: 400 })
   const attachments = validatedAttachments(body.attachments)
   const encodedSubject = `=?UTF-8?B?${utf8ToBase64(subject)}?=`
-  const rich = mailContent(body.html || '')
+  const plainHtml = text.replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]).replace(/\n/g, '<br>')
+  const rich = mailContent(body.html || `<p>${plainHtml}</p>`)
   if (rich.inline.reduce((sum, file) => sum + file.data.length * 3 / 4, 0) + attachments.reduce((sum, file) => sum + file.data.length * 3 / 4, 0) > 18 * 1024 * 1024) throw Object.assign(new Error('Message exceeds 18 MB'), { status: 413 })
   const encodedBody = utf8ToBase64(text)
   const replyHeaders = []

@@ -5,7 +5,7 @@ import DocumentColumns from './DocumentColumns'
 import { meetingColumnDefaults } from '../lib/documentColumns'
 import type { DocumentColumn } from '../types'
 import ContactTable from './ContactTable'
-import { jerusalemInstant, taskCalendarTime } from '../lib/taskTime'
+import { jerusalemInstant, jerusalemDate, taskCalendarTime } from '../lib/taskTime'
 import { taskCalendarDates } from '../lib/taskCalendar'
 import { CategoryManager } from './Categories'
 import ProjectMail from './ProjectMail'
@@ -43,6 +43,7 @@ export function ProjectsPage({ workspace, setWorkspace, onOpen, startCreating = 
   const [statusFilter, setStatusFilter] = useState('הכל')
   const [managerFilter, setManagerFilter] = useState('הכל')
   const [clientFilter, setClientFilter] = useState('הכל')
+  const [clientSearch, setClientSearch] = useState('')
   const [dateField, setDateField] = useState<'start' | 'target' | 'created'>('start')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
@@ -54,6 +55,7 @@ export function ProjectsPage({ workspace, setWorkspace, onOpen, startCreating = 
       const clientNames = project.clientIds.map((id) => workspace.contacts.find((contact) => contact.id === id)?.name || '').join(' ')
       const haystack = `${project.name} ${project.address || ''} ${clientNames}`.toLowerCase()
       if (general && !haystack.includes(general)) return false
+      if (clientSearch.trim() && !clientNames.toLowerCase().includes(clientSearch.trim().toLowerCase())) return false
       if (address && !(project.address || '').toLowerCase().includes(address)) return false
       if (statusFilter !== 'הכל' && project.status !== statusFilter) return false
       if (managerFilter !== 'הכל') {
@@ -69,7 +71,7 @@ export function ProjectsPage({ workspace, setWorkspace, onOpen, startCreating = 
       if (dateTo && (!selectedDate || selectedDate > dateTo)) return false
       return true
     })
-  }, [workspace.projects, workspace.contacts, search, addressFilter, statusFilter, managerFilter, clientFilter, dateField, dateFrom, dateTo])
+  }, [workspace.projects, workspace.contacts, search, addressFilter, statusFilter, managerFilter, clientFilter, clientSearch, dateField, dateFrom, dateTo])
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -105,11 +107,12 @@ export function ProjectsPage({ workspace, setWorkspace, onOpen, startCreating = 
         <label className="project-filter-field"><span>כתובת</span><input value={addressFilter} onChange={(e) => setAddressFilter(e.target.value)} placeholder="סינון לפי רחוב, עיר או כתובת" /></label>
         <label className="project-filter-field"><span>סטטוס</span><select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}><option>הכל</option><option>בתכנון</option><option>בביצוע</option><option>בהמתנה</option><option>הושלם</option><option>מוקפא</option></select></label>
         <label className="project-filter-field"><span>מנהל פרויקט</span><select value={managerFilter} onChange={(e) => setManagerFilter(e.target.value)}><option value="הכל">כל המנהלים</option><option value="__none__">ללא מנהל</option>{workspace.team.filter((member) => member.active).map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select></label>
+        <label className="project-filter-field"><span>חיפוש לפי שם לקוח</span><input aria-label="חיפוש פרויקטים לפי שם לקוח" value={clientSearch} onChange={event => setClientSearch(event.target.value)} placeholder="הקלידו שם לקוח" /></label>
         <label className="project-filter-field"><span>לקוח</span><select value={clientFilter} onChange={(e) => setClientFilter(e.target.value)}><option value="הכל">כל הלקוחות</option><option value="__none__">ללא לקוח</option>{workspace.contacts.map((contact) => <option key={contact.id} value={contact.id}>{contact.name}</option>)}</select></label>
         <label className="project-filter-field"><span>תאריך לפי</span><select value={dateField} onChange={(e) => setDateField(e.target.value as 'start' | 'target' | 'created')}><option value="start">תאריך התחלה</option><option value="target">תאריך יעד</option><option value="created">תאריך יצירה</option></select></label>
         <label className="project-filter-field"><span>מתאריך</span><input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} /></label>
         <label className="project-filter-field"><span>עד תאריך</span><input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} /></label>
-        <div className="project-filter-actions"><button type="button" className="secondary compact-filter-clear" onClick={() => { setSearch(''); setAddressFilter(''); setStatusFilter('הכל'); setManagerFilter('הכל'); setClientFilter('הכל'); setDateFrom(''); setDateTo('') }}>ניקוי סינון</button><span>{filteredProjects.length} מתוך {workspace.projects.length} פרויקטים</span>{canEdit && <button className="primary" onClick={() => setAdding(true)}><Plus /> פרויקט חדש</button>}</div>
+        <div className="project-filter-actions"><button type="button" className="secondary compact-filter-clear" onClick={() => { setSearch(''); setAddressFilter(''); setStatusFilter('הכל'); setManagerFilter('הכל'); setClientFilter('הכל'); setClientSearch(''); setDateFrom(''); setDateTo('') }}>ניקוי סינון</button><span>{filteredProjects.length} מתוך {workspace.projects.length} פרויקטים</span>{canEdit && <button className="primary" onClick={() => setAdding(true)}><Plus /> פרויקט חדש</button>}</div>
       </div>
     </div>
 
@@ -185,7 +188,7 @@ export function ProjectWorkspace({ canInviteExternal = false, projectId, workspa
     ['summary', 'סקירה', FolderKanban],
     ['tasks', 'משימות', ListChecks],
     ['meetings', 'סיכומי פגישה', FileText],
-    ['categories', 'מקצועות', ListChecks],
+    ['categories', 'תחומי עבודה בפרויקט', ListChecks],
     ['contacts', 'אנשי קשר', ListChecks],
     ['mail', 'מייל', Mail],
     ['calendar', 'יומן', CalendarDays],
@@ -215,7 +218,7 @@ export function ProjectWorkspace({ canInviteExternal = false, projectId, workspa
 }
 
 function ProjectCalendar({ orgId, project, workspace, setWorkspace, canEdit }: { orgId: string; project: Project; workspace: Workspace; setWorkspace: React.Dispatch<React.SetStateAction<Workspace>>; canEdit: boolean }) {
-  const events = [...workspace.events.filter(event => event.projectId === project.id), ...workspace.tasks.filter(task => task.projectId === project.id).flatMap(task => [...new Set(taskCalendarDates(task).map(item => item.date))].filter(date => !workspace.events.some(event => event.taskId === task.id && event.start.slice(0, 10) === date)).map(date => ({ id: `task-date-${task.id}-${date}`, projectId: project.id, taskId: task.id, title: `${task.title} · ${taskCalendarDates(task).filter(item => item.date === date).map(item => item.label).join(' / ')} · ${task.status}`, start: jerusalemInstant(date, taskCalendarTime(task, date) || '09:00'), googleHtmlLink: undefined, location: undefined })))].sort((a, b) => a.start.localeCompare(b.start)); const [addingTask, setAddingTask] = useState(''); const [error, setError] = useState('')
+  const events = [...workspace.events.filter(event => event.projectId === project.id), ...workspace.tasks.filter(task => task.projectId === project.id).flatMap(task => [...new Set(taskCalendarDates(task).map(item => item.date))].filter(date => !workspace.events.some(event => event.taskId === task.id && jerusalemDate(event.start) === date)).map(date => ({ id: `task-date-${task.id}-${date}`, projectId: project.id, taskId: task.id, title: `${task.title} · ${taskCalendarDates(task).filter(item => item.date === date).map(item => item.label).join(' / ')} · ${task.status}`, start: jerusalemInstant(date, taskCalendarTime(task, date) || '09:00'), googleHtmlLink: undefined, location: undefined })))].sort((a, b) => a.start.localeCompare(b.start)); const [addingTask, setAddingTask] = useState(''); const [error, setError] = useState('')
   const [reminderBusy, setReminderBusy] = useState(false)
   const [reminderNotice, setReminderNotice] = useState('')
   const creatingReminder = useRef(false)

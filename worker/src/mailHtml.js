@@ -20,5 +20,14 @@ export function mailContent(html) {
     const id = `${crypto.randomUUID()}@rameng`; inline.push({ id, type, data }); return `src="cid:${id}"`
   })
   const rtl = /[\u0590-\u05ff]/.test(cleaned.replace(/<[^>]*>/g, ''))
-  return { html: cleaned ? `<div dir="${rtl ? 'rtl' : 'ltr'}" style="direction:${rtl ? 'rtl' : 'ltr'};text-align:${rtl ? 'right' : 'left'};font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.5;max-width:640px;width:100%;">${cleaned}</div>` : '', inline }
+  const direction = rtl ? 'rtl' : 'ltr'
+  const alignment = rtl ? 'right' : 'left'
+  // Email clients do not consistently inherit alignment from a surrounding div.
+  // Put the default on each text block, retaining deliberate editor formatting.
+  const aligned = cleaned.replace(/<(p|div|h[1-3]|li|blockquote|td|th)\b([^>]*)>/gi, (_tag, name, attributes) => {
+    const style = attributes.match(/\sstyle="([^"]*)"/i)?.[1] || ''
+    const defaults = `${/text-align\s*:/i.test(style) ? '' : `text-align:${alignment};`}${/direction\s*:/i.test(style) ? '' : `direction:${direction};`}`
+    return `<${name}${attributes.replace(/\sstyle="[^"]*"/i, '')}${/\sdir=/i.test(attributes) ? '' : ` dir="${direction}"`} style="${defaults}${style}">`
+  })
+  return { html: cleaned ? `<div dir="${direction}" style="direction:${direction};text-align:${alignment};font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.5;max-width:640px;width:100%;">${aligned}</div>` : '', inline }
 }

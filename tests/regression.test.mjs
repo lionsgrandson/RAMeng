@@ -1798,3 +1798,33 @@ test('application diagnostics cannot target an organization outside the caller m
   t.mock.method(console,'error',()=>undefined)
   assert.equal((await worker.fetch(request('/api/application-errors',{orgId:'unrelated',message:'forged'}),env)).status,403)
 })
+
+
+test('outgoing Hebrew MIME gives every unformatted block an explicit right alignment and retains deliberate alignment', async t => {
+  const { privateEnv } = googleFixture(t, async (url, init) => {
+    if (url.pathname.includes('/threads/')) return Response.json({messages:[{payload:{headers:[{name:'Message-ID',value:'<original@example.test>'}]}}]})
+    const payload = JSON.parse(init.body)
+    const raw = Buffer.from(payload.raw, 'base64url').toString('utf8')
+    assert.match(raw, /In-Reply-To: <original@example.test>/)
+    const encoded = raw.match(/Content-Type: text\/html[^]*?base64\r\n\r\n([A-Za-z0-9+/=\r\n]+)/)?.[1]
+    const html = Buffer.from(encoded, 'base64').toString('utf8')
+    assert.match(html, /<p dir="rtl" style="text-align:right;direction:rtl;">שלום/)
+    assert.doesNotMatch(html, /<script/)
+    return Response.json({id:'sent',threadId:'incoming'})
+  })
+  const result = await worker.fetch(request('/api/google/gmail/send', {to:'qa@example.test',subject:'בדיקה',body:'שלום',html:'<p>שלום</p><script>bad()</script>',threadId:'incoming'}), privateEnv)
+  assert.equal(result.status, 200)
+  const html = mailContent('<p>שלום</p><p style="text-align:center">כותרת</p><div><p>תוכן</p></div>').html
+  assert.match(html, /style="direction:rtl;text-align:center"|style="direction:rtl;text-align:center;"/)
+  assert.equal((html.match(/text-align:right/g) || []).length, 4)
+})
+
+test('calendar derives deadlines from current tasks through move, clear, delete and invalid dates', async () => {
+  const {taskCalendarDates} = await server.ssrLoadModule('/src/lib/taskCalendar.ts')
+  const task = {dueDate:'2026-11-13',startDate:'2026-11-12',followUpDate:'2026-11-14'}
+  assert.deepEqual(taskCalendarDates(task,'due').map(item=>item.date),['2026-11-13'])
+  assert.deepEqual(taskCalendarDates({...task,dueDate:'2026-11-20'},'due').map(item=>item.date),['2026-11-20'])
+  assert.deepEqual(taskCalendarDates({...task,dueDate:undefined},'due'),[])
+  assert.deepEqual(taskCalendarDates({dueDate:'2026-02-30'},'due'),[])
+  assert.deepEqual([].flatMap(task=>taskCalendarDates(task,'due')),[])
+})

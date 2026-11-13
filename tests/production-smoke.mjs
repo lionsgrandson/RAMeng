@@ -4,7 +4,9 @@ import { readFile, readdir, writeFile, mkdir } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 
-const base = 'https://rameng-crm.rameng-crm-worker.workers.dev'
+const base = process.env.RAMENG_SMOKE_BASE || 'https://rameng-crm.rameng-crm-worker.workers.dev'
+const buildDir = process.env.RAMENG_SMOKE_BUILD || 'dist'
+const evidenceName = process.env.RAMENG_SMOKE_NAME || 'production-smoke'
 const results = []
 const hash = value => createHash('sha256').update(value).digest('hex')
 async function check(name, action) {
@@ -14,14 +16,14 @@ await check('live HTML matches the verified production build and excludes QA fix
   const response = await fetch(base, { cache: 'no-store' })
   assert.equal(response.status, 200)
   const content = await response.text()
-  assert.equal(hash(content), hash(await readFile('dist/index.html')))
+  assert.equal(hash(content), hash(await readFile(join(buildDir, 'index.html'))))
   assert.doesNotMatch(content, /qa-user|qa-incoming|VITE_QA_FIXTURES|tests\/fixtures/)
 })
-for (const file of await readdir('dist', { recursive: true, withFileTypes: true })) {
+for (const file of await readdir(buildDir, { recursive: true, withFileTypes: true })) {
   if (!file.isFile() || file.name === 'index.html') continue
   const parent = file.parentPath || file.path
   const path = join(parent, file.name)
-  const relative = path.replaceAll('\\', '/').replace(/^dist\//, '')
+  const relative = path.slice(buildDir.length + 1).replaceAll('\\', '/')
   await check(`live static asset matches: ${relative}`, async () => {
     const response = await fetch(`${base}/${relative.split('/').map(encodeURIComponent).join('/')}`, { cache: 'no-store' })
     assert.equal(response.status, 200)
@@ -62,5 +64,5 @@ await check('preflight supports folder moves and rename', async () => {
   assert.match(response.headers.get('access-control-allow-methods'), /PATCH/)
 })
 await mkdir('artifacts/audit', { recursive: true })
-await writeFile('artifacts/audit/production-smoke-20261108.json', JSON.stringify({ base, sourceCommit: process.env.RAMENG_RELEASE_SHA || '', checkedAt: new Date().toISOString(), results }, null, 2))
+await writeFile(`artifacts/audit/${evidenceName}-20261113.json`, JSON.stringify({ base, sourceCommit: process.env.RAMENG_RELEASE_SHA || '', checkedAt: new Date().toISOString(), results }, null, 2))
 console.log(`${results.length}/${results.length} production smoke checks passed`)
