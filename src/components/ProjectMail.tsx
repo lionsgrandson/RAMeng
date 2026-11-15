@@ -95,13 +95,20 @@ export default function ProjectMail({ workspace, orgId, project, initialTask, pe
       lastAutoRefresh = Date.now()
       void refresh()
     }
+    // An explicit Google sync must refresh immediately, even within the
+    // five-minute passive-refresh window.
+    const afterGoogleSync = () => {
+      if (document.visibilityState === 'hidden' || operation.current) return
+      lastAutoRefresh = Date.now()
+      void refresh()
+    }
     window.addEventListener('focus', refreshMail)
     document.addEventListener('visibilitychange', refreshMail)
-    window.addEventListener('rameng-google-synced', refreshMail)
+    window.addEventListener('rameng-google-synced', afterGoogleSync)
     return () => {
       window.removeEventListener('focus', refreshMail)
       document.removeEventListener('visibilitychange', refreshMail)
-      window.removeEventListener('rameng-google-synced', refreshMail)
+      window.removeEventListener('rameng-google-synced', afterGoogleSync)
     }
   }, [project?.id, orgId])
   useEffect(() => {
