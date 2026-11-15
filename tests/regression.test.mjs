@@ -158,6 +158,34 @@ test('background sync refreshes stale registered feeds without issuing Google wr
   assert.deepEqual((await (await cachedGoogleRead(env, 'owner', url, () => { throw Error('must use fresh cache') })).json()).files, [{ id: 'existing' }])
 })
 
+test('Google sync retires legacy live-read registrations without provider calls and preserves active feed failures', async () => {
+  for (const [status, path, retired] of [
+    [404, '/gmail/v1/users/me/threads/removed', true],
+    [200, '/gmail/v1/users/me/messages/existing', true],
+    [200, '/calendar/v3/calendars/primary/events', true],
+    [200, '/drive/v3/files/metadata-id', true],
+    [401, '/drive/v3/files', false],
+    [403, '/drive/v3/files', false],
+    [429, '/drive/v3/files', false],
+    [500, '/drive/v3/files', false],
+    [404, '/drive/v3/files', false],
+  ]) {
+    const key = 'google-feed:owner:item'
+    const kv = new Map([[key, { userId: 'owner', url: `https://www.googleapis.com${path}`, key: 'old-cache' }]])
+    const env = { CONFIG: {
+      get: async name => kv.get(name) || null,
+      delete: async name => kv.delete(name),
+      list: async () => ({ keys: [{ name: key }], list_complete: true }),
+    } }
+    let calls = 0
+    const result = await refreshGoogleReads(env, async () => { calls++; return new Response('', { status }) }, { userId: 'owner', force: true })
+    assert.equal(result.failed, retired ? 0 : 1)
+    assert.equal(kv.has(key), !retired)
+    assert.equal(result.refreshed, 0)
+    assert.equal(calls, retired ? 0 : 1)
+  }
+})
+
 test('automatic Drive uploads wait for the daily window, replace queued edits, and manual sync runs immediately', async () => {
   const kv = new Map(); const env = { CONFIG: { get: async key => kv.get(key) || null, put: async (key, value) => kv.set(key, value.startsWith('{') ? JSON.parse(value) : value), delete: async key => kv.delete(key), list: async ({ prefix }) => ({ keys: [...kv.keys()].filter(key => key.startsWith(prefix)).map(name => ({ name })), list_complete: true }) } }
   const body = { projectId: 'p', recordId: 'f', kind: 'file', file: { data: 'old' } }

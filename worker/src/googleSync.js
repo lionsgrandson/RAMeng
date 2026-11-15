@@ -52,9 +52,23 @@ export async function refreshGoogleReads(env, execute, options = {}) {
     if (!feed?.userId || !feed.url || !feed.key) continue
     const url = new URL(feed.url)
     if (!['gmail.googleapis.com', 'www.googleapis.com'].includes(url.hostname) || !/^\/(gmail\/v1\/users\/me\/|calendar\/v3\/|drive\/v3\/files)/.test(url.pathname)) continue
+    // Gmail and Calendar now read live, as do individual Drive metadata checks.
+    // Retire their legacy cache registrations without re-fetching old mail.
+    // Only Drive listings still use cachedGoogleRead in the API router.
+    if (url.hostname !== 'www.googleapis.com' || url.pathname !== '/drive/v3/files') {
+      await env.CONFIG.delete(item.name)
+      continue
+    }
     const cached = await env.CONFIG.get(feed.key, 'json')
     if (!options.force && cached && Date.now() - cached.updatedAt < DAY) continue
-    try { const response = await cachedGoogleRead(env, feed.userId, feed.url, () => execute(feed.userId, feed.url), true); if (response.ok) refreshed++; else failed++ } catch (error) { failed++; console.error('Daily Google read failed', error?.status || 'unavailable') }
+    try {
+      const response = await cachedGoogleRead(env, feed.userId, feed.url, () => execute(feed.userId, feed.url), true)
+      if (response.ok) refreshed++
+      else {
+        failed++
+        console.error('Google feed refresh failed', response.status, url.hostname)
+      }
+    } catch (error) { failed++; console.error('Daily Google read failed', error?.status || 'unavailable') }
   }
   const next = page.list_complete ? '' : page.cursor
   if (!options.userId) await env.CONFIG.put(cursorKey, next)
