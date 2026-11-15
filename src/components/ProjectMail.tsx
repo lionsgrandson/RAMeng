@@ -87,10 +87,22 @@ export default function ProjectMail({ workspace, orgId, project, initialTask, pe
   }
   useEffect(() => { void refresh(); return () => { generation.current++ } }, [project?.id, orgId])
   useEffect(() => {
-    const refreshMail = () => { if (!operation.current) void refresh() }
-    const timer = window.setInterval(refreshMail, 60000)
+    // The explicit Refresh button always works. Avoid a KV list on every open
+    // mailbox every 60 seconds; recheck only when the user returns after 5 min.
+    let lastAutoRefresh = Date.now()
+    const refreshMail = () => {
+      if (document.visibilityState === 'hidden' || operation.current || Date.now() - lastAutoRefresh < 5 * 60 * 1000) return
+      lastAutoRefresh = Date.now()
+      void refresh()
+    }
+    window.addEventListener('focus', refreshMail)
+    document.addEventListener('visibilitychange', refreshMail)
     window.addEventListener('rameng-google-synced', refreshMail)
-    return () => { window.clearInterval(timer); window.removeEventListener('rameng-google-synced', refreshMail) }
+    return () => {
+      window.removeEventListener('focus', refreshMail)
+      document.removeEventListener('visibilitychange', refreshMail)
+      window.removeEventListener('rameng-google-synced', refreshMail)
+    }
   }, [project?.id, orgId])
   useEffect(() => {
     let active = true; setMessages([]); setLoadingThread(!!selected)

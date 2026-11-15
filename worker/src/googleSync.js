@@ -1,4 +1,5 @@
 const DAY = 24 * 60 * 60 * 1000
+const LIVE_CACHE_TTL = 60 * 60 * 1000 // Drive listing cache; Gmail and Calendar bypass it.
 
 export async function googleReadHash(value) {
   return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))), byte => byte.toString(16).padStart(2, '0')).join('')
@@ -8,18 +9,34 @@ export async function googleReadHash(value) {
 // permission checks bypass this cache, and scheduled work never mutates Google.
 export async function cachedGoogleRead(env, userId, url, execute, force = false) {
   const hash = await googleReadHash(url)
-  const epoch = await env.CONFIG.get(`google-read-epoch:${userId}`) || 'initial'
-  const key = `google-read:${userId}:${epoch}:${hash}`
-  const cached = await env.CONFIG.get(key, 'json')
-  if (!force && cached && Date.now() - cached.updatedAt < DAY) return new Response(cached.body, { status: 200, headers: { 'content-type': 'application/json' } })
+  let key
+  try {
+    const epoch = await env.CONFIG.get(`google-read-epoch:${userId}`) || 'initial'
+    key = `google-read:${userId}:${epoch}:${hash}`
+    const cached = await env.CONFIG.get(key, 'json')
+    if (!force && cached && Date.now() - cached.updatedAt < LIVE_CACHE_TTL) return new Response(cached.body, { status: 200, headers: { 'content-type': 'application/json' } })
+  } catch {
+    // Cache failures must not make a healthy Google API request fail.
+    console.error('Google read cache unavailable; requesting provider directly')
+    return execute()
+  }
   const response = await execute()
   if (response.ok) {
-    const body = await response.clone().text()
-    // KV values have a 25 MiB limit; large threads still load normally.
-    if (body.length < 8 * 1024 * 1024) {
-      await env.CONFIG.put(key, JSON.stringify({ body, updatedAt: Date.now() }), { expirationTtl: 7 * 86400 })
-      if (!new URL(url).searchParams.has('pageToken')) await env.CONFIG.put(`google-feed:${userId}:${hash}`, JSON.stringify({ userId, url, key }), { expirationTtl: 30 * 86400 })
-    }
+    try {
+      const body = await response.clone().text()
+      // KV values have a 25 MiB limit; large responses still load normally.
+      if (body.length < 8 * 1024 * 1024) {
+        await env.CONFIG.put(key, JSON.stringify({ body, updatedAt: Date.now() }), { expirationTtl: 7 * 86400 })
+        if (!new URL(url).searchParams.has('pageToken')) {
+          const feedKey = `google-feed:${userId}:${hash}`
+          const existing = await env.CONFIG.get(feedKey, 'json')
+          // Registered feeds do not need to be rewritten on every cache refresh.
+          if (existing?.key !== key || existing?.url !== url) {
+            await env.CONFIG.put(feedKey, JSON.stringify({ userId, url, key }), { expirationTtl: 30 * 86400 })
+          }
+        }
+      }
+    } catch { console.error('Google read cache write skipped; provider response preserved') }
   }
   return response
 }

@@ -6,7 +6,7 @@ workers_dev = true
 
 # Check registered read feeds in small batches; each feed refreshes at most once per 24 hours.
 [triggers]
-crons = ["*/5 * * * *"]
+crons = ["*/5 * * * *", "15,45 * * * *", "0 */2 * * *"]
 
 [[kv_namespaces]]
 binding = "CONFIG"

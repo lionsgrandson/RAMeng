@@ -15,12 +15,26 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
         ...(init.headers || {}),
       },
     })
-  } catch {
-    const error = new Error('לא ניתן להתחבר כרגע. נסו שוב.'); void reportClientError(path.split('?')[0], error); throw error
+  } catch (cause) {
+    const error = new Error('לא ניתן להתחבר כרגע. נסו שוב.')
+    Object.defineProperty(error, 'diagnostic', { value: {
+      code: 'NETWORK_ERROR',
+      message: `${(init.method || 'GET').toUpperCase()} ${path.split('?')[0]}: ${cause instanceof Error ? cause.message : 'Fetch failed'}`,
+    } })
+    void reportClientError(path.split('?')[0], error)
+    throw error
   }
 
   const body = await response.json().catch(() => ({})) as T & { error?: string; diagnosticQueued?: boolean }
-  if (!response.ok) { const error = new Error(body.error || 'הפעולה נכשלה.'); if (path !== '/api/application-errors' && !body.diagnosticQueued && response.status !== 401 && response.status !== 403) void reportClientError(path.split('?')[0], error); throw error }
+  if (!response.ok) {
+    const error = new Error(body.error || 'הפעולה נכשלה.')
+    Object.defineProperty(error, 'diagnostic', { value: {
+      code: `HTTP_${response.status}`,
+      message: `${(init.method || 'GET').toUpperCase()} ${path.split('?')[0]}: ${body.error || 'Request failed'}`,
+    } })
+    if (path !== '/api/application-errors' && !body.diagnosticQueued && response.status !== 401 && response.status !== 403) void reportClientError(path.split('?')[0], error)
+    throw error
+  }
   return body
 }
 

@@ -1,5 +1,6 @@
 import { queueDriveUpload, runDriveQueue } from "./driveQueue.js"
 import { cachedGoogleRead, googleReadHash, refreshGoogleReads } from "./googleSync.js"
+import { scheduledJobs } from "./cronSchedule.js"
 import { createClient } from '@supabase/supabase-js'
 import { cleanMailHtml, mailContent } from './mailHtml.js'
 import { handleCommunicationJournal } from './communicationJournal.js'
@@ -1752,7 +1753,8 @@ async function routeApi(request, env) {
   const path = url.pathname
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders(request) })
   let config = await readConfig(env)
-  if (request.method === 'GET' && ['/api/google/gmail/thread', '/api/google/gmail/search', '/api/google/gmail/contacts', '/api/google/calendar/contacts', '/api/google/calendar/events', '/api/google/drive/files', '/api/google/drive/folders'].includes(path)) config = { ...config, dailyGoogleRead: true, forceGoogleRead: url.searchParams.get('force') === 'true' }
+  // Gmail and Calendar must reflect current provider state; only Drive listing metadata is cached.
+  if (request.method === 'GET' && ['/api/google/drive/files', '/api/google/drive/folders'].includes(path)) config = { ...config, dailyGoogleRead: true, forceGoogleRead: url.searchParams.get('force') === 'true' }
 
   if (path === '/api/public-config' && request.method === 'GET') return apiJson(request, publicConfig(config))
   if (path === '/api/application-errors' && request.method === 'POST') return handleApplicationError(request, env, config)
@@ -1785,7 +1787,7 @@ async function routeApi(request, env) {
   if (path === '/api/google/calendar/contacts' && request.method === 'GET') return handleContactCalendar(request, env, config)
   if (path === '/api/google/sync' && request.method === 'POST') {
     const user = await requireUser(request, env, config); const body = await parseBody(request)
-    const reads = body.feedsDone ? { cursor: '', refreshed: 0, failed: 0 } : await refreshGoogleReads(env, (userId, providerUrl) => googleFetch(env, config, userId, providerUrl), { userId: user.id, cursor: cleanString(body.cursor), force: true })
+    const reads = body.feedsDone ? { cursor: '', refreshed: 0, failed: 0 } : await refreshGoogleReads(env, (userId, providerUrl) => googleFetch(env, { ...config, dailyGoogleRead: false }, userId, providerUrl), { userId: user.id, cursor: cleanString(body.cursor), force: true })
     let uploads = { cursor: '', uploaded: 0, failed: 0 }
     if (!body.driveDone) {
       let allowed = true
@@ -1856,14 +1858,45 @@ async function deliverBackgroundTaskNotifications(env, config) {
 }
 
 export default {
-  async scheduled(_event, env, ctx) {
-    ctx.waitUntil((async () => { const config = await readConfig(env); try { await deliverPendingApplicationErrors(env, config) } catch { console.error('Application error delivery temporarily unavailable') }; try { await deliverBackgroundTaskNotifications(env, config) } catch { console.error('Task outbox temporarily unavailable') }; await refreshGoogleReads(env, (userId, url) => googleFetch(env, config, userId, url)); await runDriveQueue(env, (job) => executeQueuedDriveUpload(env, config, job)) })())
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil((async () => {
+      const config = await readConfig(env)
+      const jobs = scheduledJobs(event?.cron)
+      // Task delivery still runs every five minutes. Each KV list queue runs far less
+      // frequently, and a failed integration must not stop the other queues.
+      if (jobs.tasks) {
+        try { await deliverBackgroundTaskNotifications(env, config) }
+        catch { console.error('Task outbox temporarily unavailable') }
+      }
+      if (jobs.errors) {
+        try { await deliverPendingApplicationErrors(env, config) }
+        catch { console.error('Application error delivery temporarily unavailable') }
+      }
+      if (jobs.google) {
+        try { await refreshGoogleReads(env, (userId, url) => googleFetch(env, { ...config, dailyGoogleRead: false }, userId, url)) }
+        catch { console.error('Google read refresh temporarily unavailable') }
+      }
+      if (jobs.drive) {
+        try { await runDriveQueue(env, (job) => executeQueuedDriveUpload(env, config, job)) }
+        catch { console.error('Drive upload queue temporarily unavailable') }
+      }
+    })())
   },
   async fetch(request, env) {
     try {
       const url = new URL(request.url)
       if (url.pathname.startsWith('/api/')) return await routeApi(request, env)
-      if (env.ASSETS) return env.ASSETS.fetch(request)
+      if (env.ASSETS) {
+        const response = await env.ASSETS.fetch(request)
+        // Prevent old HTML documents from referencing removed, hashed JS chunks
+        // after a deployment; versioned static assets keep their usual caching.
+        if ((request.headers.get('accept') || '').includes('text/html')) {
+          const headers = new Headers(response.headers)
+          headers.set('cache-control', 'no-store')
+          return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
+        }
+        return response
+      }
       return new Response('RAMeng CRM', { status: 200 })
     } catch (error) {
       const requestedStatus = Number(error?.status || 500)

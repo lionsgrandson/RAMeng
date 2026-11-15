@@ -302,8 +302,16 @@ export default function App() {
 
   setErrorReportingContext(orgId, page, user?.id)
   useEffect(() => {
-    const onError = (event: ErrorEvent) => { void reportClientError('browser-error', new Error(event.message)) }
-    const onPromise = (event: PromiseRejectionEvent) => { void reportClientError('promise-error', event.reason instanceof Error ? event.reason : new Error(String(event.reason || 'Unhandled promise error'))) }
+    // Browser wallet extensions can reject promises inside the page even though
+    // the CRM does not use them. Do not send false CRM incidents for extensions.
+    const externalExtensionFailure = (message: string, source = '') => /MetaMask|(?:chrome|moz|safari-web)-extension:\/\//i.test(`${message} ${source}`)
+    const onError = (event: ErrorEvent) => {
+      if (!externalExtensionFailure(event.message, event.filename)) void reportClientError('browser-error', new Error(event.message))
+    }
+    const onPromise = (event: PromiseRejectionEvent) => {
+      const failure = event.reason instanceof Error ? event.reason : new Error(String(event.reason || 'Unhandled promise error'))
+      if (!externalExtensionFailure(failure.message, failure.stack || '')) void reportClientError('promise-error', failure)
+    }
     const onBackend = (event: Event) => { void reportClientError('database-or-storage', new Error((event as CustomEvent).detail || 'Backend error')) }
     window.addEventListener('error', onError); window.addEventListener('unhandledrejection', onPromise); window.addEventListener('rameng-backend-error', onBackend)
     return () => { window.removeEventListener('error', onError); window.removeEventListener('unhandledrejection', onPromise); window.removeEventListener('rameng-backend-error', onBackend) }
