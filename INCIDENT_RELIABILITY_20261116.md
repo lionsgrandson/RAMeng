@@ -100,18 +100,18 @@ A tab that remained open across two frontend deployments encountered a removed l
 
 ## Deployment record
 
-- Branch: `codex/kv-status-resilience`, fast-forward merged and pushed to `main` in three runtime/configuration commits plus a report-only commit.
+- Branch: `codex/kv-status-resilience`, fast-forward merged and pushed to `main` in three runtime/configuration commits plus report-only commits.
 - Application changes: `be11e966b6dfba4d61b0a05a9e316639e2c33ccf`, `4dedae7dd8775df2fd8988d3acf6881fe88ac404`.
 - Final release/config commit: **`6d079652ecdb78aa2e094c3376c08dec1e47efb9`**.
 - Final staging version: `bdfcc0f5-35e7-4dbb-823d-44db53b696a5`, provider upload confirmed. [Staging](https://staging-rameng-crm.rameng-crm-worker.workers.dev).
 - Final production version: **`aebf63cd-48af-413a-9195-5ab843a22e03`**, provider-confirmed at 100% traffic. [Production](https://rameng-crm.rameng-crm-worker.workers.dev). Final production asset/configuration/authorization smoke: **26/26 passed**. Effective provider settings confirm `redact_query_string: true`, `invocation_logs: false`, persisted application logs and disabled traces.
 - GitHub CI **passed** all three releases: [initial resilience run](https://github.com/lionsgrandson/RAMeng/actions/runs/43813529710), [draft correction run](https://github.com/lionsgrandson/RAMeng/actions/runs/43814129937), [final config run](https://github.com/lionsgrandson/RAMeng/actions/runs/43814724776). The final production deployment was created at November 16, 06:08:59 UTC (08:08:59 Israel time). The later report-only commit does not change deployed application/configuration content.
 - Deployment used the repository's `deploy:staging` and `deploy:cloudflare` processes, explicit RAM profile/account and `--keep-vars`. Existing secrets and bindings were preserved.
-- Staging public/configuration/authorization/asset checks passed. A separately authenticated staging session was not available; authenticated Google UI checks were performed against production using its existing session. Synthetic fixtures supplied mutation tests.
+- Staging public/configuration/authorization/asset checks passed. On November 16, after the user signed in through Udi's browser profile, authenticated staging UI verification also passed: Google settings showed connected, Gmail displayed 20 messages, Calendar finished loading without errors, and the linked QA Drive folder displayed five file links. Two dashboard → Projects navigation cycles succeeded without errors; the task-sync banner reported synchronized saved tasks. No test mail, manual read/unread change, upload, sharing change, or customer edit was performed. Staging continues to share production services. Synthetic fixtures supplied mutation tests.
 
 ## Remaining action / acceptance limits
 
-No paid upgrade or data migration is required for these fixes. If exact historical transport causality is mandatory, the missing client network trace and historical Worker logs are the precise evidence blocker; code cannot reconstruct them. Keep the new diagnostics for recurrence and review a full post-release UTC day's operation counts. Operators can attach the provided budget diagnostic to existing monitoring. A separate authenticated staging account/session is needed to repeat customer-Google staging UI tests without reusing production-origin login state.
+No paid upgrade or data migration is required for these fixes. If exact historical transport causality is mandatory, the missing client network trace and historical Worker logs are the precise evidence blocker; code cannot reconstruct them. Keep the new diagnostics for recurrence and review a full post-release UTC day's operation counts. Operators can attach the provided budget diagnostic to existing monitoring. The authenticated staging-session blocker is now cleared; the full-day check remains due after November 17 at 08:10 Israel time.
 
 Local sanitized evidence is under ignored `artifacts/audit/kv-*`; this document contains no credentials or private message contents.
 
