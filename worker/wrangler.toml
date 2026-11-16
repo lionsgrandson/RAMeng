@@ -4,6 +4,15 @@ main = "src/index.js"
 compatibility_date = "2026-09-01"
 workers_dev = true
 
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+# Request URLs can contain mailbox addresses/searches. Emit sanitized app logs only.
+invocation_logs = false
+
 # Check registered read feeds in small batches; each feed refreshes at most once per 24 hours.
 [triggers]
 crons = ["*/5 * * * *", "15,45 * * * *", "0 */2 * * *"]

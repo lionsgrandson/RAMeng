@@ -1,3 +1,4 @@
+import { failureCategory, saveCursor } from './kvDiagnostics.js'
 const DAY = 86400000
 
 export async function queueDriveUpload(env, userId, body, email) {
@@ -6,6 +7,7 @@ export async function queueDriveUpload(env, userId, body, email) {
   if (!clock) { clock = { nextAt: Date.now() + DAY }; await env.CONFIG.put(clockKey, JSON.stringify(clock)) }
   const key = `drive-pending:${userId}:${body.projectId}:${body.kind}:${body.recordId}`
   const previous = await env.CONFIG.get(key, 'json')
+  if (previous?.email === email && JSON.stringify(previous.body) === JSON.stringify(body)) return { queued: true, dueAt: new Date(previous.dueAt).toISOString() }
   await env.CONFIG.put(key, JSON.stringify({ userId, email, body, version: crypto.randomUUID(), dueAt: previous?.dueAt || clock.nextAt }), { expirationTtl: 30 * 86400 })
   return { queued: true, dueAt: new Date(previous?.dueAt || clock.nextAt).toISOString() }
 }
@@ -19,7 +21,7 @@ export async function runDriveQueue(env, execute, options = {}) {
   const clocks = new Map()
   for (const item of page.keys) {
     const job = await env.CONFIG.get(item.name, 'json')
-    if (!job || (!options.force && job.dueAt > Date.now())) continue
+    if (!job || (!options.force && (job.dueAt > Date.now() || job.attempts >= 5 || job.nextRetryAt > Date.now()))) continue
     try {
       const result = await execute(job)
       // A newer edit queued while this upload ran must survive for tomorrow.
@@ -30,9 +32,20 @@ export async function runDriveQueue(env, execute, options = {}) {
         clocks.set(job.userId, true)
         await env.CONFIG.put(`drive-auto-clock:${job.userId}`, JSON.stringify({ nextAt: Date.now() + DAY }))
       }
-    } catch { failed++ }
+    } catch (error) {
+      failed++
+      const category = failureCategory(error)
+      console.error(JSON.stringify({ event: 'drive_queue_failure', category, attempt: (job.attempts || 0) + 1 }))
+      // A quota outage cannot be repaired by more writes in the same run.
+      if (category === 'quota_exceeded') break
+      const current = await env.CONFIG.get(item.name, 'json')
+      if (current?.version === job.version) {
+        const attempts = (job.attempts || 0) + 1
+        await env.CONFIG.put(item.name, JSON.stringify({ ...job, attempts, nextRetryAt: Date.now() + Math.min(DAY, 30 * 60000 * 2 ** Math.min(attempts, 5)) + Math.random() * 60000 }), { expirationTtl: 30 * 86400 })
+      }
+    }
   }
   const next = page.list_complete ? '' : page.cursor
-  if (!options.userId) await env.CONFIG.put(cursorKey, next)
+  if (!options.userId) await saveCursor(env.CONFIG, cursorKey, cursor, next)
   return { cursor: next, uploaded, failed }
 }

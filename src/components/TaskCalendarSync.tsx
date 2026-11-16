@@ -8,33 +8,43 @@ export default function TaskCalendarSync({ orgId, userId, workspace, enabled, re
   const [error, setError] = useState('')
   const running = useRef(false)
   const queued = useRef(false)
+  const retryState = useRef({ failures: 0, nextAt: 0 })
   const signature = JSON.stringify([orgId, userId, workspace.tasks.map(task => [task.id, task.projectId, task.title, task.description, task.status, task.startDate, task.dueDate, task.followUpDate, task.scheduledTime]), workspace.projects.map(project => [project.id, project.name])])
   useEffect(() => {
-    const retry = () => setAttempt(value => value + 1)
-    const timer = window.setInterval(retry, 60000)
+    const retry = () => { if (document.visibilityState !== 'visible') return; retryState.current = { failures: 0, nextAt: 0 }; setAttempt(value => value + 1) }
+    const automaticRetry = () => { if (document.visibilityState === 'visible' && navigator.onLine && retryState.current.failures < 5 && Date.now() >= retryState.current.nextAt) setAttempt(value => value + 1) }
+    const timer = window.setInterval(automaticRetry, 60000)
     window.addEventListener('online', retry)
     window.addEventListener('focus', retry)
     window.addEventListener('rameng-task-calendar-sync', retry)
-    return () => { window.clearInterval(timer); window.removeEventListener('online', retry); window.removeEventListener('focus', retry); window.removeEventListener('rameng-task-calendar-sync', retry) }
+    document.addEventListener('visibilitychange', automaticRetry)
+    return () => { window.clearInterval(timer); window.removeEventListener('online', retry); window.removeEventListener('focus', retry); window.removeEventListener('rameng-task-calendar-sync', retry); document.removeEventListener('visibilitychange', automaticRetry) }
   }, [])
   useEffect(() => {
     if (!enabled || !ready || orgId === 'local') return
     let active = true
     const timer = window.setTimeout(() => {
+      if (document.visibilityState !== 'visible' || !navigator.onLine) return
       if (running.current) { queued.current = true; return }
       running.current = true
       setState('busy'); setError('')
       void (async () => {
         const status = await integrationsApi.status()
+        if (status.google.state === 'temporarily_unavailable' || status.google.state === 'configuration_error') throw new Error('מצב Google אינו זמין כרגע. המשימות נשמרו במערכת.')
         if (!status.google.connected) { if (active) setState('disconnected'); return }
         const result = await integrationsApi.syncTaskCalendar(orgId, userId)
         if (active) {
           setState(result.synced ? 'saved' : 'pending')
           if (!result.synced) setError(`${result.failed} עדכונים ממתינים לניסיון נוסף.`)
         }
-        if (!result.synced && (result.created || result.updated || result.deleted)) queued.current = true
+        if (!result.synced) throw new Error(`${result.failed} עדכונים ממתינים לניסיון נוסף.`)
+        retryState.current = { failures: 0, nextAt: Date.now() + 5 * 60000 }
         if (result.created || result.updated || result.deleted) window.dispatchEvent(new Event('rameng-google-synced'))
-      })().catch(e => { if (active) { setState('pending'); setError(e instanceof Error ? e.message : 'סנכרון המשימות נכשל') } }).finally(() => {
+      })().catch(e => {
+        const failures = retryState.current.failures + 1
+        retryState.current = { failures, nextAt: Date.now() + Math.min(15 * 60000, 60000 * 2 ** Math.min(failures, 4)) + Math.random() * 15000 }
+        if (active) { setState('pending'); setError(e instanceof Error ? e.message : 'סנכרון המשימות נכשל') }
+      }).finally(() => {
         running.current = false
         if (queued.current) { queued.current = false; setAttempt(value => value + 1) }
       })

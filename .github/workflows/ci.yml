@@ -20,6 +20,8 @@ jobs:
     steps:
       - name: Check out code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -36,6 +38,8 @@ jobs:
         run: npm run lint
       - name: Regression tests
         run: npm test
+      - name: Offline KV consumption regression
+        run: npm run test:kv-load
       - name: Worker syntax check
         run: |
           node --check worker/src/index.js
@@ -64,6 +68,10 @@ jobs:
         run: node "$RUNNER_TEMP/rameng-pg-runner/node_modules/playwright/cli.js" install --with-deps chromium
       - name: Browser workflows with isolated data
         run: node tests/browser.mjs
+        env:
+          RAMENG_TEST_BROWSER_RUNTIME: ${{ runner.temp }}/rameng-pg-runner
+      - name: Integration status browser resilience
+        run: npm run test:status-browser
         env:
           RAMENG_TEST_BROWSER_RUNTIME: ${{ runner.temp }}/rameng-pg-runner
       - name: Upload browser evidence

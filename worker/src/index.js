@@ -1,6 +1,8 @@
 import { queueDriveUpload, runDriveQueue } from "./driveQueue.js"
 import { cachedGoogleRead, googleReadHash, refreshGoogleReads } from "./googleSync.js"
 import { scheduledJobs } from "./cronSchedule.js"
+import { environmentIdentity, failureCategory, observeKv, operationContext, saveCursor, sharedRead } from './kvDiagnostics.js'
+import { googleIntegrationStatus } from './integrationStatus.js'
 import { createClient } from '@supabase/supabase-js'
 import { cleanMailHtml, mailContent } from './mailHtml.js'
 import { handleCommunicationJournal } from './communicationJournal.js'
@@ -29,7 +31,7 @@ const corsHeaders = (request) => ({
 const apiJson = (request, data, status = 200) => json(data, status, { ...corsHeaders(request), 'cache-control': 'no-store' })
 
 async function readConfig(env) {
-  const stored = (await env.CONFIG.get(CONFIG_KEY, 'json')) || {}
+  const stored = (await sharedRead(env, CONFIG_KEY)) || {}
   const localDeveloperEmails = String(env.DEVELOPER_EMAILS || '')
     .split(',')
     .map((value) => value.trim().toLowerCase())
@@ -82,9 +84,10 @@ async function getAuthenticatedUser(request, env, config) {
   if (!auth.startsWith('Bearer ')) throw Object.assign(new Error('נדרשת התחברות'), { status: 401 })
   if (!config.supabaseUrl || !config.supabaseAnonKey) throw Object.assign(new Error('השירות אינו זמין כרגע.'), { status: 503 })
   const response = await fetch(`${config.supabaseUrl.replace(/\/$/, '')}/auth/v1/user`, {
+    signal: AbortSignal.timeout(10000),
     headers: { authorization: auth, apikey: config.supabaseAnonKey },
   })
-  if (!response.ok) throw Object.assign(new Error('ההתחברות אינה תקפה'), { status: 401 })
+  if (!response.ok) throw Object.assign(new Error(response.status >= 500 || response.status === 429 ? 'שירות ההתחברות אינו זמין כרגע' : 'ההתחברות אינה תקפה'), { status: response.status >= 500 || response.status === 429 ? 503 : 401 })
   const user = await response.json()
   if (!user?.id) throw Object.assign(new Error('המשתמש אינו תקף'), { status: 401 })
   return user
@@ -160,12 +163,14 @@ async function currentMembership(request, env, config, user, orgId) {
   url.searchParams.set('user_id', `eq.${user.id}`)
   if (orgId) url.searchParams.set('org_id', `eq.${orgId}`)
   const response = await fetch(url.toString(), {
+    signal: AbortSignal.timeout(10000),
     headers: {
       authorization: auth,
       apikey: config.supabaseAnonKey,
       accept: 'application/json',
     },
   })
+  if (response.status >= 500 || response.status === 429) throw Object.assign(new Error('שירות ההרשאות אינו זמין כרגע'), { status: 503 })
   const memberships = response.ok ? await response.json() : []
   return Array.isArray(memberships) ? memberships[0] || null : null
 }
@@ -249,31 +254,45 @@ function googleTokensKey(userId) {
 const freshGoogleTokens = new WeakMap()
 const googleRefreshes = new WeakMap()
 async function googleTokens(env, userId) {
-  const fresh = freshGoogleTokens.get(env)?.get(userId)
+  const fresh = freshGoogleTokens.get(environmentIdentity(env))?.get(userId)
   if (fresh && fresh.until > Date.now()) return fresh.tokens
-  return (await env.CONFIG.get(googleTokensKey(userId), 'json')) || null
+  return (await sharedRead(env, googleTokensKey(userId))) || null
 }
 
 async function putGoogleTokens(env, userId, tokens) {
   await env.CONFIG.put(googleTokensKey(userId), JSON.stringify(tokens))
-  if (!freshGoogleTokens.has(env)) freshGoogleTokens.set(env, new Map())
-  freshGoogleTokens.get(env).set(userId, { tokens, until: Date.now() + 60000 })
+  const identity = environmentIdentity(env)
+  googleRefreshFailures.get(identity)?.delete(userId)
+  if (!freshGoogleTokens.has(identity)) freshGoogleTokens.set(identity, new Map())
+  freshGoogleTokens.get(identity).set(userId, { tokens, until: Date.now() + 60000 })
 }
 
-async function validGoogleAccessToken(env, config, userId, force = false) {
-  if (!googleRefreshes.has(env)) googleRefreshes.set(env, new Map())
-  const pending = googleRefreshes.get(env)
+const googleRefreshFailures = new WeakMap()
+async function validGoogleAccessToken(env, config, userId, force = false, stored) {
+  const identity = environmentIdentity(env)
+  const failure = googleRefreshFailures.get(identity)?.get(userId)
+  if (failure?.until > Date.now()) throw failure.error
+  if (!googleRefreshes.has(identity)) googleRefreshes.set(identity, new Map())
+  const pending = googleRefreshes.get(identity)
   if (pending.has(userId)) return pending.get(userId)
-  const operation = refreshGoogleAccessToken(env, config, userId, force)
+  const operation = refreshGoogleAccessToken(env, config, userId, force, stored)
   pending.set(userId, operation)
-  try { return await operation } finally { if (pending.get(userId) === operation) pending.delete(userId) }
+  try { return await operation }
+  catch (error) {
+    if (!googleRefreshFailures.has(identity)) googleRefreshFailures.set(identity, new Map())
+    const failures = googleRefreshFailures.get(identity)
+    if (failures.size >= 1000) failures.delete(failures.keys().next().value)
+    failures.set(userId, { error, until: Date.now() + 60000 + Math.random() * 15000 })
+    throw error
+  } finally { if (pending.get(userId) === operation) pending.delete(userId) }
 }
-async function refreshGoogleAccessToken(env, config, userId, force = false) {
-  const stored = await googleTokens(env, userId)
+async function refreshGoogleAccessToken(env, config, userId, force = false, knownTokens) {
+  const stored = knownTokens || await googleTokens(env, userId)
   if (!stored?.refresh_token && !stored?.access_token) throw Object.assign(new Error('Google Workspace עדיין לא מחובר לחשבון שלך'), { status: 409 })
   if (!force && stored.access_token && Number(stored.expires_at || 0) > Date.now() + 60_000) return stored.access_token
   if (!stored.refresh_token) throw Object.assign(new Error('חיבור Google שלך פג. יש להתחבר מחדש בהגדרות.'), { status: 409 })
   const response = await fetch('https://oauth2.googleapis.com/token', {
+    signal: AbortSignal.timeout(10000),
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
@@ -284,7 +303,7 @@ async function refreshGoogleAccessToken(env, config, userId, force = false) {
     }),
   })
   const body = await response.json()
-  if (!response.ok || !body.access_token) throw Object.assign(new Error(localizedExternalError(body.error_description, 'לא ניתן לרענן את חיבור Google')), { status: 502 })
+  if (!response.ok || !body.access_token) throw Object.assign(new Error('לא ניתן לרענן את חיבור Google'), { status: 502, category: body.error === 'invalid_grant' ? 'reconnect_required' : ['invalid_client', 'unauthorized_client'].includes(body.error) ? 'configuration_error' : 'temporarily_unavailable' })
   const next = { ...stored, access_token: body.access_token, expires_at: Date.now() + Number(body.expires_in || 3600) * 1000 }
   await putGoogleTokens(env, userId, next)
   return next.access_token
@@ -293,10 +312,10 @@ async function refreshGoogleAccessToken(env, config, userId, force = false) {
 async function googleFetch(env, config, userId, url, init = {}) {
   const execute = async () => {
     let token = await validGoogleAccessToken(env, config, userId)
-    let response = await fetch(url, { ...init, headers: { authorization: `Bearer ${token}`, ...(init.headers || {}) } })
+    let response = await fetch(url, { signal: AbortSignal.timeout(20000), ...init, headers: { authorization: `Bearer ${token}`, ...(init.headers || {}) } })
     if (response.status === 401) {
       token = await validGoogleAccessToken(env, config, userId, true)
-      response = await fetch(url, { ...init, headers: { authorization: `Bearer ${token}`, ...(init.headers || {}) } })
+      response = await fetch(url, { signal: AbortSignal.timeout(20000), ...init, headers: { authorization: `Bearer ${token}`, ...(init.headers || {}) } })
     }
     return response
   }
@@ -771,11 +790,12 @@ async function draftKey(userId, context) {
 
 const freshMailDrafts = new WeakMap()
 function rememberDraft(env, key, draft) {
+  env = environmentIdentity(env)
   if (!freshMailDrafts.has(env)) freshMailDrafts.set(env, new Map())
   freshMailDrafts.get(env).set(key, { draft, until: Date.now() + 60000 })
 }
 async function readMailDraft(env, key) {
-  const fresh = freshMailDrafts.get(env)?.get(key)
+  const fresh = freshMailDrafts.get(environmentIdentity(env))?.get(key)
   if (fresh && fresh.until > Date.now()) return fresh.draft
   const draft = await env.CONFIG.get(key, 'json')
   if (!draft) return null
@@ -1400,7 +1420,7 @@ async function handleAddressSuggest(request, env, config) {
         if (google.length) return apiJson(request, { suggestions: google, source: 'google' })
       }
     } catch (error) {
-      console.warn('Google Places autocomplete failed', error)
+      console.warn('Google Places autocomplete failed', failureCategory(error))
     }
   }
 
@@ -1427,7 +1447,7 @@ async function handleAddressSuggest(request, env, config) {
       if (govmap.length) return apiJson(request, { suggestions: govmap, source: 'govmap' })
     }
   } catch (error) {
-    console.warn('GovMap autocomplete failed', error)
+    console.warn('GovMap autocomplete failed', failureCategory(error))
   }
 
   try {
@@ -1450,7 +1470,7 @@ async function handleAddressSuggest(request, env, config) {
       if (osm.length) return apiJson(request, { suggestions: osm, source: 'openstreetmap' })
     }
   } catch (error) {
-    console.warn('OpenStreetMap autocomplete failed', error)
+    console.warn('OpenStreetMap autocomplete failed', failureCategory(error))
   }
 
   return apiJson(request, { suggestions: [], source: 'none' })
@@ -1592,8 +1612,7 @@ async function handleApplicationError(request, env, config) {
 async function deliverPendingApplicationErrors(env, config) {
   const cursor = await env.CONFIG.get('application-error-scan-cursor', 'json')
   const page = await env.CONFIG.list({ prefix: 'application-error:', limit: 20, ...(cursor ? {cursor} : {}) })
-  if (page.list_complete) await env.CONFIG.delete('application-error-scan-cursor')
-  else await env.CONFIG.put('application-error-scan-cursor', JSON.stringify(page.cursor), {expirationTtl:86400})
+  await saveCursor(env.CONFIG, 'application-error-scan-cursor', cursor, page.list_complete ? '' : page.cursor, true)
   for (const key of page.keys) {
     const report = await env.CONFIG.get(key.name, 'json')
     if (report?.state === 'pending') await deliverApplicationError(env, key.name, report, applicationErrorDelivery(env, config, report.orgId))
@@ -1735,14 +1754,11 @@ async function handleGoogleConfig(request, env, config) {
 
 async function handleStatus(request, env, config) {
   const user = await requireUser(request, env, config)
-  const tokens = await googleTokens(env, user.id)
+  const google = await googleIntegrationStatus(config, () => googleTokens(env, user.id), tokens => validGoogleAccessToken(env, config, user.id, false, tokens))
+  console.log(JSON.stringify({ event: 'integration_status', ...env[operationContext], service: 'google', state: google.state, reason: google.reason || '', synchronization: google.synchronization }))
   return apiJson(request, {
     configured: Boolean(config.supabaseUrl && config.supabaseAnonKey),
-    google: {
-      configured: Boolean(config.googleClientId && config.googleClientSecret),
-      connected: Boolean(tokens?.refresh_token || (tokens?.access_token && Number(tokens.expires_at || 0) > Date.now())),
-      email: tokens?.email || '',
-    },
+    google,
     openai: { configured: Boolean(config.openaiApiKey) },
     users: { invitationsConfigured: Boolean(cleanString(env.SUPABASE_SECRET_KEY)) },
   })
@@ -1839,8 +1855,9 @@ async function deliverBackgroundTaskNotifications(env, config) {
   if (cursor?.id) query = query.gt('id', cursor.id)
   const candidates = await query
   if (candidates.error) throw new Error('Task outbox unavailable')
-  if (!candidates.data?.length) { await env.CONFIG.delete(cursorKey); return }
-  await env.CONFIG.put(cursorKey, JSON.stringify({ id: candidates.data.at(-1).id }))
+  if (!candidates.data?.length) { if (cursor) await env.CONFIG.delete(cursorKey); return }
+  const nextCursor = { id: candidates.data.at(-1).id }
+  if (cursor?.id !== nextCursor.id) await env.CONFIG.put(cursorKey, JSON.stringify(nextCursor))
   const seen = new Set(); let batches = 0
   for (const item of candidates.data || []) {
     if (!item.assigned_by) continue
@@ -1860,32 +1877,43 @@ async function deliverBackgroundTaskNotifications(env, config) {
 export default {
   async scheduled(event, env, ctx) {
     ctx.waitUntil((async () => {
-      const config = await readConfig(env)
-      const jobs = scheduledJobs(event?.cron)
-      // Task delivery still runs every five minutes. Each KV list queue runs far less
-      // frequently, and a failed integration must not stop the other queues.
-      if (jobs.tasks) {
-        try { await deliverBackgroundTaskNotifications(env, config) }
-        catch { console.error('Task outbox temporarily unavailable') }
-      }
-      if (jobs.errors) {
-        try { await deliverPendingApplicationErrors(env, config) }
-        catch { console.error('Application error delivery temporarily unavailable') }
-      }
-      if (jobs.google) {
-        try { await refreshGoogleReads(env, (userId, url) => googleFetch(env, { ...config, dailyGoogleRead: false }, userId, url)) }
-        catch { console.error('Google read refresh temporarily unavailable') }
-      }
-      if (jobs.drive) {
-        try { await runDriveQueue(env, (job) => executeQueuedDriveUpload(env, config, job)) }
-        catch { console.error('Drive upload queue temporarily unavailable') }
-      }
+      const observed = observeKv(env, { job: event?.cron || 'manual', requestId: crypto.randomUUID() })
+      env = observed.env
+      try {
+        const config = await readConfig(env)
+        const jobs = scheduledJobs(event?.cron)
+        // Task delivery still runs every five minutes. Each KV list queue runs far less
+        // frequently, and a failed integration must not stop the other queues.
+        if (jobs.tasks) {
+          try { await deliverBackgroundTaskNotifications(env, config) }
+          catch { console.error('Task outbox temporarily unavailable') }
+        }
+        if (jobs.errors) {
+          try { await deliverPendingApplicationErrors(env, config) }
+          catch { console.error('Application error delivery temporarily unavailable') }
+        }
+        if (jobs.google) {
+          try { await refreshGoogleReads(env, (userId, url) => googleFetch(env, { ...config, dailyGoogleRead: false }, userId, url)) }
+          catch { console.error('Google read refresh temporarily unavailable') }
+        }
+        if (jobs.drive) {
+          try { await runDriveQueue(env, (job) => executeQueuedDriveUpload(env, config, job)) }
+          catch { console.error('Drive upload queue temporarily unavailable') }
+        }
+      } finally { observed.finish() }
     })())
   },
   async fetch(request, env) {
+    const requestId = crypto.randomUUID()
+    const observed = new URL(request.url).pathname.startsWith('/api/') ? observeKv(env, { endpoint: new URL(request.url).pathname, requestId }) : null
+    if (observed) env = observed.env
     try {
       const url = new URL(request.url)
-      if (url.pathname.startsWith('/api/')) return await routeApi(request, env)
+      if (url.pathname.startsWith('/api/')) {
+        const response = await routeApi(request, env)
+        response.headers.set('x-request-id', requestId)
+        return response
+      }
       if (env.ASSETS) {
         const response = await env.ASSETS.fetch(request)
         // Prevent old HTML documents from referencing removed, hashed JS chunks
@@ -1899,20 +1927,22 @@ export default {
       }
       return new Response('RAMeng CRM', { status: 200 })
     } catch (error) {
-      const requestedStatus = Number(error?.status || 500)
+      const requestedStatus = Number(error?.status || (['quota_exceeded', 'timeout'].includes(failureCategory(error)) ? 503 : 500))
       const status = Number.isInteger(requestedStatus) && requestedStatus >= 400 && requestedStatus <= 599 ? requestedStatus : 500
       // Provider exceptions can contain tokens or message content. Log metadata only.
-      console.error('API request failed', { status, path: new URL(request.url).pathname })
-      const message = status === 500 ? 'הפעולה נכשלה. נסו שוב מאוחר יותר.' : error instanceof Error ? error.message : 'הפעולה נכשלה.'
+      console.error('API request failed', { status, path: new URL(request.url).pathname, requestId, category: failureCategory(error) })
+      const message = status === 500 ? 'הפעולה נכשלה. נסו שוב מאוחר יותר.' : status === 503 ? 'השירות אינו זמין כרגע. נסו שוב מאוחר יותר.' : error instanceof Error ? error.message : 'הפעולה נכשלה.'
       let diagnosticQueued = false
-      if (status >= 500 && request.headers.get('authorization') && request.headers.get('x-rameng-org') && new URL(request.url).pathname !== '/api/application-errors') {
+      if (status >= 500 && failureCategory(error) !== 'quota_exceeded' && request.headers.get('authorization') && request.headers.get('x-rameng-org') && new URL(request.url).pathname !== '/api/application-errors') {
         try {
           const diagnosticRequest = new Request(`${new URL(request.url).origin}/api/application-errors`, {method:'POST',headers:{authorization:request.headers.get('authorization'),'content-type':'application/json'},body:JSON.stringify({orgId:request.headers.get('x-rameng-org'),operation:new URL(request.url).pathname,code:`HTTP_${status}`,message:error instanceof Error?error.message:'Server error'})})
           const reportResponse = await handleApplicationError(diagnosticRequest,env,await readConfig(env))
           diagnosticQueued = reportResponse.ok
         } catch { console.error('Application diagnostic queue unavailable') }
       }
-      return apiJson(request, { error: message, ...(diagnosticQueued?{diagnosticQueued:true}:{}) }, status)
+      return apiJson(request, { error: message, requestId, category: failureCategory(error), ...(diagnosticQueued?{diagnosticQueued:true}:{}) }, status)
+    } finally {
+      observed?.finish()
     }
   },
 }

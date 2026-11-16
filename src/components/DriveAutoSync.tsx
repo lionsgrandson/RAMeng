@@ -17,7 +17,9 @@ export default function DriveAutoSync({ workspace, enabled, reportsAllowed, read
       running.current = true; setBusy(true); setError('')
       void (async () => {
         const data = snapshot.current
-        if (!(await integrationsApi.status()).google.connected) return
+        const status = await integrationsApi.status()
+        if (status.google.state === 'temporarily_unavailable' || status.google.state === 'configuration_error') throw new Error('מצב Google אינו זמין כרגע. הקבצים נשמרו במערכת.')
+        if (!status.google.connected) return
         const settings = await integrationsApi.driveSettings()
         const linked = new Set<string>()
         for (const project of data.projects) { const folder = (await integrationsApi.projectDriveFolder(project.id)).folder; if (folder && !folder.readOnly) linked.add(project.id) }

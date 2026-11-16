@@ -1,3 +1,4 @@
+import { failureCategory, saveCursor } from './kvDiagnostics.js'
 const DAY = 24 * 60 * 60 * 1000
 const LIVE_CACHE_TTL = 60 * 60 * 1000 // Drive listing cache; Gmail and Calendar bypass it.
 
@@ -31,7 +32,7 @@ export async function cachedGoogleRead(env, userId, url, execute, force = false)
           const feedKey = `google-feed:${userId}:${hash}`
           const existing = await env.CONFIG.get(feedKey, 'json')
           // Registered feeds do not need to be rewritten on every cache refresh.
-          if (existing?.key !== key || existing?.url !== url) {
+          if (existing?.key !== key || existing?.url !== url || existing?.retryAttempts) {
             await env.CONFIG.put(feedKey, JSON.stringify({ userId, url, key }), { expirationTtl: 30 * 86400 })
           }
         }
@@ -50,7 +51,9 @@ export async function refreshGoogleReads(env, execute, options = {}) {
   for (const item of page.keys) {
     const feed = await env.CONFIG.get(item.name, 'json')
     if (!feed?.userId || !feed.url || !feed.key) continue
-    const url = new URL(feed.url)
+    if (!options.force && (feed.retryAttempts >= 5 || feed.nextRetryAt > Date.now())) continue
+    let url
+    try { url = new URL(feed.url) } catch { continue }
     if (!['gmail.googleapis.com', 'www.googleapis.com'].includes(url.hostname) || !/^\/(gmail\/v1\/users\/me\/|calendar\/v3\/|drive\/v3\/files)/.test(url.pathname)) continue
     // Gmail and Calendar now read live, as do individual Drive metadata checks.
     // Retire their legacy cache registrations without re-fetching old mail.
@@ -61,16 +64,21 @@ export async function refreshGoogleReads(env, execute, options = {}) {
     }
     const cached = await env.CONFIG.get(feed.key, 'json')
     if (!options.force && cached && Date.now() - cached.updatedAt < DAY) continue
+    const defer = async category => {
+      console.error(JSON.stringify({ event: 'google_feed_failure', service: 'drive', category, attempt: (feed.retryAttempts || 0) + 1 }))
+      if (category === 'quota_exceeded' || options.force || options.userId) return
+      const retryAttempts = (feed.retryAttempts || 0) + 1
+      await env.CONFIG.put(item.name, JSON.stringify({ ...feed, retryAttempts, nextRetryAt: Date.now() + Math.min(DAY, 2 * 3600000 * 2 ** Math.min(retryAttempts, 4)) + Math.random() * 60000 }), { expirationTtl: 30 * 86400 })
+    }
     try {
       const response = await cachedGoogleRead(env, feed.userId, feed.url, () => execute(feed.userId, feed.url), true)
       if (response.ok) refreshed++
       else {
-        failed++
-        console.error('Google feed refresh failed', response.status, url.hostname)
+        throw Object.assign(new Error('Google feed provider unavailable'), { category: `http_${response.status}` })
       }
-    } catch (error) { failed++; console.error('Daily Google read failed', error?.status || 'unavailable') }
+    } catch (error) { failed++; const category = failureCategory(error); if (category === 'quota_exceeded') break; await defer(category) }
   }
   const next = page.list_complete ? '' : page.cursor
-  if (!options.userId) await env.CONFIG.put(cursorKey, next)
+  if (!options.userId) await saveCursor(env.CONFIG, cursorKey, cursor, next)
   return { cursor: next, refreshed, failed }
 }

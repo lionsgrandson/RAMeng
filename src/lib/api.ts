@@ -1,13 +1,24 @@
 import { errorReportingOrganization, reportClientError } from './errorReporting'
 import { getAccessToken, getRuntime } from './backend'
 
+const pendingStatus = new Map<string, Promise<unknown>>()
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = await getAccessToken()
   const base = getRuntime()?.apiBase || ''
+  if (path !== '/api/integrations/status') return executeRequest<T>(path, init, token, base)
+  const key = JSON.stringify([base, errorReportingOrganization(), token])
+  const pending = pendingStatus.get(key)
+  if (pending) return pending as Promise<T>
+  const operation = executeRequest<T>(path, init, token, base)
+  pendingStatus.set(key, operation)
+  try { return await operation } finally { if (pendingStatus.get(key) === operation) pendingStatus.delete(key) }
+}
+async function executeRequest<T>(path: string, init: RequestInit, token: string | null, base: string): Promise<T> {
   let response: Response
   try {
     response = await fetch(`${base}${path}`, {
       ...init,
+      signal: init.signal || AbortSignal.timeout(30000),
       headers: {
         'content-type': 'application/json',
         ...(errorReportingOrganization() ? {'x-rameng-org': errorReportingOrganization()} : {}),
@@ -19,18 +30,18 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const error = new Error('לא ניתן להתחבר כרגע. נסו שוב.')
     Object.defineProperty(error, 'diagnostic', { value: {
       code: 'NETWORK_ERROR',
-      message: `${(init.method || 'GET').toUpperCase()} ${path.split('?')[0]}: ${cause instanceof Error ? cause.message : 'Fetch failed'}`,
+      message: `${(init.method || 'GET').toUpperCase()} ${path.split('?')[0]}: ${cause instanceof Error ? cause.name : 'Fetch failed'}; online=${typeof navigator === 'undefined' ? 'unknown' : navigator.onLine}; visibility=${typeof document === 'undefined' ? 'unknown' : document.visibilityState}`,
     } })
     void reportClientError(path.split('?')[0], error)
     throw error
   }
 
-  const body = await response.json().catch(() => ({})) as T & { error?: string; diagnosticQueued?: boolean }
+  const body = await response.json().catch(() => ({})) as T & { error?: string; diagnosticQueued?: boolean; requestId?: string; category?: string }
   if (!response.ok) {
     const error = new Error(body.error || 'הפעולה נכשלה.')
     Object.defineProperty(error, 'diagnostic', { value: {
       code: `HTTP_${response.status}`,
-      message: `${(init.method || 'GET').toUpperCase()} ${path.split('?')[0]}: ${body.error || 'Request failed'}`,
+      message: `${(init.method || 'GET').toUpperCase()} ${path.split('?')[0]}: ${body.error || 'Request failed'}; request=${body.requestId || 'unknown'}; category=${body.category || 'unknown'}`,
     } })
     if (path !== '/api/application-errors' && !body.diagnosticQueued && response.status !== 401 && response.status !== 403) void reportClientError(path.split('?')[0], error)
     throw error
@@ -114,7 +125,7 @@ export interface DriveSettings { autoFiles: boolean; autoReports: boolean }
 export interface GoogleCalendarEvent { sourceTaskId?: string; etag?: string; editable?: boolean; description?: string; localEventId?: string; sourceOrgId?: string; id: string; summary: string; start: string; end?: string; htmlLink?: string; location?: string }
 export interface GoogleDriveFile { id: string; name: string; mimeType: string; size?: string; modifiedTime?: string; webViewLink?: string }
 export interface IntegrationStatus {
-  google: { configured: boolean; connected: boolean; email?: string }
+  google: { configured: boolean; connected: boolean | null; email?: string; state?: 'connected' | 'disconnected' | 'temporarily_unavailable' | 'reconnect_required' | 'configuration_error'; reason?: string; synchronization?: 'unchecked' | 'delayed' }
   openai: { configured: boolean }
   configured: boolean
 }
