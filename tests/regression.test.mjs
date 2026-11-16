@@ -685,6 +685,9 @@ test('draft creation, restoration, update and send use the owner mailbox and pre
   assert.equal(restored.draft.draftId, 'owner-draft'); assert.equal(restored.draft.synced, true)
   assert.equal(restored.draft.attachments[0].data, 'aGVsbG8='); assert.doesNotMatch(restored.draft.html, /script|bad\(\)/)
   assert.equal((await worker.fetch(put(), privateEnv)).status, 200)
+  assert.equal(actions.length, 1, 'unchanged synchronized draft must not be rewritten in Gmail')
+  body.subject = 'Draft updated'
+  assert.equal((await worker.fetch(put(), privateEnv)).status, 200)
   assert.equal((await worker.fetch(request('/api/google/gmail/send', { ...body, draftKey: body.key }), privateEnv)).status, 200)
   assert.deepEqual(actions, ['POST /gmail/v1/users/me/drafts', 'PUT /gmail/v1/users/me/drafts/owner-draft', 'POST /gmail/v1/users/me/drafts/send'])
   assert.equal((await (await worker.fetch(request('/api/google/gmail/draft?key=project%3Ap%3Anew'), privateEnv)).json()).draft, null)
@@ -700,6 +703,20 @@ test('draft survives a Gmail outage and accepts incomplete recipients without he
   assert.equal(saved.draft.synced, false)
   const restored = await (await worker.fetch(request('/api/google/gmail/draft?key=new'), privateEnv)).json()
   assert.equal(restored.draft.to, 'partial-address'); assert.equal(restored.draft.html, '<p>unfinished</p>')
+})
+
+test('retrying an unchanged draft through a Gmail outage does not consume more KV writes', async t => {
+  const { privateEnv } = googleFixture(t, async () => Response.json({}, { status: 503 }))
+  const original = privateEnv.CONFIG.put
+  let draftWrites = 0
+  privateEnv.CONFIG.put = async (key, value, options) => { if (key.startsWith('mail-draft:')) draftWrites++; return original(key, value, options) }
+  const body = { key: 'quota-regression', to: 'partial-address', body: 'recoverable draft', html: '<p>recoverable draft</p>', attachments: [] }
+  const put = () => new Request('https://crm.test/api/google/gmail/draft', { method: 'PUT', headers: { authorization: 'Bearer qa-token', 'content-type': 'application/json' }, body: JSON.stringify(body) })
+  for (let i = 0; i < 25; i++) assert.equal((await worker.fetch(put(), privateEnv)).status, 200)
+  assert.equal(draftWrites, 1)
+  body.body = 'new edit'
+  assert.equal((await worker.fetch(put(), privateEnv)).status, 200)
+  assert.equal(draftWrites, 2, 'new edits must be durably saved')
 })
 
 test('queued drafts and mail cannot cross accounts after a user switch', async (t) => {

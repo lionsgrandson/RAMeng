@@ -35,23 +35,27 @@ export function MailComposer({ to = '', subject = '', threadId, files = [], onSe
   const context = draftContext ? `compose:${draftContext}:${threadId || 'new'}` : `compose:${threadId || 'new'}:${to.toLowerCase()}:${subject}`
   const dirty = useRef(false); const sending = useRef(false); const mounted = useRef(true)
   useEffect(() => { onBusyChange?.(busy); return () => onBusyChange?.(false) }, [busy, onBusyChange])
-  const markDirty = () => { dirty.current = true; setDraftStatus('ממתין לשמירת הטיוטה...') }
+  const draftRetry = useRef({ attempts: 0, nextAt: 0 })
+  const deferDraft = () => { const attempts = draftRetry.current.attempts + 1; draftRetry.current = { attempts, nextAt: Date.now() + Math.min(15 * 60000, 10000 * 2 ** Math.min(attempts, 6)) + Math.random() * 5000 } }
+  const markDirty = () => { dirty.current = true; draftRetry.current = { attempts: 0, nextAt: 0 }; setDraftStatus('ממתין לשמירת הטיוטה...') }
   const ownerId = useRef('')
   const draftId = useRef(''); const queue = useRef<Promise<unknown>>(Promise.resolve())
   const snapshot = useRef<MailDraft>({ key: context, to, subject, body: '', html: '', threadId, attachments: [] })
   snapshot.current = { key: context, to: recipient, subject: mailSubject, body: text, html, threadId, attachments, ownerId: ownerId.current }
-  const persist = () => {
+  const persist = (force = false) => {
     if (!dirty.current || sending.current) return queue.current
+    if (!force && (draftRetry.current.attempts >= 5 || Date.now() < draftRetry.current.nextAt)) return queue.current
     const draft = { ...snapshot.current }; dirty.current = false
     if (mounted.current) setDraftStatus('שומר טיוטה...')
     queue.current = queue.current.catch(() => {}).then(async () => {
-      try { const result = await integrationsApi.saveMailDraft({ ...draft, draftId: draftId.current }); draftId.current = result.draft.draftId || ''; if (!result.draft.synced) dirty.current = true; if (mounted.current) setDraftStatus(result.draft.synced ? 'הטיוטה נשמרה במערכת וב-Gmail' : 'הטיוטה נשמרה במערכת · סנכרון Gmail ממתין') }
-      catch { dirty.current = true; if (mounted.current) setDraftStatus('שמירת הטיוטה נכשלה · ניסיון חוזר בעוד רגע') }
+      try { const result = await integrationsApi.saveMailDraft({ ...draft, draftId: draftId.current }); draftId.current = result.draft.draftId || ''; if (!result.draft.synced) { dirty.current = true; deferDraft() } else draftRetry.current = { attempts: 0, nextAt: 0 }; if (mounted.current) setDraftStatus(result.draft.synced ? 'הטיוטה נשמרה במערכת וב-Gmail' : 'הטיוטה נשמרה במערכת · סנכרון Gmail ממתין; ניסיון נוסף בעת עריכה או פתיחה מחדש') }
+      catch { dirty.current = true; deferDraft(); if (mounted.current) setDraftStatus('שמירת הטיוטה נכשלה · ניסיון חוזר מושהה; עריכה או פתיחה מחדש מאפשרות ניסיון נוסף') }
     })
     return queue.current
   }
   useEffect(() => {
     let active = true; mounted.current = true; setSignatureLoaded(false)
+    draftRetry.current = { attempts: 0, nextAt: 0 }
     void getCurrentUser().then(async (user) => { if (!user) throw new Error('Authentication required'); ownerId.current = user.id; return integrationsApi.mailDraft(context) }).then(async ({ draft }) => {
       if (!active) return
       if (draft) { setRecipient(draft.to); setMailSubject(draft.subject); setHtml(draft.html); setText(draft.body); setAttachments(draft.attachments || []); draftId.current = draft.draftId || ''; setDraftStatus('טיוטה שמורה שוחזרה'); setSignatureLoaded(true); return }
@@ -59,10 +63,10 @@ export function MailComposer({ to = '', subject = '', threadId, files = [], onSe
       if (active && signature.enabled && signature.html) { setHtml('<p></p><p>—</p>' + signature.html); setText(new DOMParser().parseFromString(signature.html, 'text/html').body.textContent || '') }
       if (active) setSignatureLoaded(true)
     }).catch(() => { if (active) setError('לא ניתן לטעון טיוטה או חתימה. נסו לפתוח שוב לפני תחילת הכתיבה.') })
-    return () => { active = false; mounted.current = false; void persist() }
+    return () => { active = false; mounted.current = false; void persist(true) }
   }, [context, loadAttempt])
   useEffect(() => { if (!signatureLoaded || !dirty.current || busy) return; const timer = window.setTimeout(() => void persist(), 900); return () => window.clearTimeout(timer) }, [recipient, mailSubject, html, attachments, signatureLoaded, busy])
-  useEffect(() => { const timer = window.setInterval(() => { if (dirty.current && !sending.current) void persist() }, 10000); return () => window.clearInterval(timer) }, [])
+  useEffect(() => { const timer = window.setInterval(() => { if (document.visibilityState === 'visible' && navigator.onLine && dirty.current && !sending.current) void persist() }, 10000); return () => window.clearInterval(timer) }, [])
   const add = async (getFiles: () => Promise<MailAttachment[]>) => {
     setBusy(true); setError('')
     try { const added = await getFiles(); markDirty(); setAttachments((current) => { const next = [...current, ...added]; if (next.length > 10 || next.reduce((total, file) => total + file.data.length * 3 / 4, 0) > MAX_ATTACHMENT_BYTES) { setError('ניתן לצרף עד 10 קבצים ובסך הכול עד 18 MB'); return current } return next }) } catch (e) { setError(e instanceof Error ? e.message : 'צירוף הקובץ נכשל') } finally { setBusy(false) }

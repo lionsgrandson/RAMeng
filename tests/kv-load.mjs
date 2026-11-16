@@ -25,9 +25,10 @@ const originalFetch = globalThis.fetch
 const originalLog = console.log
 const originalError = console.error
 globalThis.fetch = async url => {
+  if (new URL(url).origin === 'https://gmail.googleapis.com') return Response.json({}, { status: 503 })
   assert.equal(new URL(url).origin, 'https://synthetic.supabase.co')
   if (new URL(url).pathname === '/auth/v1/user') return Response.json({ id: 'owner' })
-  if (new URL(url).pathname === '/rest/v1/memberships') return Response.json([{ role: 'viewer' }])
+  if (new URL(url).pathname === '/rest/v1/memberships') return Response.json([{ role: 'admin' }])
   return Response.json([])
 }
 console.log = () => {}
@@ -76,6 +77,24 @@ try {
     results.push({ name, workload: '10 navigation bursts of 25 concurrent status requests in a warm isolate; excludes browser deduplication', counts })
   }
   assert.ok(results[4].counts.read < results[3].counts.read)
+  for (const [name, worker] of [['draft-outage-baseline', (await import(historicalModule('8c8d173', 'worker/src/index.js'))).default], ['draft-outage-current', current]]) {
+    const counts = { read: 0, write: 0, delete: 0, list: 0 }
+    const values = new Map([
+      ['rameng:admin-config:v1', { supabaseUrl: 'https://synthetic.supabase.co', supabaseAnonKey: 'synthetic', googleClientId: 'synthetic', googleClientSecret: 'synthetic' }],
+      ['rameng:google-tokens:v2:owner', { access_token: 'synthetic', email: 'owner@example.test', expires_at: Date.now() + 3600000 }],
+    ])
+    const env = { CONFIG: {
+      get: async key => { counts.read++; return values.get(key) || null },
+      put: async (key, value) => { counts.write++; values.set(key, JSON.parse(value)) },
+    } }
+    for (let retry = 0; retry < 25; retry++) {
+      const response = await worker.fetch(new Request('https://synthetic.test/api/google/gmail/draft', { method: 'PUT', headers: { authorization: 'Bearer synthetic', 'content-type': 'application/json' }, body: JSON.stringify({ key: 'synthetic', to: 'incomplete', body: 'unchanged', html: '<p>unchanged</p>', attachments: [] }) }), env)
+      assert.equal(response.status, 200)
+    }
+    results.push({ name, workload: '25 sequential identical draft retries during a mocked Gmail 503; excludes browser backoff', counts })
+  }
+  assert.equal(results[6].counts.write, 1)
+  assert.equal(results[5].counts.write, 25)
 } finally {
   globalThis.fetch = originalFetch
   console.log = originalLog

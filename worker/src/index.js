@@ -814,8 +814,12 @@ async function handleGmailDraft(request, env, config) {
   const payload = await buildGmailMessage(body, env, config, user.id, true)
   const previous = await readMailDraft(env, key)
   const saved = { ...body, html: cleanMailHtml(body.html || ''), attachments: validatedAttachments(body.attachments), draftId: cleanString(body.draftId) || previous?.draftId || '', updatedAt: new Date().toISOString(), synced: false }
+  const content = value => JSON.stringify([value.to || '', value.subject || '', value.body || '', value.html || '', value.threadId || '', value.attachments || []])
+  const unchanged = previous && content(previous) === content(saved)
+  if (unchanged && previous.synced) return apiJson(request, { draft: previous })
+  if (unchanged) saved.updatedAt = previous.updatedAt
   if (new TextEncoder().encode(JSON.stringify(saved)).length > 24 * 1024 * 1024) throw Object.assign(new Error('Draft exceeds storage limit'), { status: 413 })
-  await env.CONFIG.put(key, JSON.stringify(saved))
+  if (!unchanged) await env.CONFIG.put(key, JSON.stringify(saved))
   rememberDraft(env, key, saved)
   try {
     let response = await googleFetch(env, config, user.id, `https://gmail.googleapis.com/gmail/v1/users/me/drafts${saved.draftId ? '/' + encodeURIComponent(saved.draftId) : ''}`, { method: saved.draftId ? 'PUT' : 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: payload }) })
