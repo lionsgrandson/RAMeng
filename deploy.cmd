@@ -56,6 +56,8 @@ call npm test
 if errorlevel 1 goto :fail
 node --check worker/src/index.js
 if errorlevel 1 goto :fail
+node tests/preserve-deployed-assets.mjs
+if errorlevel 1 goto :fail
 call npm run build
 if errorlevel 1 goto :fail
 

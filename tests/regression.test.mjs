@@ -601,6 +601,7 @@ const projectLinkRequest = (body, method = 'PUT') => new Request('https://qa.exa
 
 test('Inbox lists actual incoming messages with recipient, unread state and pagination', async t => {
   const { privateEnv } = projectMailFixture(t, async url => {
+    if (url.pathname.endsWith('/labels/INBOX')) return Response.json({messagesUnread:1})
     if (url.pathname.endsWith('/messages')) { assert.equal(url.searchParams.get('labelIds'), 'INBOX'); assert.equal(url.searchParams.get('pageToken'), 'next'); return Response.json({ messages: [{ id: 'incoming', threadId: 'thread' }], nextPageToken: 'more' }) }
     return Response.json({ id: 'incoming', threadId: 'thread', labelIds: ['INBOX', 'UNREAD'], internalDate: '1791277200000', payload: { headers: [{ name: 'From', value: 'contractor@example.test' }, { name: 'To', value: 'qa@example.test' }, { name: 'Subject', value: 'שלום' }] }, snippet: 'Preview' })
   })

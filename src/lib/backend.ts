@@ -1,3 +1,4 @@
+import { diagnosticContext } from './diagnostics'
 import { storageObjectName } from './storageObjectName'
 import { createClient, type RealtimeChannel, type SupabaseClient, type User } from '@supabase/supabase-js'
 import type { RuntimeConfig } from './runtime'
@@ -29,8 +30,10 @@ function translatedBackendError(error: unknown, fallback: string) {
 function localizedBackendError(error: unknown, fallback: string) {
   const result = translatedBackendError(error, fallback)
   const source = error as {message?: string; code?: string} | null
-  Object.defineProperty(result, 'diagnostic', {value:{message:source?.message || result.message,code:source?.code || result.name}})
-  if (typeof window !== 'undefined' && !['שמירת סביבת העבודה נכשלה','שמירת הנתונים נכשלה'].includes(fallback)) window.dispatchEvent(new CustomEvent('rameng-backend-error', {detail:source?.message || result.message}))
+  const network = /fetch|network/i.test(source?.message || '')
+  const diagnostic = diagnosticContext('database-or-storage',{message:source?.message || result.message,code:source?.code || (network ? 'NETWORK_ERROR' : 'DATABASE_ERROR'),dependency:'supabase',category:network ? 'network' : 'database',responseReceived:!network && Boolean(source?.code),errorName:error instanceof Error ? error.name : 'Error'})
+  Object.defineProperty(result, 'diagnostic', {value:diagnostic})
+  if (typeof window !== 'undefined' && !['שמירת סביבת העבודה נכשלה','שמירת הנתונים נכשלה'].includes(fallback)) window.dispatchEvent(new CustomEvent('rameng-backend-error', {detail:{message:source?.message || result.message,diagnostic}}))
   return result
 }
 
@@ -114,7 +117,8 @@ export async function signOut() {
 
 export async function getAccessToken() {
   if (!client) return ''
-  const { data } = await client.auth.getSession()
+  const { data, error } = await client.auth.getSession()
+  if (error) throw error
   return data.session?.access_token || ''
 }
 

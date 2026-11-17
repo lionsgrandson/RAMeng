@@ -1,3 +1,4 @@
+import { recoverableLazy } from '../lib/assetRecovery'
 import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Mail, Paperclip, RefreshCw, Send, X } from 'lucide-react'
 import { integrationsApi, type GmailApiMessage, type GmailThreadSummary, type GoogleCalendarEvent, type MailAttachment, type MailDraft, type MailProjectContext, type MailSendResult } from '../lib/api'
@@ -6,7 +7,7 @@ import { fileAttachment, MAX_ATTACHMENT_BYTES, storedAttachment } from '../lib/g
 import type { Contact, FileRecord } from '../types'
 import EmailMessage, { emailAddressLabel, emailText } from './EmailMessage'
 import { dateTimeLabel, EmptyState } from './common'
-const RichTextEditor = lazy(() => import('./RichTextEditor'))
+const RichTextEditor = recoverableLazy(() => import('./RichTextEditor'))
 
 export function MailComposer({ to = '', subject = '', threadId, files = [], onSent, draftContext, projectContext, contacts = [], onBusyChange }: { onBusyChange?: (busy: boolean) => void; projectContext?: MailProjectContext; contacts?: Contact[]; draftContext?: string; to?: string; subject?: string; threadId?: string; files?: FileRecord[]; onSent?: (result: MailSendResult, to: string) => Promise<void> | void }) {
   const [html, setHtml] = useState('<p></p>'); const [text, setText] = useState(''); const [signatureLoaded, setSignatureLoaded] = useState(false)

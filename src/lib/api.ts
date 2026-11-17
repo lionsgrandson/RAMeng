@@ -1,19 +1,28 @@
+import { diagnosticContext, appVersion } from './diagnostics'
 import { errorReportingOrganization, reportClientError } from './errorReporting'
 import { getAccessToken, getRuntime } from './backend'
 
 const pendingStatus = new Map<string, Promise<unknown>>()
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const token = await getAccessToken()
+  const requestId = crypto.randomUUID()
+  let token: string | null
+  let authTimer: ReturnType<typeof setTimeout> | undefined
+  try { token = await Promise.race([getAccessToken(), new Promise<never>((_, reject) => { authTimer = setTimeout(() => reject(new DOMException('Authentication deadline', 'TimeoutError')), 10000) })]) } catch (cause) {
+    const error = new Error('שירות ההתחברות אינו זמין כרגע.')
+    Object.defineProperty(error, 'diagnostic', {value: diagnosticContext(path, {requestId,category:cause instanceof Error && cause.name === 'TimeoutError' ? 'timeout' : 'auth_transport',dependency:'supabase_auth',errorName:cause instanceof Error ? cause.name : 'Error'})})
+    if (path !== '/api/application-errors') void reportClientError(path.split('?')[0], error)
+    throw error
+  } finally { clearTimeout(authTimer) }
   const base = getRuntime()?.apiBase || ''
-  if (path !== '/api/integrations/status') return executeRequest<T>(path, init, token, base)
-  const key = JSON.stringify([base, errorReportingOrganization(), token])
+  if (!['/api/integrations/status', '/api/google/gmail/unread'].includes(path) || (init.method && init.method !== 'GET')) return executeRequest<T>(path, init, token, base, requestId)
+  const key = JSON.stringify([base, errorReportingOrganization(), token, path])
   const pending = pendingStatus.get(key)
   if (pending) return pending as Promise<T>
-  const operation = executeRequest<T>(path, init, token, base)
+  const operation = executeRequest<T>(path, init, token, base, requestId)
   pendingStatus.set(key, operation)
   try { return await operation } finally { if (pendingStatus.get(key) === operation) pendingStatus.delete(key) }
 }
-async function executeRequest<T>(path: string, init: RequestInit, token: string | null, base: string): Promise<T> {
+async function executeRequest<T>(path: string, init: RequestInit, token: string | null, base: string, requestId: string): Promise<T> {
   let response: Response
   try {
     response = await fetch(`${base}${path}`, {
@@ -21,6 +30,7 @@ async function executeRequest<T>(path: string, init: RequestInit, token: string 
       signal: init.signal || AbortSignal.timeout(30000),
       headers: {
         'content-type': 'application/json',
+        'x-request-id': requestId, 'x-app-version': appVersion,
         ...(errorReportingOrganization() ? {'x-rameng-org': errorReportingOrganization()} : {}),
         ...(token ? { authorization: `Bearer ${token}` } : {}),
         ...(init.headers || {}),
@@ -28,21 +38,17 @@ async function executeRequest<T>(path: string, init: RequestInit, token: string 
     })
   } catch (cause) {
     const error = new Error('לא ניתן להתחבר כרגע. נסו שוב.')
-    Object.defineProperty(error, 'diagnostic', { value: {
-      code: 'NETWORK_ERROR',
-      message: `${(init.method || 'GET').toUpperCase()} ${path.split('?')[0]}: ${cause instanceof Error ? cause.name : 'Fetch failed'}; online=${typeof navigator === 'undefined' ? 'unknown' : navigator.onLine}; visibility=${typeof document === 'undefined' ? 'unknown' : document.visibilityState}`,
-    } })
-    void reportClientError(path.split('?')[0], error)
+    const name = cause instanceof Error ? cause.name : 'Error'
+    Object.defineProperty(error, 'diagnostic', { value: diagnosticContext(path, {requestId, method:init.method || 'GET', category:name === 'TimeoutError' ? 'timeout' : name === 'AbortError' ? 'cancelled' : navigator.onLine ? 'network' : 'offline',errorName:name}) })
+    if (path !== '/api/application-errors' && name !== 'AbortError') void reportClientError(path.split('?')[0], error)
     throw error
   }
 
-  const body = await response.json().catch(() => ({})) as T & { error?: string; diagnosticQueued?: boolean; requestId?: string; category?: string }
-  if (!response.ok) {
+  let malformed = false
+  const body = await response.json().catch(() => { malformed = true; return {} }) as T & { error?: string; diagnosticQueued?: boolean; requestId?: string; category?: string; workerVersion?: string; dependency?: string }
+  if (!response.ok || malformed) {
     const error = new Error(body.error || 'הפעולה נכשלה.')
-    Object.defineProperty(error, 'diagnostic', { value: {
-      code: `HTTP_${response.status}`,
-      message: `${(init.method || 'GET').toUpperCase()} ${path.split('?')[0]}: ${body.error || 'Request failed'}; request=${body.requestId || 'unknown'}; category=${body.category || 'unknown'}`,
-    } })
+    Object.defineProperty(error, 'diagnostic', { value: diagnosticContext(path, {code:malformed && response.ok ? 'INVALID_RESPONSE' : `HTTP_${response.status}`,requestId:response.headers.get('x-request-id') || body.requestId || requestId,workerVersion:response.headers.get('x-worker-version') || body.workerVersion || 'unknown',method:init.method || 'GET',status:response.status,category:body.category || (malformed ? 'http_invalid_response' : 'http_error'),dependency:body.dependency || 'worker',responseReceived:true}) })
     if (path !== '/api/application-errors' && !body.diagnosticQueued && response.status !== 401 && response.status !== 403) void reportClientError(path.split('?')[0], error)
     throw error
   }
@@ -151,7 +157,8 @@ export interface AdminConfig {
 export async function bootstrapServer(payload: AdminConfig & { setupToken: string }) {
   const base = String(import.meta.env.VITE_API_BASE || '')
   const response = await fetch(`${base}/api/admin/bootstrap`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) })
-  const body = await response.json().catch(() => ({})) as { ok?: boolean; error?: string }
+  let malformed = false
+  const body = await response.json().catch(() => { malformed = true; return {} }) as { ok?: boolean; error?: string }
   if (!response.ok) throw new Error(body.error || 'שמירת ההגדרה נכשלה')
   return body
 }

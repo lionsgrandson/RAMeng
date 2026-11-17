@@ -26,6 +26,7 @@ export function observeKv(env, context) {
       try { return await target[property](...args) }
       catch (error) {
         console.error(JSON.stringify({ event: 'kv_failure', ...context, namespace: 'CONFIG', namespaceId: env.CONFIG_NAMESPACE_ID || '7676674ec22a440d8d946a8fe393775b', operation, category: failureCategory(error) }))
+        if (error && typeof error === 'object') { error.dependency = 'cloudflare_kv'; error.category = failureCategory(error) }
         throw error
       }
     }

@@ -1,3 +1,4 @@
+import { upstreamFetch, upstreamJson, gmailUnreadResponse } from './upstream.js'
 import { queueDriveUpload, runDriveQueue } from "./driveQueue.js"
 import { cachedGoogleRead, googleReadHash, refreshGoogleReads } from "./googleSync.js"
 import { scheduledJobs } from "./cronSchedule.js"
@@ -24,8 +25,9 @@ const normalizeOrigin = (request) => request.headers.get('origin') || '*'
 const corsHeaders = (request) => ({
   'access-control-allow-origin': normalizeOrigin(request),
   'access-control-allow-methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
-  'access-control-allow-headers': 'authorization,content-type,x-rameng-org',
+  'access-control-allow-headers': 'authorization,content-type,x-rameng-org,x-request-id,x-app-version',
   'access-control-max-age': '86400',
+  'access-control-expose-headers': 'x-request-id,x-worker-version',
   vary: 'Origin',
 })
 const apiJson = (request, data, status = 200) => json(data, status, { ...corsHeaders(request), 'cache-control': 'no-store' })
@@ -81,15 +83,15 @@ function developerEmails(config) {
 
 async function getAuthenticatedUser(request, env, config) {
   const auth = request.headers.get('authorization') || ''
-  if (!auth.startsWith('Bearer ')) throw Object.assign(new Error('נדרשת התחברות'), { status: 401 })
+  if (!auth.startsWith('Bearer ')) throw Object.assign(new Error('נדרשת התחברות'), { status: 401, category:'session_invalid',dependency:'supabase_auth' })
   if (!config.supabaseUrl || !config.supabaseAnonKey) throw Object.assign(new Error('השירות אינו זמין כרגע.'), { status: 503 })
-  const response = await fetch(`${config.supabaseUrl.replace(/\/$/, '')}/auth/v1/user`, {
+  const response = await upstreamFetch('supabase_auth', `${config.supabaseUrl.replace(/\/$/, '')}/auth/v1/user`, {
     signal: AbortSignal.timeout(10000),
     headers: { authorization: auth, apikey: config.supabaseAnonKey },
   })
-  if (!response.ok) throw Object.assign(new Error(response.status >= 500 || response.status === 429 ? 'שירות ההתחברות אינו זמין כרגע' : 'ההתחברות אינה תקפה'), { status: response.status >= 500 || response.status === 429 ? 503 : 401 })
-  const user = await response.json()
-  if (!user?.id) throw Object.assign(new Error('המשתמש אינו תקף'), { status: 401 })
+  if (!response.ok) throw Object.assign(new Error(response.status >= 500 || response.status === 429 ? 'שירות ההתחברות אינו זמין כרגע' : 'ההתחברות אינה תקפה'), { status: response.status >= 500 || response.status === 429 ? 503 : 401, category:response.status >= 500 || response.status === 429 ? 'auth_unavailable' : 'session_invalid', dependency:'supabase_auth' })
+  const user = await upstreamJson(response, 'supabase_auth')
+  if (!user?.id) throw Object.assign(new Error('המשתמש אינו תקף'), { status: 401, category:'session_invalid',dependency:'supabase_auth' })
   return user
 }
 
@@ -162,7 +164,7 @@ async function currentMembership(request, env, config, user, orgId) {
   url.searchParams.set('select', 'role,permissions')
   url.searchParams.set('user_id', `eq.${user.id}`)
   if (orgId) url.searchParams.set('org_id', `eq.${orgId}`)
-  const response = await fetch(url.toString(), {
+  const response = await upstreamFetch('supabase_auth', url.toString(), {
     signal: AbortSignal.timeout(10000),
     headers: {
       authorization: auth,
@@ -288,10 +290,10 @@ async function validGoogleAccessToken(env, config, userId, force = false, stored
 }
 async function refreshGoogleAccessToken(env, config, userId, force = false, knownTokens) {
   const stored = knownTokens || await googleTokens(env, userId)
-  if (!stored?.refresh_token && !stored?.access_token) throw Object.assign(new Error('Google Workspace עדיין לא מחובר לחשבון שלך'), { status: 409 })
+  if (!stored?.refresh_token && !stored?.access_token) throw Object.assign(new Error('Google Workspace עדיין לא מחובר לחשבון שלך'), { status: 409, category: 'reconnect_required', dependency: 'google_oauth' })
   if (!force && stored.access_token && Number(stored.expires_at || 0) > Date.now() + 60_000) return stored.access_token
-  if (!stored.refresh_token) throw Object.assign(new Error('חיבור Google שלך פג. יש להתחבר מחדש בהגדרות.'), { status: 409 })
-  const response = await fetch('https://oauth2.googleapis.com/token', {
+  if (!stored.refresh_token) throw Object.assign(new Error('חיבור Google שלך פג. יש להתחבר מחדש בהגדרות.'), { status: 409, category: 'reconnect_required', dependency: 'google_oauth' })
+  const response = await upstreamFetch('google_oauth', 'https://oauth2.googleapis.com/token', {
     signal: AbortSignal.timeout(10000),
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
@@ -302,8 +304,8 @@ async function refreshGoogleAccessToken(env, config, userId, force = false, know
       grant_type: 'refresh_token',
     }),
   })
-  const body = await response.json()
-  if (!response.ok || !body.access_token) throw Object.assign(new Error('לא ניתן לרענן את חיבור Google'), { status: 502, category: body.error === 'invalid_grant' ? 'reconnect_required' : ['invalid_client', 'unauthorized_client'].includes(body.error) ? 'configuration_error' : 'temporarily_unavailable' })
+  const body = await upstreamJson(response, 'google_oauth')
+  if (!response.ok || !body.access_token) throw Object.assign(new Error('לא ניתן לרענן את חיבור Google'), { status: body.error === 'invalid_grant' ? 409 : response.status === 429 ? 429 : 503, dependency:'google_oauth', category: body.error === 'invalid_grant' ? 'reconnect_required' : ['invalid_client', 'unauthorized_client'].includes(body.error) ? 'configuration_error' : response.status === 429 ? 'provider_rate_limit' : 'temporarily_unavailable' })
   const next = { ...stored, access_token: body.access_token, expires_at: Date.now() + Number(body.expires_in || 3600) * 1000 }
   await putGoogleTokens(env, userId, next)
   return next.access_token
@@ -312,10 +314,10 @@ async function refreshGoogleAccessToken(env, config, userId, force = false, know
 async function googleFetch(env, config, userId, url, init = {}) {
   const execute = async () => {
     let token = await validGoogleAccessToken(env, config, userId)
-    let response = await fetch(url, { signal: AbortSignal.timeout(20000), ...init, headers: { authorization: `Bearer ${token}`, ...(init.headers || {}) } })
+    let response = await upstreamFetch('google', url, { signal: AbortSignal.timeout(20000), ...init, headers: { authorization: `Bearer ${token}`, ...(init.headers || {}) } })
     if (response.status === 401) {
       token = await validGoogleAccessToken(env, config, userId, true)
-      response = await fetch(url, { signal: AbortSignal.timeout(20000), ...init, headers: { authorization: `Bearer ${token}`, ...(init.headers || {}) } })
+      response = await upstreamFetch('google', url, { signal: AbortSignal.timeout(20000), ...init, headers: { authorization: `Bearer ${token}`, ...(init.headers || {}) } })
     }
     return response
   }
@@ -526,9 +528,7 @@ async function handleGmailThread(request, env, config) {
 
 async function inboxUnread(env, config, userId) {
   const response = await googleFetch(env, { ...config, dailyGoogleRead: false }, userId, 'https://gmail.googleapis.com/gmail/v1/users/me/labels/INBOX')
-  const body = await response.json()
-  if (!response.ok) throw Object.assign(new Error('טעינת מספר ההודעות שלא נקראו נכשלה'), { status: response.status })
-  return Number(body.messagesUnread || 0)
+  return gmailUnreadResponse(response)
 }
 
 async function handleGmailState(request, env, config) {
@@ -1908,18 +1908,28 @@ export default {
     })())
   },
   async fetch(request, env) {
-    const requestId = crypto.randomUUID()
+    const suppliedId = request.headers.get('x-request-id') || ''
+    const requestId = /^[a-zA-Z0-9-]{16,64}$/.test(suppliedId) ? suppliedId : crypto.randomUUID()
+    const workerVersion = env.WORKER_VERSION?.id || 'local'
+    const started = Date.now()
     const observed = new URL(request.url).pathname.startsWith('/api/') ? observeKv(env, { endpoint: new URL(request.url).pathname, requestId }) : null
     if (observed) env = observed.env
+    if (observed) console.log(JSON.stringify({event:'api_request',requestId,workerVersion,method:request.method,endpoint:new URL(request.url).pathname}))
     try {
       const url = new URL(request.url)
       if (url.pathname.startsWith('/api/')) {
         const response = await routeApi(request, env)
         response.headers.set('x-request-id', requestId)
+        response.headers.set('x-worker-version', workerVersion)
+        console.log(JSON.stringify({event:'api_response',requestId,workerVersion,method:request.method,endpoint:url.pathname,status:response.status,durationMs:Date.now()-started}))
         return response
       }
       if (env.ASSETS) {
         const response = await env.ASSETS.fetch(request)
+        // SPA fallback must never turn a removed module into cacheable HTML/200.
+        if (url.pathname.startsWith('/assets/') && (response.headers.get('content-type') || '').includes('text/html')) {
+          return new Response('Asset unavailable', {status:404,headers:{'content-type':'text/plain','cache-control':'no-store'}})
+        }
         // Prevent old HTML documents from referencing removed, hashed JS chunks
         // after a deployment; versioned static assets keep their usual caching.
         if ((request.headers.get('accept') || '').includes('text/html')) {
@@ -1934,17 +1944,12 @@ export default {
       const requestedStatus = Number(error?.status || (['quota_exceeded', 'timeout'].includes(failureCategory(error)) ? 503 : 500))
       const status = Number.isInteger(requestedStatus) && requestedStatus >= 400 && requestedStatus <= 599 ? requestedStatus : 500
       // Provider exceptions can contain tokens or message content. Log metadata only.
-      console.error('API request failed', { status, path: new URL(request.url).pathname, requestId, category: failureCategory(error) })
+      console.error('API request failed', { status, path: new URL(request.url).pathname, requestId, workerVersion, method: request.method, durationMs:Date.now()-started, category: error?.category || (['quota_exceeded','timeout'].includes(failureCategory(error)) || error?.status ? failureCategory(error) : 'internal_error'), dependency: error?.dependency || 'worker', providerStatus: error?.providerStatus, errorName: ['Error','TypeError','SyntaxError','TimeoutError','AbortError'].includes(error?.name) ? error.name : 'Error' })
       const message = status === 500 ? 'הפעולה נכשלה. נסו שוב מאוחר יותר.' : status === 503 ? 'השירות אינו זמין כרגע. נסו שוב מאוחר יותר.' : error instanceof Error ? error.message : 'הפעולה נכשלה.'
-      let diagnosticQueued = false
-      if (status >= 500 && failureCategory(error) !== 'quota_exceeded' && request.headers.get('authorization') && request.headers.get('x-rameng-org') && new URL(request.url).pathname !== '/api/application-errors') {
-        try {
-          const diagnosticRequest = new Request(`${new URL(request.url).origin}/api/application-errors`, {method:'POST',headers:{authorization:request.headers.get('authorization'),'content-type':'application/json'},body:JSON.stringify({orgId:request.headers.get('x-rameng-org'),operation:new URL(request.url).pathname,code:`HTTP_${status}`,message:error instanceof Error?error.message:'Server error'})})
-          const reportResponse = await handleApplicationError(diagnosticRequest,env,await readConfig(env))
-          diagnosticQueued = reportResponse.ok
-        } catch { console.error('Application diagnostic queue unavailable') }
-      }
-      return apiJson(request, { error: message, requestId, category: failureCategory(error), ...(diagnosticQueued?{diagnosticQueued:true}:{}) }, status)
+      const response = apiJson(request, { error: message, requestId, workerVersion, category: error?.category || (['quota_exceeded','timeout'].includes(failureCategory(error)) || error?.status ? failureCategory(error) : 'internal_error'), dependency: error?.dependency || 'worker' }, status)
+      response.headers.set('x-request-id', requestId)
+      response.headers.set('x-worker-version', workerVersion)
+      return response
     } finally {
       observed?.finish()
     }

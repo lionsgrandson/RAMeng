@@ -20,7 +20,7 @@ await check('live HTML matches the verified production build and excludes QA fix
   assert.doesNotMatch(content, /qa-user|qa-incoming|VITE_QA_FIXTURES|tests\/fixtures/)
 })
 for (const file of await readdir(buildDir, { recursive: true, withFileTypes: true })) {
-  if (!file.isFile() || file.name === 'index.html') continue
+  if (!file.isFile() || ['index.html','_headers'].includes(file.name)) continue
   const parent = file.parentPath || file.path
   const path = join(parent, file.name)
   const relative = path.slice(buildDir.length + 1).replaceAll('\\', '/')
@@ -58,12 +58,27 @@ for (const [path, method, body] of [
 ]) await check(`anonymous access denied: ${method} ${path.split('?')[0]}`, async () => {
   const response = await fetch(`${base}${path}`, { method, headers: { 'content-type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) })
   assert.equal(response.status, 401)
+  assert.ok(response.headers.get('x-request-id'))
+  assert.ok(response.headers.get('x-worker-version'))
+})
+await check('HTML and application version bypass browser caches',async()=>{
+  for (const path of ['/','/index.html','/app-version.json']) {
+    const response=await fetch(`${base}${path}`)
+    assert.match(response.headers.get('cache-control') || '',/no-store/)
+  }
+})
+await check('missing JavaScript assets return 404 without SPA HTML or immutable caching',async()=>{
+  const response=await fetch(`${base}/assets/removed-smoke-chunk.js`)
+  assert.equal(response.status,404);assert.match(response.headers.get('cache-control') || '',/no-store/)
+  assert.doesNotMatch(response.headers.get('content-type') || '',/html/)
 })
 await check('preflight supports folder moves and rename', async () => {
   const response = await fetch(`${base}/api/google/drive/folder`, { method: 'OPTIONS', headers: { origin: base, 'access-control-request-method': 'PATCH' } })
   assert.equal(response.status, 204)
   assert.match(response.headers.get('access-control-allow-methods'), /PATCH/)
+  assert.match(response.headers.get('access-control-allow-headers'),/x-request-id/)
+  assert.match(response.headers.get('access-control-expose-headers'),/x-worker-version/)
 })
 await mkdir('artifacts/audit', { recursive: true })
-await writeFile(`artifacts/audit/${evidenceName}-20261113.json`, JSON.stringify({ base, sourceCommit: process.env.RAMENG_RELEASE_SHA || '', checkedAt: new Date().toISOString(), results }, null, 2))
+await writeFile(`artifacts/audit/${evidenceName}-${new Date().toISOString().slice(0,10).replaceAll('-','')}.json`, JSON.stringify({ base, sourceCommit: process.env.RAMENG_RELEASE_SHA || '', checkedAt: new Date().toISOString(), results }, null, 2))
 console.log(`${results.length}/${results.length} production smoke checks passed`)

@@ -26,4 +26,7 @@ id = "7676674ec22a440d8d946a8fe393775b"
 directory = "../dist"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
-run_worker_first = [ "/api/*" ]
+run_worker_first = [ "/api/*", "/assets/*" ]
+
+[version_metadata]
+binding = "WORKER_VERSION"

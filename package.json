@@ -8,17 +8,18 @@
     "build": "tsc -b && vite build",
     "lint": "tsc -b --pretty false",
     "qa": "vite --config tests/qa.config.mjs",
-    "test": "node --test tests/regression.test.mjs tests/kv-maintenance.test.mjs tests/incident-resilience.test.mjs",
+    "test": "node --test tests/regression.test.mjs tests/kv-maintenance.test.mjs tests/incident-resilience.test.mjs tests/new-incidents.test.mjs",
     "test:kv-load": "node tests/kv-load.mjs",
     "test:status-browser": "node tests/status-browser.mjs",
     "preview": "vite preview --host 0.0.0.0",
     "mobile:init": "npx cap add android",
     "mobile:sync": "npm run build && cap sync android",
     "mobile:apk": "npm run mobile:sync && cd android && gradlew.bat assembleDebug",
-    "deploy:cloudflare": "npm run lint && npm test && npm run build && npm --prefix worker ci && npm --prefix worker run deploy",
-    "deploy:staging": "npm run build:preview && npx --prefix worker wrangler versions upload --config worker/wrangler.toml --profile rameng --keep-vars --preview-alias staging",
+    "deploy:cloudflare": "npm run lint && npm test && node tests/preserve-deployed-assets.mjs && npm run build && npm --prefix worker ci && npm --prefix worker run deploy",
+    "deploy:staging": "node tests/preserve-deployed-assets.mjs && npm run build:preview && npx --prefix worker wrangler versions upload --config worker/wrangler.toml --profile rameng --keep-vars --preview-alias staging",
     "build:preview": "tsc -b && vite build --mode preview",
-    "upload:preview": "npm run build:preview && npx --prefix worker wrangler versions upload --config worker/wrangler.toml --preview-alias meeting-crm"
+    "upload:preview": "npm run build:preview && npx --prefix worker wrangler versions upload --config worker/wrangler.toml --preview-alias meeting-crm",
+    "test:new-incidents-browser": "node tests/new-incidents-browser.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.2",

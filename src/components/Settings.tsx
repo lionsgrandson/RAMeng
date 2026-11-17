@@ -1,3 +1,4 @@
+import { recoverableLazy } from '../lib/assetRecovery'
 import PasswordInput from './PasswordInput'
 import { errorReportingOrganization } from '../lib/errorReporting'
 import DisplaySettings from './DisplaySettings'
@@ -10,7 +11,7 @@ import type { Workspace } from '../types'
 import { Chip, Field } from './common'
 
 import { DriveSettingsPanel } from './DriveConnection'
-const RichTextEditor = lazy(() => import('./RichTextEditor'))
+const RichTextEditor = recoverableLazy(() => import('./RichTextEditor'))
 
 type SettingsTab = 'profile' | 'display' | 'google' | 'organization' | 'system'
 

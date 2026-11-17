@@ -1,3 +1,4 @@
+import {useUnreadMail} from './lib/useUnreadMail'
 import { flushPendingReports, reportClientError, setErrorReportingContext } from './lib/errorReporting'
 import ExternalTaskPage from './components/ExternalTaskPage'
 import { DisplayContext, useDisplayPreferences } from './components/DisplaySettings'
@@ -312,7 +313,7 @@ export default function App() {
       const failure = event.reason instanceof Error ? event.reason : new Error(String(event.reason || 'Unhandled promise error'))
       if (!externalExtensionFailure(failure.message, failure.stack || '')) void reportClientError('promise-error', failure)
     }
-    const onBackend = (event: Event) => { void reportClientError('database-or-storage', new Error((event as CustomEvent).detail || 'Backend error')) }
+    const onBackend = (event: Event) => { void reportClientError('database-or-storage', Object.assign(new Error((event as CustomEvent).detail?.message || 'Backend error'), {diagnostic:(event as CustomEvent).detail?.diagnostic})) }
     window.addEventListener('error', onError); window.addEventListener('unhandledrejection', onPromise); window.addEventListener('rameng-backend-error', onBackend)
     return () => { window.removeEventListener('error', onError); window.removeEventListener('unhandledrejection', onPromise); window.removeEventListener('rameng-backend-error', onBackend) }
   }, [])
@@ -599,16 +600,7 @@ function Sidebar({ page, setPage, workspace, permissions, open, setOpen, user, o
     return () => { window.clearTimeout(timer); desktop.removeEventListener('change', closeOnDesktop); document.removeEventListener('keydown', keydown); unlockScroll(); previous?.focus() }
   }, [open])
   const [reportsOpen, setReportsOpen] = useState(page === 'reports' || page === 'reports-projects' || page === 'reports-finance')
-  const [unreadCount, setUnreadCount] = useState<number | null>(null)
-  useEffect(() => {
-    if (!permissions.communication.view) return
-    let active = true
-    const refresh = () => { void integrationsApi.unreadMail().then(result => { if (active) setUnreadCount(result.unreadCount) }).catch(() => {}) }
-    const update = (event: Event) => setUnreadCount((event as CustomEvent<number>).detail)
-    refresh(); const timer = window.setInterval(refresh, 60000)
-    window.addEventListener('rameng-mail-count', update); window.addEventListener('rameng-google-synced', refresh)
-    return () => { active = false; window.clearInterval(timer); window.removeEventListener('rameng-mail-count', update); window.removeEventListener('rameng-google-synced', refresh) }
-  }, [user.id, permissions.communication.view])
+  const {unreadCount,unreadStale} = useUnreadMail(user.id,permissions.communication.view)
   const [clock, setClock] = useState(() => new Date())
   useEffect(() => {
     if (page === 'reports' || page === 'reports-projects' || page === 'reports-finance') setReportsOpen(true)
@@ -648,7 +640,7 @@ function Sidebar({ page, setPage, workspace, permissions, open, setOpen, user, o
             {reportsOpen && <div className="nav-submenu">{visibleReportItems.map((sub) => { const SubIcon = sub.icon; return <button type="button" key={sub.id} className={page === sub.id ? 'active' : ''} aria-current={page === sub.id ? 'page' : undefined} onClick={() => setPage(sub.id)}><SubIcon /><span>{sub.label}</span></button> })}</div>}
           </div>
         }
-        return <button type="button" key={item.id} className={page === item.id ? 'active' : ''} aria-current={page === item.id ? 'page' : undefined} onClick={() => setPage(item.id)}><Icon /><span>{item.label}</span>{count > 0 && <em aria-label={`${count} פריטים`}>{count}</em>}</button>
+        return <button type="button" key={item.id} className={page === item.id ? 'active' : ''} aria-current={page === item.id ? 'page' : undefined} onClick={() => setPage(item.id)}><Icon /><span>{item.label}{item.id === 'inbox' && unreadStale && <small role="status"> — הספירה אינה מעודכנת</small>}</span>{count > 0 && <em aria-label={`${count} פריטים`}>{count}</em>}</button>
       })}</nav>
       {permissions.tasks.view && <MyTaskNotifications userId={user.id} onTask={id => { const params = new URLSearchParams({ page: 'tasks', task: id }); window.location.hash = `app?${params}`; setPage('tasks') }} />}
       <div className="sidebar-bottom"><div className="profile"><span className="avatar">{userDisplayName(user).slice(0, 2).toUpperCase()}</span><div><strong>{userDisplayName(user)}</strong><small>{user.email}</small></div><button type="button" className="icon-btn" onClick={onLogout} title="יציאה" aria-label="יציאה"><LogOut /></button></div><a href={workspace.settings.website} target="_blank" rel="noreferrer">{workspace.settings.website.replace(/^https?:\/\//, '')}</a></div>

@@ -74,6 +74,10 @@ jobs:
         run: npm run test:status-browser
         env:
           RAMENG_TEST_BROWSER_RUNTIME: ${{ runner.temp }}/rameng-pg-runner
+      - name: New incident browser resilience
+        run: npm run test:new-incidents-browser
+        env:
+          RAMENG_TEST_BROWSER_RUNTIME: ${{ runner.temp }}/rameng-pg-runner
       - name: Upload browser evidence
         if: always()
         uses: actions/upload-artifact@v4
