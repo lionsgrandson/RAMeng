@@ -31,9 +31,11 @@ try {
  broken=false;await context.setOffline(true);await context.setOffline(false)
  await page.getByRole('button',{name:'Unread',exact:true}).click();await page.locator('output').filter({hasText:'8'}).waitFor()
  console.log('PASS recovery after browser offline/online transition')
+ const report500=page.waitForRequest(request=>new URL(request.url()).pathname==='/api/application-errors' && request.postDataJSON()?.events?.some(event=>event.status===500))
  http500=true;await page.getByRole('button',{name:'Unread',exact:true}).click();await page.locator('output').filter({hasText:'failed'}).waitFor()
  await page.clock.runFor(11000)
- assert.equal(reports.at(-1).events[0].status,500);assert.equal(reports.at(-1).events[0].responseReceived,true);assert.ok(reports.at(-1).events[0].requestId)
+ const httpReport=(await report500).postDataJSON()
+ assert.equal(httpReport.events[0].status,500);assert.equal(httpReport.events[0].responseReceived,true);assert.ok(httpReport.events[0].requestId)
  console.log('PASS non-JSON HTTP 500 preserves response status and client correlation')
  http500=false;await page.getByRole('button',{name:'Start polling'}).click();await page.getByTestId('unread-state').filter({hasText:'8:false'}).waitFor()
  await page.evaluate(()=>Object.defineProperty(document,'hidden',{configurable:true,get:()=>true}))
@@ -58,4 +60,25 @@ try {
  assert.equal(await page.getByRole('textbox',{name:'Unsaved draft'}).inputValue(),'keep this unsaved text')
  console.log('PASS session recovery guard prevents repeated reloads')
  await context.close()
+ const concurrent=await browser.newContext();let releaseReport, firstBatch
+ const reportGate=new Promise(resolve=>{releaseReport=resolve})
+ await concurrent.route('**/*',async route=>{
+   const url=new URL(route.request().url())
+   if(url.pathname==='/api/application-errors'){firstBatch=route.request().postDataJSON();await reportGate;return route.fulfill({json:{state:'sent'}})}
+   if(url.pathname.startsWith('/api/') || url.hostname==='synthetic.supabase.co')return route.abort('failed')
+   if(url.origin!=='http://127.0.0.1:4178')return route.abort()
+   return route.continue()
+ })
+ const duringSend=await concurrent.newPage();await duringSend.clock.install();await duringSend.goto('http://127.0.0.1:4178/tests/fixtures/new-incidents.html')
+ await duringSend.getByRole('button',{name:'Outage',exact:true}).click();await duringSend.locator('output').filter({hasText:'failed'}).waitFor()
+ const firstRequest=duringSend.waitForRequest(request=>new URL(request.url()).pathname==='/api/application-errors')
+ await duringSend.clock.runFor(11000);await firstRequest
+ await duringSend.getByRole('button',{name:'Unread',exact:true}).click()
+ await duringSend.waitForFunction(()=>JSON.parse(localStorage.getItem('rameng-pending-errors:synthetic-org:synthetic-user')||'[]').reduce((sum,item)=>sum+item.count,0)===4)
+ releaseReport()
+ await duringSend.waitForFunction(()=>JSON.parse(localStorage.getItem('rameng-pending-errors:synthetic-org:synthetic-user')||'[]').length===1)
+ const remaining=await duringSend.evaluate(()=>JSON.parse(localStorage.getItem('rameng-pending-errors:synthetic-org:synthetic-user'))[0])
+ assert.equal(remaining.count,1);assert.notEqual(remaining.batchId,firstBatch.batchId)
+ console.log('PASS failures arriving during report delivery retain a separate idempotent batch')
+ await concurrent.close()
 }finally{await browser.close();await server.close()}
