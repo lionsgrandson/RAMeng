@@ -1,4 +1,4 @@
-export const DEVELOPER_ERROR_EMAIL = 'mosheschwartzberg@gmail.com'
+export const DEVELOPER_ERROR_EMAIL = 'moshe.sch.idf@gmail.com'
 
 export function safeDiagnostic(value) {
   return String(value || '').split(/\n(?:DETAIL|Failing row|CONTEXT)/i)[0]

@@ -1764,7 +1764,7 @@ test('developer error reports redact secrets, fix the recipient and deduplicate 
   const first=await enqueueApplicationError(local,input,['sender'])
   assert.equal((await enqueueApplicationError(local,input,['other'])).duplicate,true)
   const sent=[];const result=await deliverApplicationError(local,first.key,first.report,{tokens:async()=>({}),send:async(id,message)=>{sent.push({id,message});return new Response('{}')}})
-  assert.equal(result.state,'sent');assert.equal(sent.length,1);assert.equal(sent[0].message.to,'mosheschwartzberg@gmail.com')
+  assert.equal(result.state,'sent');assert.equal(sent.length,1);assert.equal(sent[0].message.to,'moshe.sch.idf@gmail.com')
   assert.doesNotMatch(sent[0].message.body,/private|do-not-send|secret\.test/)
   await deliverApplicationError(local,first.key,first.report,{tokens:async()=>({}),send:async()=>{throw Error('must not resend')}})
   assert.equal(sent.length,1)
@@ -1834,7 +1834,7 @@ test('application error endpoint is authenticated, fixes the recipient and deriv
   const body={orgId:'org',userId:'forged',to:'other@example.test',operation:'workspace-save',code:'P0001',message:'Category error token=do-not-send'}
   assert.equal((await worker.fetch(request('/api/application-errors',body,false),privateEnv)).status,401)
   const response=await worker.fetch(request('/api/application-errors',body),privateEnv)
-  assert.equal(response.status,200);assert.equal((await response.json()).state,'sent');assert.match(mime,/To: mosheschwartzberg@gmail.com/)
+  assert.equal(response.status,200);assert.equal((await response.json()).state,'sent');assert.match(mime,/To: moshe.sch.idf@gmail.com/)
   const item=[...kv.entries()].find(([key])=>key.startsWith('application-error:'))[1]
   assert.equal(item.userId,'qa');assert.doesNotMatch(item.message,/do-not-send/)
   await worker.fetch(request('/api/application-errors',body),privateEnv);assert.equal(sends,1)
