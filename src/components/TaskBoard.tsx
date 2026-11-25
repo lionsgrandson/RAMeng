@@ -35,6 +35,7 @@ type Props = {
   attentionOnly?: boolean
   onClearAttention?: () => void
   canEditProject?: boolean
+  canCreateProjects?: boolean
   startCreating?: boolean
   onProject?: (id: string) => void
   onCreateReportFromTasks?: (taskIds: string[], options: { title: string; templateId: string; periodStart?: string; periodEnd?: string }) => void
@@ -65,7 +66,7 @@ const fieldValue = (task: Task, column: TaskColumn, workspace?: Workspace) => {
   return String((task as unknown as Record<string, unknown>)[column.key] ?? '')
 }
 
-export default function TaskBoard({ canUploadFiles = false, canInviteExternal = false, workspace, setWorkspace, projectId, onEmail, onProject, onContact, canEdit = true, permissions, focusTaskId, attentionOnly = false, onClearAttention, startCreating = false, orgId, canEditProject = false, onCreateReportFromTasks }: Props) {
+export default function TaskBoard({ canUploadFiles = false, canInviteExternal = false, workspace, setWorkspace, projectId, onEmail, onProject, onContact, canEdit = true, permissions, focusTaskId, attentionOnly = false, onClearAttention, startCreating = false, orgId, canEditProject = false, canCreateProjects = false, onCreateReportFromTasks }: Props) {
   const taskPermissions: AreaPermissions = permissions || { view: true, create: canEdit, edit: canEdit, status: canEdit, delete: canEdit }
   const canCreate = taskPermissions.create
   const canUpdate = taskPermissions.edit
@@ -427,7 +428,7 @@ export default function TaskBoard({ canUploadFiles = false, canInviteExternal = 
       <form className="form-grid two-col" onSubmit={submitTask}>
         {selectedParent && <div className="task-parent-note full"><strong>תת-משימה של:</strong> {selectedParent.title}</div>}
         <Field label="שם המשימה"><input name="title" required autoFocus /></Field>
-        {!projectId && !selectedParent && <Field label="פרויקט"><select name="projectId" defaultValue={defaultProjectId}><option value="">ללא פרויקט</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></Field>}
+        {!projectId && !selectedParent && <Field label="פרויקט"><CreatableSelect label="פרויקט" name="projectId" defaultValue={defaultProjectId} emptyOption={{ value: '', label: 'ללא פרויקט' }} options={workspace.projects.map(project => ({ value: project.id, label: project.name }))} extraFields={[{ key: 'address', label: 'כתובת הפרויקט', required: true }]} onCreate={canCreateProjects ? (name, details) => { const address = details.address?.trim(); if (!address) throw new Error('יש להזין כתובת לפרויקט'); const id = uid('project'); setWorkspace(current => ({ ...current, projects: [...current.projects, { id, name, address, clientIds: [], status: 'בתכנון', progress: 0, createdAt: nowIso() }] })); return id } : undefined} /></Field>}
         <Field label="אחראי" hint="אנשי קשר משויכים זמינים לאחר הזמנה ואישור גישה מוגבלת דרך משתמשים והרשאות. בחירה אינה מעניקה גישה חדשה."><select name="assigneeId"><option value="">לא משויך</option>{workspace.team.filter((member) => member.active).map((member) => <option key={member.id} value={member.id}>{member.name}{workspace.contacts.some(contact => [...(workspace.projects.find(project => project.id === defaultProjectId)?.contactIds || []), ...(workspace.projects.find(project => project.id === defaultProjectId)?.clientIds || [])].includes(contact.id) && contact.email?.toLowerCase() === member.email.toLowerCase()) ? ' — איש קשר בפרויקט' : ''}</option>)}</select></Field>
         <Field label="סטטוס"><CreatableSelect label="סטטוס" name="status" defaultValue={workspace.taskStatuses[0] || 'טרם התחיל'} options={textChoices(workspace.taskStatuses)} onCreate={canCreate && canUpdate ? (name) => { setWorkspace(current => createTaskStatus(current, name)); return name } : undefined} /></Field>
         <Field label="עדיפות"><select name="priority" defaultValue="רגילה"><option>נמוכה</option><option>רגילה</option><option>גבוהה</option><option>דחופה</option></select></Field>
