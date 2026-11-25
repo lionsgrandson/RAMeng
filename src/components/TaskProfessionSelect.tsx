@@ -1,7 +1,39 @@
 import type { Task, Workspace } from '../types'
+import { createProfession } from '../lib/inlineChoices'
 import { taskProfessionName, withTaskProfession } from '../lib/taskProfession'
+import { uid } from './common'
+import CreatableSelect from './CreatableSelect'
 
-export default function TaskProfessionSelect({ task, workspace, disabled, onChange }: { task: Task; workspace: Workspace; disabled?: boolean; onChange: (task: Task) => void }) {
+export default function TaskProfessionSelect({
+  task, workspace, setWorkspace, disabled, canCreate = false, canEditProject = false,
+}: {
+  task: Task
+  workspace: Workspace
+  setWorkspace: React.Dispatch<React.SetStateAction<Workspace>>
+  disabled?: boolean
+  canCreate?: boolean
+  canEditProject?: boolean
+}) {
   const name = taskProfessionName(task, workspace)
-  return <select className="cell-input" aria-label={`מקצוע עבור ${task.title}`} disabled={disabled} value={name} onChange={event => onChange(withTaskProfession(task, workspace.categories.find(category => category.name === event.target.value)?.id || '', workspace))}><option value="">ללא מקצוע</option>{name && !workspace.categories.some(category => category.name === name) && <option>{name}</option>}{workspace.categories.map(category => <option key={category.id}>{category.name}</option>)}</select>
+  const category = workspace.categories.find(item => item.name === name)
+  const options = workspace.categories.map(item => ({ value: item.name, label: item.name }))
+  if (name && !category) options.unshift({ value: name, label: name })
+  return <CreatableSelect
+    className="cell-input" label="מקצוע" ariaLabel={`מקצוע עבור ${task.title}`}
+    disabled={disabled} value={name} emptyOption={{ value: '', label: 'ללא מקצוע' }}
+    options={options}
+    onValueChange={chosen => setWorkspace(current => {
+      const id = current.categories.find(item => item.name === chosen)?.id || ''
+      return {
+        ...current,
+        tasks: current.tasks.map(item => item.id === task.id ? withTaskProfession(item, id, current) : item),
+      }
+    })}
+    onCreate={canCreate && !disabled ? name => {
+      const existing = workspace.categories.find(item => item.name.trim().toLocaleLowerCase('he-IL') === name.toLocaleLowerCase('he-IL'))
+      const id = existing?.id || uid('category')
+      setWorkspace(current => createProfession(current, name, id, canEditProject ? task.projectId : undefined))
+      return name
+    } : undefined}
+  />
 }

@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "tsc -b --pretty false",
     "qa": "vite --config tests/qa.config.mjs",
-    "test": "node --test tests/regression.test.mjs tests/kv-maintenance.test.mjs tests/incident-resilience.test.mjs tests/new-incidents.test.mjs",
+    "test": "node --test tests/regression.test.mjs tests/kv-maintenance.test.mjs tests/incident-resilience.test.mjs tests/new-incidents.test.mjs tests/inline-choices.test.mjs",
     "test:kv-load": "node tests/kv-load.mjs",
     "test:status-browser": "node tests/status-browser.mjs",
     "preview": "vite preview --host 0.0.0.0",

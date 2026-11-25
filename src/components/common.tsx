@@ -79,7 +79,13 @@ export function Modal({ title, children, onClose, wide = false }: { title: strin
     const previous = returnFocusRef.current
     const unlockScroll = lockPageScroll()
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onCloseRef.current()
+      // Inline creation uses stacked modal portals. Only the uppermost dialog
+      // may intercept Escape or trap focus, otherwise cancelling a dropdown
+      // would close the underlying unsaved task/project form as well.
+      const topmostBackdrop = Array.from(document.querySelectorAll('.modal-backdrop')).at(-1)
+      const thisBackdrop = dialogRef.current?.parentElement
+      if (!thisBackdrop || (topmostBackdrop && thisBackdrop !== topmostBackdrop)) return
+      if (event.key === 'Escape') { event.preventDefault(); onCloseRef.current(); return }
       if (event.key === 'Tab' && dialogRef.current) {
         const focusable = Array.from(dialogRef.current.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')).filter((element) => element.getClientRects().length > 0)
         if (!focusable.length) return
