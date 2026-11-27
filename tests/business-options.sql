@@ -67,5 +67,26 @@ select public.set_assigned_task_status('60000000-0000-0000-0000-000000000001','c
 select pg_temp.check_choice((select data#>>'{tasks,0,status}'='QA custom' and data#>'{tasks,0,completedAt}' is null from public.get_workspace_state('60000000-0000-0000-0000-000000000001')),'reopening in custom status clears completion');
 select pg_temp.choice_denied($q$select public.set_assigned_task_status('60000000-0000-0000-0000-000000000001','choice-task','__none__','QA custom')$q$);
 reset role;
+update public.memberships set permissions='{"projects":{"view":true,"status":true,"create":false,"edit":false,"delete":false}}' where org_id='60000000-0000-0000-0000-000000000001' and user_id='50000000-0000-0000-0000-000000000003';
+set local role authenticated;
+select set_config('request.jwt.claim.sub','50000000-0000-0000-0000-000000000003',true);
+do $$declare w record; begin
+  select * into w from public.get_workspace_state('60000000-0000-0000-0000-000000000001');
+  perform public.save_workspace_state('60000000-0000-0000-0000-000000000001',jsonb_set(w.data,'{projects,0,status}','"בביצוע"'),w.version);
+  perform pg_temp.check_choice(true,'status-only member can select built-in project status');
+  select * into w from public.get_workspace_state('60000000-0000-0000-0000-000000000001');
+  perform public.save_workspace_state('60000000-0000-0000-0000-000000000001',jsonb_set(w.data,'{projects,0,status}','"QA Choice"'),w.version);
+  perform pg_temp.check_choice(true,'status-only member can reuse registered option');
+  perform pg_temp.choice_denied(format('select public.save_workspace_state(%L,%L::jsonb,%s)','60000000-0000-0000-0000-000000000001',jsonb_set(w.data,'{projects,0,status}','"Unauthorized new option"'),w.version+1));
+  perform pg_temp.choice_denied(format('select public.save_workspace_state(%L,%L::jsonb,%s)','60000000-0000-0000-0000-000000000001',jsonb_set(w.data,'{projects,0,status}','"__none__"'),w.version+1));
+end $$;
+select pg_temp.check_choice(not exists(select 1 from public.business_options where value='Unauthorized new option'),'rejected workspace save does not register option');
+select set_config('request.jwt.claim.sub','50000000-0000-0000-0000-000000000001',true);
+do $$declare w record; begin
+  select * into w from public.get_workspace_state('60000000-0000-0000-0000-000000000001');
+  perform public.save_workspace_state('60000000-0000-0000-0000-000000000001',jsonb_set(w.data,'{projects,0,status}','"Authorized import label"'),w.version);
+  perform pg_temp.check_choice(exists(select 1 from public.business_options where family='project_status' and value='Authorized import label'),'authorized workspace import registers durable option');
+end $$;
+reset role;
 select n as business_option_assertions from choice_checks;
 rollback;

@@ -76,6 +76,8 @@ Task statuses, professions and custom field options already have independent sha
 
 Both client and server normalize NFC and Unicode whitespace, reject blank/overlong/control/bidi/sentinel labels, and prevent case-insensitive duplicates. Historical unchanged values remain readable. Linked record names are display labels: duplicate projects and contacts retain distinct IDs and required address/email details rather than being incorrectly collapsed by name.
 
+A final server review found and closed a second write path: a member allowed only to change a record's status could previously introduce a new vocabulary label through `save_workspace_state`, whose capture trigger registered it. The new workspace trigger requires the same creation/edit authority for genuinely new labels. Built-in values, registered options and historical labels remain selectable with the existing record permissions. Trusted SQL maintenance remains possible; anonymous API writes are still denied by the existing RLS/RPC gates. Six added database checks cover this path, successful reuse and authorized imports.
+
 Portal submissions stop propagation and await a shared backend commit. A rejected save leaves the inner creation dialog, parent draft and selected value intact. Retry retains a pending record identity instead of creating another record. Permission rejection and missing/invalid version acknowledgement cannot produce a successful-save state. The previous unversioned table-upsert fallback was removed because it could falsely report a save and overwrite concurrent edits.
 
 ## Migrations and backups
@@ -84,14 +86,16 @@ Portal submissions stop propagation and await a shared backend commit. A rejecte
 | --- | --- |
 | `20261127093434_durable_business_choices.sql` | Additive option table/RLS/RPC, historical backfill, capture trigger and new-choice validation; mandatory address for newly created linked projects. Initial backfill: 60 options. Existing workspace document/version verified unchanged by migration. |
 | `20261127101231_unicode_business_option_whitespace.sql` | Match ECMAScript's full Unicode whitespace normalization, canonical duplicate comparison; check legacy registry rows before changing the normalizer. All 67 rows at that point remained unchanged. |
+| `20261127130137_enforce_workspace_business_option_permissions.sql` | Prevent status-only members from registering new business labels through a parent workspace save. Preserve built-in/registered/historical choices and authorized imports. Live workspace version 28, document and 60 options remained unchanged. |
 
-Both files were reviewed and exercised in disposable PostgreSQL before applying through the authenticated Supabase dashboard to the actual shared project. Migration history was checked against the exact local SQL (one stored statement each, 11,184 and 4,855 source characters). No customer workspace backup was restored over the current document.
+All three files were reviewed and exercised in disposable PostgreSQL before applying through the authenticated Supabase dashboard to the actual shared project. Migration history was checked against local SQL (one stored statement each, 11,184, 4,855 and 4,803 source characters). The final file's history MD5 also matches the local source after normalizing clipboard CRLF to its original LF. No customer workspace backup was restored over the current document.
 
 Backups remain in the private schema with RLS enabled and no public/anon/authenticated/service-role table grants:
 
 - `rameng_private.dropdown_release_backup_20261127`: workspace snapshot before migration, version 2.
 - `rameng_private.dropdown_options_backup_20261127`: 67 registry rows before the Unicode follow-up.
 - `rameng_private.dropdown_qa_archive_20261127`: three scoped cleanup snapshots, before parent removal, before test definition/option removal and before final linked-record cleanup.
+- `rameng_private.dropdown_guard_backup_20261127`: workspace version 28 and all 60 registry options before the final server authorization migration; RLS enabled and API table grants revoked.
 
 Cleanup removed exactly this run's initial six parent records and four definitions, then its nine registry options and one custom task status. The final recheck added and subsequently archived/removed seven linked records (one contact, one project, four tasks and one checklist template). Guards stopped cleanup when references were detected; inspection showed only audit-history references, which were explicitly retained. The current workspace version reached 28, with **zero active test entities and zero test registry options**. The 59.1 KB sample PDF was moved to `qa-archive-20261127` within its original organization/project storage scope for recoverable archival. Audit and rollback archives remain; they are not active CRM data.
 
@@ -106,7 +110,7 @@ Cleanup removed exactly this run's initial six parent records and four definitio
 | `npm run build`; `npm run build:preview` | PASS; existing large-chunk warning remains |
 | All seven Worker/desktop syntax checks configured in CI | PASS |
 | High-severity npm audit gate for frontend, Worker, desktop | PASS; frontend 3 moderate and desktop 7 moderate findings remain; Worker has none |
-| Disposable database workflows | PASS: existing 32 assertions / 20 expected denials, 44 new business-option assertions, platform RLS workflow and three concurrency scenarios |
+| Disposable database workflows | PASS: existing 32 assertions / 20 expected denials, 50 new business-option assertions, platform RLS workflow and three concurrency scenarios |
 | `tests/browser.mjs` | PASS: 93/93 final rerun. One earlier cold page navigation timed out while suites/builds started concurrently; no assertion or timeout was weakened. |
 | `npm run test:status-browser` | PASS: 4 scenarios |
 | `npm run test:new-incidents-browser` | PASS: 9 scenarios |
