@@ -1,8 +1,13 @@
+import LinkedRecordSelect from './LinkedRecordSelect'
+import ClientMultiPicker from './ClientMultiPicker'
+import { useRecordCreation } from './BusinessSelect'
+import { nowIso, uid } from './common'
 import { useEffect, useState } from 'react'
 import { integrationsApi, type JournalMessage, type JournalThread } from '../lib/api'
 import type { Workspace } from '../types'
 
-export default function CommunicationJournal({ orgId, workspace, projectId = '', selectedThreadId, canShare }: { orgId: string; workspace: Workspace; projectId?: string; selectedThreadId: string; canShare: boolean }) {
+export default function CommunicationJournal({ orgId, workspace, setWorkspace, projectId = '', selectedThreadId, canShare }: { orgId: string; workspace: Workspace; setWorkspace?: React.Dispatch<React.SetStateAction<Workspace>>; projectId?: string; selectedThreadId: string; canShare: boolean }) {
+  const canCreate = useRecordCreation()
   const [threads, setThreads] = useState<JournalThread[]>([])
   const [messages, setMessages] = useState<JournalMessage[]>([])
   const [mailbox, setMailbox] = useState<{ user_id: string; active: boolean; email: string; last_sync_at?: string; last_error_code?: string } | null>(null)
@@ -36,9 +41,9 @@ export default function CommunicationJournal({ orgId, workspace, projectId = '',
     <button type="button" className="secondary" disabled={busy} onClick={() => void refresh()}>{busy ? 'טוען...' : 'רענון היומן'}</button>
     {canShare && mailbox?.active && selectedThreadId && <fieldset disabled={busy}><legend>שיתוף ההתכתבות שנבחרה</legend>
       <p>האישור הבא ישתף את גוף ההודעות ואת פרטי הקבצים המצורפים עם משתמשי הארגון המורשים. תוכן הקבצים עצמם אינו מועתק.</p>
-      <label>פרויקט ליומן<select aria-label="פרויקט ליומן" value={project} onChange={e => { setProject(e.target.value); setTaskIds([]) }}><option value="">בחירת פרויקט</option>{workspace.projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
-      <label>משימות מקושרות<select aria-label="משימות מקושרות ליומן" multiple value={taskIds} onChange={e => setTaskIds(Array.from(e.target.selectedOptions, option => option.value))}>{workspace.tasks.filter(t => t.projectId === project).map(t => <option key={t.id} value={t.id}>{t.title}</option>)}</select></label>
-      <label>אנשי קשר מקושרים<select aria-label="אנשי קשר מקושרים ליומן" multiple value={contactIds} onChange={e => setContactIds(Array.from(e.target.selectedOptions, option => option.value))}>{workspace.contacts.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
+      <label>פרויקט ליומן{setWorkspace ? <LinkedRecordSelect family="project" label="פרויקט" ariaLabel="פרויקט ליומן" workspace={workspace} setWorkspace={setWorkspace} value={project} onValueChange={value => {setProject(value);setTaskIds([])}} emptyOption={{value:"",label:"בחירת פרויקט"}} /> : <select aria-label="פרויקט ליומן" value={project} onChange={e => { setProject(e.target.value); setTaskIds([]) }}><option value="">בחירת פרויקט</option>{workspace.projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>}</label>
+      <label>משימות מקושרות{setWorkspace && <LinkedRecordSelect family="task" label="משימה" ariaLabel="הוספת משימה ליומן" workspace={workspace} setWorkspace={setWorkspace} projectId={project} value="" disabled={!project} emptyOption={{value:"",label:"הוספה לבחירה"}} onValueChange={id=>setTaskIds(current=>[...new Set([...current,id])])} />}<select aria-label="משימות מקושרות ליומן" multiple value={taskIds} onChange={e => setTaskIds(Array.from(e.target.selectedOptions, option => option.value))}>{workspace.tasks.filter(t => t.projectId === project).map(t => <option key={t.id} value={t.id}>{t.title}</option>)}</select></label>
+      <label>אנשי קשר מקושרים{setWorkspace ? <ClientMultiPicker contacts={workspace.contacts} label="אנשי קשר ליומן" selectedIds={contactIds} onChange={setContactIds} onCreateContact={canCreate('contacts') ? (name,email)=>{const id=uid("contact");setWorkspace(current=>({...current,contacts:[...current.contacts,{id,name,email,status:"פעיל",tags:[],createdAt:nowIso()}]}));return id} : undefined} /> : <select aria-label="אנשי קשר מקושרים ליומן" multiple value={contactIds} onChange={e => setContactIds(Array.from(e.target.selectedOptions, option => option.value))}>{workspace.contacts.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select>}</label>
       <button type="button" className="primary" disabled={!project} onClick={() => void sync(selectedThreadId, project, taskIds, contactIds)}>אישור ושיתוף ההתכתבות ביומן הארגוני</button>
     </fieldset>}
     <p>מוצגות עד 50 ההתכתבויות שעודכנו לאחרונה. עדכון חוזר מוסיף הודעות חדשות ושומר את ההיסטוריה הקיימת.</p>

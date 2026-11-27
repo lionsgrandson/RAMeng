@@ -1,8 +1,10 @@
-import { useMemo, useState, type FormEvent } from 'react'
+import { useContext, useMemo, useRef, useState, type FormEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { Modal } from './common'
 import { Search, UserRound, X } from 'lucide-react'
 import type { Contact } from '../types'
+import { WorkspaceSaveContext } from './WorkspaceSave'
+import { normalizeChoice, choiceKey } from '../lib/businessOptions'
 
 type Props = {
   label?: string
@@ -21,6 +23,10 @@ export default function ClientMultiPicker({ contacts, selectedIds, defaultSelect
   const [query, setQuery] = useState('')
   const [creating, setCreating] = useState(false)
   const [creationError, setCreationError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const busyRef = useRef(false)
+  const pending = useRef<{ key: string; id: string } | null>(null)
+  const { commit } = useContext(WorkspaceSaveContext)
   const value = controlled ? selectedIds! : internal
   const selected = new Set(value)
 
@@ -34,24 +40,29 @@ export default function ClientMultiPicker({ contacts, selectedIds, defaultSelect
     update(next)
   }
 
-  const createContact = (event: FormEvent<HTMLFormElement>) => {
+  const createContact = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (!onCreateContact) return
+    event.stopPropagation()
+    if (!onCreateContact || busyRef.current) return
     const form = new FormData(event.currentTarget)
-    const name = String(form.get('name') || '').trim()
     const email = String(form.get('email') || '').trim().toLowerCase()
-    if (!name) { setCreationError('יש להזין שם'); return }
-    const existing = contacts.find(contact => email
-      ? contact.email?.trim().toLowerCase() === email
-      : contact.name.trim().toLowerCase() === name.toLowerCase())
+    busyRef.current = true; setBusy(true); setCreationError('')
     try {
-      const id = existing?.id || onCreateContact(name, email)
+      const name = normalizeChoice(String(form.get('name') || ''))
+      // Equal names do not identify a person. Reuse only an explicit email match.
+      const existing = email ? contacts.find(contact => contact.email && choiceKey(contact.email) === choiceKey(email)) : undefined
+      const key = JSON.stringify([name, email])
+      const id = existing?.id || (pending.current?.key === key ? pending.current.id : onCreateContact(name, email))
       if (!id) throw new Error('שמירת איש הקשר נכשלה')
+      pending.current = { key, id }
+      await commit()
       if (!selected.has(id)) update([...value, id])
       setCreating(false)
       setQuery('')
       setCreationError('')
+      pending.current = null
     } catch (error) { setCreationError(error instanceof Error ? error.message : 'שמירת איש הקשר נכשלה') }
+    finally { busyRef.current = false; setBusy(false) }
   }
 
   const filtered = useMemo(() => {
@@ -64,7 +75,7 @@ export default function ClientMultiPicker({ contacts, selectedIds, defaultSelect
   return <div className="client-multi-picker">
     {value.map((id) => <input key={id} type="hidden" name={name} value={id} />)}
     <div className="client-picker-search"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="חיפוש לפי שם, חברה, מייל או טלפון" aria-label={`חיפוש ${label}`} /></div>
-    {onCreateContact && <button type="button" className="secondary" onClick={() => { setCreationError(''); setCreating(true) }}>+ הוספת איש קשר חדש</button>}
+    {onCreateContact && <button type="button" className="secondary" onClick={() => { setCreationError(''); setCreating(true) }}>+ הוספת פריט חדש</button>}
     {selectedContacts.length > 0 && <div className="client-picker-selected" aria-label={`${label} שנבחרו`}>{selectedContacts.map((contact) => <span className="selected-contact-chip" key={contact.id}><button type="button" onClick={() => onContact ? onContact(contact.id) : toggle(contact.id)}><UserRound /><bdi>{contact.name}</bdi></button><button type="button" aria-label={`הסרת ${contact.name} מהבחירה`} onClick={() => toggle(contact.id)}><X /></button></span>)}</div>}
     <div className="client-picker-list">{filtered.map((contact) => {
       const active = selected.has(contact.id)
@@ -76,12 +87,12 @@ export default function ClientMultiPicker({ contacts, selectedIds, defaultSelect
         {onContact && <button type="button" className="contact-name-link" aria-label={`פתיחת כרטיס ${contact.name}`} onClick={event => { event.preventDefault(); event.stopPropagation(); onContact(contact.id) }}>פתיחת כרטיס</button>}
       </label>
     })}{!filtered.length && <div className="client-picker-empty">לא נמצאו {label} מתאימים.</div>}</div>
-    {creating && onCreateContact && createPortal(<Modal title="הוספת איש קשר" onClose={() => setCreating(false)}>
+    {creating && onCreateContact && createPortal(<Modal title="הוספת איש קשר" onClose={() => { if (!busyRef.current) setCreating(false) }}>
       <form className="form-grid" onSubmit={createContact} dir="rtl">
-        <label className="field"><span>שם איש הקשר</span><input name="name" required autoFocus /></label>
+        <label className="field"><span>שם איש הקשר</span><input name="name" required autoFocus maxLength={100} disabled={busy} /></label>
         <label className="field"><span>מייל (אופציונלי)</span><input name="email" type="email" dir="ltr" /></label>
         {creationError && <p role="alert" className="error-banner">{creationError}</p>}
-        <div className="form-actions"><button type="button" className="secondary" onClick={() => setCreating(false)}>ביטול</button><button className="primary" type="submit">הוספה ובחירה</button></div>
+        <div className="form-actions"><button type="button" className="secondary" disabled={busy} onClick={() => setCreating(false)}>ביטול</button><button className="primary" type="submit" disabled={busy}>{busy ? 'שומר...' : 'הוספה ובחירה'}</button></div>
       </form>
     </Modal>, document.body)}
   </div>

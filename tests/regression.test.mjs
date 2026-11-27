@@ -15,6 +15,8 @@ const { readImportRows, mapContactImportRows, appendUniqueContacts, appendUnique
 const { normalizeContactCategories } = await server.ssrLoadModule('/src/lib/contactCategories.ts')
 const { mailContent } = await import('../worker/src/mailHtml.js')
 const options = { canManageUsers: false, isDeveloper: false }
+
+
 const { deleteProject, deleteContact } = await server.ssrLoadModule('/src/lib/records.ts')
 const { createReportFromTasks } = await server.ssrLoadModule('/src/lib/reportTasks.ts')
 
@@ -2021,4 +2023,44 @@ test('overlapping page scroll locks release safely in either order and preserve 
     second();assert.equal(document.body.style.overflow,'hidden')
     first();assert.equal(document.body.style.overflow,'auto')
   } finally {globalThis.document=original}
+})
+
+test('shared workspace saves require a positive version acknowledgement and never fall back to an unversioned write', async () => {
+  const originalFetch = globalThis.fetch
+  const requests = []
+  let result = { status: 200, body: 9 }
+  globalThis.fetch = async input => {
+    const url = String(input instanceof Request ? input.url : input)
+    assert.match(url, /\/rest\/v1\/rpc\/save_workspace_state$/)
+    requests.push(url)
+    return new Response(JSON.stringify(result.body), {status:result.status,headers:{'content-type':'application/json'}})
+  }
+  backend.configureBackend({configured:true,supabaseUrl:'https://qa-backend.example.test',supabaseAnonKey:'disposable-qa-key',apiBase:''})
+  try {
+    assert.deepEqual(await backend.saveOrganizationWorkspace('qa-org','qa-user',cloneWorkspace(),8),{version:9})
+    for (const response of [{status:200,body:null},{status:200,body:8},{status:404,body:{code:'PGRST202',message:'save_workspace_state missing from schema cache'}},{status:403,body:{code:'42501',message:'permission denied'}},{status:409,body:{code:'P0001',message:'WORKSPACE_VERSION_CONFLICT'}}]) {
+      result=response
+      await assert.rejects(backend.saveOrganizationWorkspace('qa-org','qa-user',cloneWorkspace(),8))
+    }
+    assert.equal(requests.length,6)
+  } finally {
+    backend.configureBackend({configured:false,supabaseUrl:'',supabaseAnonKey:'',apiBase:''})
+    globalThis.fetch=originalFetch
+  }
+})
+
+test('custom task statuses update the existing calendar event without changing its schedule or sending invitations', async () => {
+  const fixture=taskGoogleFixture()
+  const workspace={projects:[{id:'p',name:'QA project'}],tasks:[{id:'t',projectId:'p',title:'QA task',status:'בטיפול',dueDate:'2026-11-27'}]}
+  const sync=()=>syncTaskCalendar(fixture.env,{},'user','org',workspace,fixture.google)
+  assert.equal((await sync()).created,1)
+  const eventId=[...fixture.events.keys()][0]
+  for (const status of ['QA בדיקה מותאמת','בוצע','QA נפתח מחדש']) {
+    workspace.tasks[0].status=status
+    assert.equal((await sync()).updated,1)
+    assert.equal(fixture.events.size,1)
+    assert.equal(fixture.events.get(eventId).start.date,'2026-11-27')
+    assert.ok(fixture.events.get(eventId).description.includes(`סטטוס: ${status}`))
+  }
+  assert.equal((await sync()).unchanged,1)
 })

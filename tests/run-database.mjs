@@ -14,12 +14,15 @@ let client
 try {
   await pg.initialise(); await pg.start()
   client = pg.getPgClient(); await client.connect()
-  for (const file of ['tests/db-bootstrap.sql', 'supabase/setup.sql', ...(await readdir('supabase/migrations')).filter(name => name.endsWith('.sql')).sort().map(name => `supabase/migrations/${name}`), 'tests/project-workflows.sql', 'tests/final-qa-workflows.sql', 'tests/document-layouts.sql']) {
+  for (const file of ['tests/db-bootstrap.sql', 'supabase/setup.sql', ...(await readdir('supabase/migrations')).filter(name => name.endsWith('.sql')).sort().map(name => `supabase/migrations/${name}`), 'tests/project-workflows.sql', 'tests/final-qa-workflows.sql', 'tests/document-layouts.sql', 'tests/business-options.sql']) {
     let sql = await readFile(file, 'utf8')
     // pg executes SQL directly; psql's success echo is not SQL.
     sql = sql.replace(/^\\echo.*$/gm, '')
     const result = await client.query(sql)
-    for (const item of (Array.isArray(result) ? result : [result])) for (const row of item.rows || []) if (row.suite === 'final-qa') console.log(`PASS final QA: ${row.assertions} assertions; ${row.denials} expected denials`)
+    for (const item of (Array.isArray(result) ? result : [result])) for (const row of item.rows || []) {
+      if (row.suite === 'final-qa') console.log(`PASS final QA: ${row.assertions} assertions; ${row.denials} expected denials`)
+      if (row.business_option_assertions) console.log(`PASS business options: ${row.business_option_assertions} database assertions`)
+    }
     console.log(`PASS ${file}`)
   }
   // The normal migration pass also covers databases where the optional

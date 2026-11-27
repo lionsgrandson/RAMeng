@@ -9,7 +9,9 @@ const transpiled = ts.transpileModule(source, {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
 }).outputText
 const exports = {}
-runInNewContext(transpiled, { exports })
+const businessExports = {}
+runInNewContext(ts.transpileModule(readFileSync(new URL('../src/lib/businessOptions.ts', import.meta.url), 'utf8'), { compilerOptions: {target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS} }).outputText, {exports:businessExports})
+runInNewContext(transpiled, { exports, require: name => { assert.equal(name, './businessOptions'); return businessExports } })
 const { createTaskStatus, createProfession, createColumnOption, projectStatuses, contactStatuses } = exports
 
 const fixture = () => ({
@@ -65,4 +67,19 @@ test('empty user-defined options are rejected', () => {
   assert.throws(() => createTaskStatus(fixture(), '   '))
   assert.throws(() => createProfession(fixture(), '', 'id'))
   assert.throws(() => createColumnOption(fixture(), 'column-one', ''))
+})
+
+test('custom status column creation uses the canonical task status registry', () => {
+  const state = fixture()
+  state.taskColumns[0].type = 'status'
+  const next = createColumnOption(state, 'column-one', '  Custom\u00a0Status ')
+  assert.ok(next.taskStatuses.includes('Custom Status'))
+  assert.deepEqual([...next.taskColumns[0].options], ['א'])
+})
+
+test('business labels reject sentinels, controls, invisible bidi marks and overlong values', () => {
+  for (const value of ['', '  ', '__none__', '__rameng_create_new_option__', 'הכל', 'ללא', 'a'.repeat(101), 'a\u0001b', 'a\u200fb']) assert.throws(() => businessExports.normalizeChoice(value))
+  assert.equal(businessExports.normalizeChoice('  Cafe\u0301  \t X '), 'Café X')
+  assert.deepEqual([...businessExports.uniqueChoices(['A  B','a b','Café','Cafe\u0301'])],['A  B','Café'])
+  assert.throws(() => createColumnOption(fixture(),'missing','x'))
 })

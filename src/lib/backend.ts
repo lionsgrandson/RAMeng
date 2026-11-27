@@ -6,6 +6,22 @@ import type { Workspace, InspectionReport } from '../types'
 import { cloneWorkspace, hydrateWorkspace } from '../seed'
 import type { StoredPermissions } from './permissions'
 import { authRedirectUrl } from './runtime'
+import { normalizeChoice, type BusinessFamily, type BusinessOption } from './businessOptions'
+
+export async function listBusinessOptions(orgId: string): Promise<BusinessOption[]> {
+  if (!client || orgId === 'local') return []
+  const { data, error } = await client.from('business_options').select('family,value').eq('org_id', orgId).order('value')
+  if (error) throw localizedBackendError(error, 'טעינת האפשרויות נכשלה')
+  return data as BusinessOption[]
+}
+
+export async function createBusinessOption(orgId: string, family: BusinessFamily, value: string): Promise<string> {
+  if (!client || orgId === 'local') throw new Error('יצירת אפשרויות דורשת חיבור לשרת')
+  const { data, error } = await client.rpc('create_business_option', { target_org: orgId, option_family: family, option_value: normalizeChoice(value) })
+  if (error) throw localizedBackendError(error, 'שמירת האפשרות נכשלה. בדקו את החיבור ונסו שוב.')
+  if (typeof data !== 'string' || !data) throw new Error('השרת לא אישר את שמירת האפשרות')
+  return data
+}
 
 let client: SupabaseClient | null = null
 let runtime: RuntimeConfig | null = null
@@ -217,14 +233,12 @@ export async function saveOrganizationWorkspace(orgId: string, userId: string, w
       throw conflict
     }
     const rpcMissing = error.code === 'PGRST202' || (error.message.includes('save_workspace_state') && error.message.toLowerCase().includes('schema cache'))
-    if (rpcMissing) {
-      const legacy = await client.from('workspace_state').upsert({ org_id: orgId, data: workspace, updated_by: userId, updated_at: new Date().toISOString() }, { onConflict: 'org_id' })
-      if (legacy.error) throw localizedBackendError(legacy.error, 'שמירת הנתונים נכשלה')
-      return { version: expectedVersion + 1 }
-    }
+    if (rpcMissing) throw new Error('שמירה בטוחה דורשת את מיגרציות מסד הנתונים העדכניות. השינויים טרם נשמרו.')
     throw localizedBackendError(error, 'שמירת הנתונים נכשלה')
   }
-  return { version: Number(data || expectedVersion + 1) }
+  const version = Number(data)
+  if (!Number.isSafeInteger(version) || version <= expectedVersion) throw new Error('השרת לא אישר את גרסת השמירה. השינויים טרם נשמרו.')
+  return { version }
 }
 
 export async function readWorkspaceState(orgId: string) {

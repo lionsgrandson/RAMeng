@@ -91,3 +91,14 @@ export async function captureReportSnapshot(_org: string, reportId: string) {
 export async function readReportSnapshot(_org: string, id: string) {
   return Object.keys(localStorage).filter(key => key.startsWith('qa-report-snapshots-')).flatMap(key => JSON.parse(localStorage.getItem(key) || '[]')).find(row => row.id===id)
 }
+
+export async function listBusinessOptions(_org: string) { return JSON.parse(localStorage.getItem('qa-business-options') || '[]') }
+export async function createBusinessOption(_org: string, family: string, raw: string) {
+  if (params.get('qaOptionSave') === 'error' && !localStorage.getItem('qa-option-failed')) { localStorage.setItem('qa-option-failed','1'); throw new Error('QA option save failure') }
+  const value = raw.normalize('NFC').trim().replace(/\s+/g, ' ')
+  const rows = await listBusinessOptions(_org)
+  const existing = rows.find((row: any) => row.family === family && row.value.toLowerCase() === value.toLowerCase())
+  if (existing) return existing.value
+  localStorage.setItem('qa-business-options', JSON.stringify([...rows, {family, value}]))
+  return value
+}

@@ -1,11 +1,11 @@
 export type ID = string
-export type Priority = 'נמוכה' | 'רגילה' | 'גבוהה' | 'דחופה'
-export type ProjectStatus = 'בתכנון' | 'בביצוע' | 'בהמתנה' | 'הושלם' | 'מוקפא'
-export type ContactStatus = 'ליד' | 'פעיל' | 'בהמתנה' | 'לא פעיל'
+export type Priority = 'נמוכה' | 'רגילה' | 'גבוהה' | 'דחופה' | (string & {})
+export type ProjectStatus = 'בתכנון' | 'בביצוע' | 'בהמתנה' | 'הושלם' | 'מוקפא' | (string & {})
+export type ContactStatus = 'ליד' | 'פעיל' | 'בהמתנה' | 'לא פעיל' | (string & {})
 export type DealStage = 'חדש' | 'פגישה' | 'הצעה' | 'משא ומתן' | 'זכייה' | 'נסגר'
-export type QuoteStatus = 'טיוטה' | 'נשלחה' | 'אושרה' | 'נדחתה' | 'שולמה חלקית' | 'שולמה'
+export type QuoteStatus = 'טיוטה' | 'נשלחה' | 'אושרה' | 'נדחתה' | 'שולמה חלקית' | 'שולמה' | (string & {})
 export type ReportLayout = 'table' | 'cards' | 'photo'
-export type TaskColumnType = 'text' | 'date' | 'time' | 'status' | 'member' | 'email' | 'priority'
+export type TaskColumnType = 'text' | 'date' | 'time' | 'status' | 'member' | 'email' | 'priority' | 'dropdown'
 
 export interface Contact {
   id: ID

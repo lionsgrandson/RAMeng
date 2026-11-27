@@ -35,7 +35,7 @@ await check('runtime configuration targets RAMENG without privileged credential 
   assert.equal(response.status, 200)
   const config = await response.json()
   assert.equal(config.configured, true)
-  assert.equal(new URL(config.supabaseUrl).hostname, 'qvunspguudkhwgbjvvuf.supabase.co')
+  assert.equal(new URL(config.supabaseUrl).hostname, process.env.RAMENG_EXPECTED_SUPABASE_HOST || 'evnlggpetexwpnjxtxya.supabase.co')
   const verify = value => {
     if (!value || typeof value !== 'object') return
     for (const [key, child] of Object.entries(value)) {

@@ -1,7 +1,8 @@
+import { normalizeChoice, choiceKey } from './businessOptions'
 import type { Workspace } from '../types'
 
-const normalize = (name: string) => name.normalize('NFC').trim().replace(/\s+/g, ' ')
-const same = (left: string, right: string) => normalize(left).toLocaleLowerCase('he-IL') === normalize(right).toLocaleLowerCase('he-IL')
+const normalize = normalizeChoice
+const same = (left: string, right: string) => choiceKey(left) === choiceKey(right)
 
 export function createTaskStatus(workspace: Workspace, name: string): Workspace {
   const value = normalize(name)
@@ -27,6 +28,8 @@ export function createProfession(workspace: Workspace, name: string, newId: stri
 export function createColumnOption(workspace: Workspace, columnId: string, name: string): Workspace {
   const value = normalize(name)
   if (!value) throw new Error('חובה להזין ערך')
+  if (!workspace.taskColumns.some(column => column.id === columnId)) throw new Error('העמודה אינה זמינה')
+  if (workspace.taskColumns.find(column => column.id === columnId)?.type === 'status') return createTaskStatus(workspace, value)
   return { ...workspace, taskColumns: workspace.taskColumns.map(column => {
     if (column.id !== columnId || column.options?.some(option => same(option, value))) return column
     return { ...column, options: [...(column.options || []), value] }

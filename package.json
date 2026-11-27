@@ -19,7 +19,8 @@
     "deploy:staging": "node tests/preserve-deployed-assets.mjs && npm run build:preview && npx --prefix worker wrangler versions upload --config worker/wrangler.toml --profile rameng --keep-vars --preview-alias staging",
     "build:preview": "tsc -b && vite build --mode preview",
     "upload:preview": "npm run build:preview && npx --prefix worker wrangler versions upload --config worker/wrangler.toml --preview-alias meeting-crm",
-    "test:new-incidents-browser": "node tests/new-incidents-browser.mjs"
+    "test:new-incidents-browser": "node tests/new-incidents-browser.mjs",
+    "test:inline-choices-browser": "node tests/inline-choices-browser.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.2",

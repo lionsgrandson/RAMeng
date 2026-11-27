@@ -51,6 +51,24 @@ export async function runConcurrencyChecks(database) {
     assert.equal(final.tasks[0].status, 'בטיפול')
     assert.equal(final.tasks[1].title, 'Concurrent unrelated edit')
     console.log('PASS concurrent scoped status update preserves an administrator edit to another task')
+
+    // Two distinct authorized actors compete for the same normalized option key.
+    await root.query("update public.memberships set role='admin' where org_id=$1 and user_id=$2", [org, contractor])
+    await admin.query('begin')
+    const first = await admin.query("select public.create_business_option($1,'priority','  Concurrent   Choice ') as value", [org])
+    const duplicate = external.query("select public.create_business_option($1,'priority','concurrent choice') as value", [org])
+    await waitForLock(externalPid)
+    await admin.query('commit')
+    assert.equal(first.rows[0].value, 'Concurrent Choice')
+    assert.equal((await duplicate).rows[0].value, 'Concurrent Choice')
+    assert.equal((await root.query("select count(*)::int n from public.business_options where org_id=$1 and family='priority'", [org])).rows[0].n, 1)
+    await Promise.all([
+      admin.query("select public.create_business_option($1,'priority','Concurrent A')", [org]),
+      external.query("select public.create_business_option($1,'priority','Concurrent B')", [org]),
+    ])
+    assert.equal((await root.query("select count(*)::int n from public.business_options where org_id=$1 and family='priority'", [org])).rows[0].n, 3)
+    assert.deepEqual((await root.query('select data from public.workspace_state where org_id=$1', [org])).rows[0].data, final)
+    console.log('PASS concurrent option creation returns one canonical duplicate and retains distinct writes without touching parent records')
   } finally {
     await Promise.allSettled([admin.query('rollback'), external.query('rollback')])
     await Promise.all([root.end(), admin.end(), external.end()])

@@ -27,7 +27,7 @@ export function renameProfession(workspace: Workspace, id: string, name: string)
   }) }
 }
 export function taskColumnChoices(column: TaskColumn, workspace: Workspace) {
-  return isProfessionColumn(column) ? workspace.categories.map(category => category.name) : column.options
+  return isProfessionColumn(column) ? workspace.categories.map(category => category.name) : column.type === 'status' ? workspace.taskStatuses : column.options
 }
 export function professionValues(workspace: Workspace, column: TaskColumn) {
   const key = column.key.slice(7)

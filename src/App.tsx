@@ -1,4 +1,5 @@
 import {useUnreadMail} from './lib/useUnreadMail'
+import BusinessSelect, { BusinessOptionsProvider } from './components/BusinessSelect'
 import { flushPendingReports, reportClientError, setErrorReportingContext } from './lib/errorReporting'
 import ExternalTaskPage from './components/ExternalTaskPage'
 import { DisplayContext, useDisplayPreferences } from './components/DisplaySettings'
@@ -351,7 +352,7 @@ export default function App() {
   const editingWorkspaceRef = useRef(workspace)
   editingWorkspaceRef.current = workspace
   const editableSetWorkspace: typeof setWorkspace = (action) => {
-    if (!canEdit) return
+    if (!canEdit) throw new Error('אין הרשאה לערוך נתונים')
     const current = editingWorkspaceRef.current
     {
       const requested = typeof action === 'function' ? action(current) : action
@@ -360,7 +361,7 @@ export default function App() {
       const permissionError = workspaceMutationError(current, next, permissions, { canManageUsers, isDeveloper })
       if (permissionError) {
         window.setTimeout(() => setPermissionNotice(permissionError), 0)
-        return
+        throw new Error(permissionError)
       }
       window.setTimeout(() => setPermissionNotice(''), 0)
       if (['projects', 'contacts', 'tasks', 'reports', 'files', 'events', 'quotes', 'clientNotes'].some((key) => (next[key as keyof Workspace] as unknown[]).length < (current[key as keyof Workspace] as unknown[]).length)) immediateSaveRef.current = true
@@ -402,6 +403,7 @@ export default function App() {
     immediateSaveRef.current = false
     const timer = window.setTimeout(() => {
       saveQueueRef.current = saveQueueRef.current.catch(() => undefined).then(async () => {
+        if (revision !== localRevisionRef.current || !dirtyRef.current) return
         if (serialized === lastSavedSnapshotRef.current) { if (revision === localRevisionRef.current) { dirtyRef.current = false; setSaveState('saved') }; return }
         setSaveState('saving')
         pendingSaveSnapshotRef.current = serialized
@@ -439,6 +441,29 @@ export default function App() {
     if (!dirtyRef.current) { setSaveState('saved'); return }
     immediateSaveRef.current = true
     setSaveAttempt((value) => value + 1)
+  }
+
+  // Inline creation must wait for the actual shared save, including failure/retry.
+  // Use the current ref so a newly created record is included before React renders.
+  const commitWorkspace = async () => {
+    const operation = saveQueueRef.current.catch(() => undefined).then(async () => {
+      if (!dirtyRef.current) return
+      const snapshot = editingWorkspaceRef.current
+      const revision = localRevisionRef.current
+      const serialized = JSON.stringify(snapshot)
+      setSaveState('saving'); pendingSaveSnapshotRef.current = serialized
+      try {
+        const result = await saveOrganizationWorkspace(orgId, user!.id, snapshot, workspaceVersionRef.current)
+        workspaceVersionRef.current = result.version
+        lastSavedSnapshotRef.current = serialized
+        if (revision === localRevisionRef.current) { dirtyRef.current = false; setSaveState('saved') }
+      } catch (error) {
+        setSaveState(error instanceof Error && error.name === 'WorkspaceConflictError' ? 'conflict' : 'error')
+        throw error
+      } finally { pendingSaveSnapshotRef.current = '' }
+    })
+    saveQueueRef.current = operation.catch(() => undefined)
+    await operation
   }
 
   const logout = async () => {
@@ -545,11 +570,11 @@ export default function App() {
   if (loadError) return <div className="auth-screen"><section className="login-card"><h1>לא ניתן לטעון את סביבת העבודה</h1><div className="error-banner">{loadError}</div><p>נסו שוב או פנו למנהל המערכת.</p><button className="secondary" onClick={() => window.location.reload()}>ניסיון מחדש</button></section></div>
   if (!loaded) return <div className="app-loading"><span className="ram-logo-shell loading-logo-shell"><img src="/ram-engineering-logo.png" alt="ר.א.ם הנדסה" width="1024" height="276" decoding="async" fetchPriority="high" /></span><span>טוען פרויקטים...</span></div>
 
-  if (role === 'external') return <WorkspaceSaveContext.Provider value={{ save: saveNow, refresh: refreshWorkspace, state: saveState, allowed: canEdit, dirty: dirtyRef.current }}>{saveNotice}<ExternalTaskPage workspace={visibleWorkspace} userId={user.id} userName={String(user.user_metadata?.full_name || user.email || 'משתמש')} refreshWorkspace={refreshWorkspace} orgId={orgId} taskId={selectedTask} onTask={openTask} onLogout={() => void logout()} /></WorkspaceSaveContext.Provider>
+  if (role === 'external') return <BusinessOptionsProvider orgId={orgId} permissions={permissions}><WorkspaceSaveContext.Provider value={{ save: saveNow, commit: commitWorkspace, refresh: refreshWorkspace, state: saveState, allowed: canEdit, dirty: dirtyRef.current }}>{saveNotice}<ExternalTaskPage workspace={visibleWorkspace} userId={user.id} userName={String(user.user_metadata?.full_name || user.email || 'משתמש')} refreshWorkspace={refreshWorkspace} orgId={orgId} taskId={selectedTask} onTask={openTask} onLogout={() => void logout()} /></WorkspaceSaveContext.Provider></BusinessOptionsProvider>
 
-  if (selectedProject) return <WorkspaceSaveContext.Provider value={{ save: saveNow, refresh: refreshWorkspace, state: saveState, allowed: canEdit, dirty: dirtyRef.current }}><DisplayContext.Provider value={displayPreferences}><div className={`app-shell project-mode ${!canEdit ? 'read-only-mode' : ''}`}><Sidebar page={page} setPage={(next) => openPage(next)} workspace={visibleWorkspace} permissions={permissions} open={sidebarOpen} setOpen={setSidebarOpen} user={user} onLogout={() => void logout()} isDeveloper={isDeveloper} canManageUsers={canManageUsers} /><div className="main"><Topbar search={search} setSearch={setSearch} searchResults={searchResults} urgentCount={urgentCount} onMenu={() => setSidebarOpen(true)} onAttention={openUrgent} saveState={saveState} canEdit={canEdit} /><main className="page-wrap project-page-wrap">{saveNotice}<TaskCalendarSync key={`${orgId}:${user.id}`} orgId={orgId} userId={user.id} workspace={visibleWorkspace} enabled={permissions.tasks.view && permissions.calendar.view && permissions.calendar.create && permissions.calendar.edit && permissions.calendar.delete} ready={!dirtyRef.current && saveState !== 'saving' && saveState !== 'error' && saveState !== 'conflict'} /><DriveAutoSync workspace={visibleWorkspace} enabled={permissions.files.create} reportsAllowed={permissions.reports.view} ready={saveState !== 'saving' && saveState !== 'error' && saveState !== 'conflict'} />{permissionNotice && <div className="error-banner permission-notice" role="alert">{permissionNotice}</div>}<ProjectWorkspace canCreateContacts={permissions.contacts.create} canInviteExternal={canManageUsers} key={selectedProject} initialEmailTask={mailTask?.projectId === selectedProject ? mailTask : null} projectId={selectedProject} initialTab={projectTab} workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} orgId={orgId} projectPermissions={permissions.projects} taskPermissions={permissions.tasks} calendarPermissions={permissions.calendar} filePermissions={permissions.files} reportPermissions={permissions.reports} communicationPermissions={permissions.communication} onBack={() => openPage('projects')} onClient={permissions.contacts.view ? openClient : undefined} onTabChange={(tab) => { setProjectTab(tab); writeAppRoute({ page: 'projects', projectId: selectedProject, tab }) }} /></main></div></div></DisplayContext.Provider></WorkspaceSaveContext.Provider>
+  if (selectedProject) return <BusinessOptionsProvider orgId={orgId} permissions={permissions}><WorkspaceSaveContext.Provider value={{ save: saveNow, commit: commitWorkspace, refresh: refreshWorkspace, state: saveState, allowed: canEdit, dirty: dirtyRef.current }}><DisplayContext.Provider value={displayPreferences}><div className={`app-shell project-mode ${!canEdit ? 'read-only-mode' : ''}`}><Sidebar page={page} setPage={(next) => openPage(next)} workspace={visibleWorkspace} permissions={permissions} open={sidebarOpen} setOpen={setSidebarOpen} user={user} onLogout={() => void logout()} isDeveloper={isDeveloper} canManageUsers={canManageUsers} /><div className="main"><Topbar search={search} setSearch={setSearch} searchResults={searchResults} urgentCount={urgentCount} onMenu={() => setSidebarOpen(true)} onAttention={openUrgent} saveState={saveState} canEdit={canEdit} /><main className="page-wrap project-page-wrap">{saveNotice}<TaskCalendarSync key={`${orgId}:${user.id}`} orgId={orgId} userId={user.id} workspace={visibleWorkspace} enabled={permissions.tasks.view && permissions.calendar.view && permissions.calendar.create && permissions.calendar.edit && permissions.calendar.delete} ready={!dirtyRef.current && saveState !== 'saving' && saveState !== 'error' && saveState !== 'conflict'} /><DriveAutoSync workspace={visibleWorkspace} enabled={permissions.files.create} reportsAllowed={permissions.reports.view} ready={saveState !== 'saving' && saveState !== 'error' && saveState !== 'conflict'} />{permissionNotice && <div className="error-banner permission-notice" role="alert">{permissionNotice}</div>}<ProjectWorkspace canCreateContacts={permissions.contacts.create} canInviteExternal={canManageUsers} key={selectedProject} initialEmailTask={mailTask?.projectId === selectedProject ? mailTask : null} projectId={selectedProject} initialTab={projectTab} workspace={visibleWorkspace} setWorkspace={editableSetWorkspace} orgId={orgId} projectPermissions={permissions.projects} taskPermissions={permissions.tasks} calendarPermissions={permissions.calendar} filePermissions={permissions.files} reportPermissions={permissions.reports} communicationPermissions={permissions.communication} onBack={() => openPage('projects')} onClient={permissions.contacts.view ? openClient : undefined} onTabChange={(tab) => { setProjectTab(tab); writeAppRoute({ page: 'projects', projectId: selectedProject, tab }) }} /></main></div></div></DisplayContext.Provider></WorkspaceSaveContext.Provider></BusinessOptionsProvider>
 
-  return <WorkspaceSaveContext.Provider value={{ save: saveNow, refresh: refreshWorkspace, state: saveState, allowed: canEdit, dirty: dirtyRef.current }}><DisplayContext.Provider value={displayPreferences}><div className={`app-shell ${!canEdit ? 'read-only-mode' : ''}`}>
+  return <BusinessOptionsProvider orgId={orgId} permissions={permissions}><WorkspaceSaveContext.Provider value={{ save: saveNow, commit: commitWorkspace, refresh: refreshWorkspace, state: saveState, allowed: canEdit, dirty: dirtyRef.current }}><DisplayContext.Provider value={displayPreferences}><div className={`app-shell ${!canEdit ? 'read-only-mode' : ''}`}>
     <Sidebar page={page} setPage={(next) => openPage(next)} workspace={visibleWorkspace} permissions={permissions} open={sidebarOpen} setOpen={setSidebarOpen} user={user} onLogout={() => void logout()} isDeveloper={isDeveloper} canManageUsers={canManageUsers} />
     <div className="main">
       <Topbar search={search} setSearch={setSearch} searchResults={searchResults} urgentCount={urgentCount} onMenu={() => setSidebarOpen(true)} onAttention={openUrgent} saveState={saveState} canEdit={canEdit} />
@@ -573,7 +598,7 @@ export default function App() {
         {page === 'settings' && <SettingsPage canViewTasks={permissions.tasks.view} canEditTasks={permissions.tasks.edit} canCreateTasks={permissions.tasks.create} canDeleteTasks={permissions.tasks.delete} user={user} onUserUpdated={setUser} workspace={workspace} setWorkspace={editableSetWorkspace} canViewDrive={permissions.files.view} canManageDrive={permissions.files.create} canConfigureGoogle={permissions.connections.edit} canViewOrganization={permissions.settings.view} canEditOrganization={permissions.settings.edit} isDeveloper={isDeveloper} />}
       </main>
     </div>
-  </div></DisplayContext.Provider></WorkspaceSaveContext.Provider>
+  </div></DisplayContext.Provider></WorkspaceSaveContext.Provider></BusinessOptionsProvider>
 }
 
 function Sidebar({ page, setPage, workspace, permissions, open, setOpen, user, onLogout, isDeveloper, canManageUsers }: { page: Page; setPage: (page: Page) => void; workspace: Workspace; permissions: PermissionMatrix; open: boolean; setOpen: (value: boolean) => void; user: User; onLogout: () => void; isDeveloper: boolean; canManageUsers: boolean }) {
@@ -691,7 +716,7 @@ function FinancialReports({ workspace, onContact }: { workspace: Workspace; onCo
   return <div className="financial-report-page">
     <div className="list-filter-panel finance-filter-panel card">
       <label className="list-filter-field filter-grow"><span>חיפוש</span><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="מספר, כותרת, לקוח, פרויקט או כתובת" /></label>
-      <label className="list-filter-field"><span>סטטוס</span><select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}><option value="הכל">כל הסטטוסים</option>{[...new Set(workspace.quotes.map((quote) => quote.status))].map((status) => <option key={status}>{status}</option>)}</select></label>
+      <label className="list-filter-field"><span>סטטוס</span><BusinessSelect family="quote_status" label="סינון לפי סטטוס חיוב" value={statusFilter} onValueChange={setStatusFilter} legacy={workspace.quotes.map(quote=>quote.status)} emptyOption={{value:"הכל",label:"כל הסטטוסים"}} allowCreate={false} /></label>
       <label className="list-filter-field"><span>לקוח</span><select value={clientFilter} onChange={(e) => setClientFilter(e.target.value)}><option value="הכל">כל הלקוחות</option><option value="__none__">ללא לקוח</option>{workspace.contacts.map((contact) => <option key={contact.id} value={contact.id}>{contact.name}</option>)}</select></label>
       <label className="list-filter-field"><span>פרויקט</span><select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)}><option value="הכל">כל הפרויקטים</option><option value="__none__">ללא פרויקט</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.name} — {project.address || 'כתובת חסרה'}</option>)}</select></label>
       <label className="list-filter-field"><span>תשלום</span><select value={paymentFilter} onChange={(e) => setPaymentFilter(e.target.value)}><option>הכל</option><option>שולם</option><option>חלקי</option><option>לא שולם</option></select></label>

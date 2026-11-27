@@ -65,7 +65,7 @@ jobs:
         env:
           RAMENG_TEST_PG_RUNTIME: ${{ runner.temp }}/rameng-pg-runner
       - name: Install test browser
-        run: node "$RUNNER_TEMP/rameng-pg-runner/node_modules/playwright/cli.js" install --with-deps chromium
+        run: node "$RUNNER_TEMP/rameng-pg-runner/node_modules/playwright/cli.js" install --with-deps chromium webkit
       - name: Browser workflows with isolated data
         run: node tests/browser.mjs
         env:
@@ -76,6 +76,10 @@ jobs:
           RAMENG_TEST_BROWSER_RUNTIME: ${{ runner.temp }}/rameng-pg-runner
       - name: New incident browser resilience
         run: npm run test:new-incidents-browser
+        env:
+          RAMENG_TEST_BROWSER_RUNTIME: ${{ runner.temp }}/rameng-pg-runner
+      - name: Inline dropdown persistence and mobile workflows
+        run: npm run test:inline-choices-browser
         env:
           RAMENG_TEST_BROWSER_RUNTIME: ${{ runner.temp }}/rameng-pg-runner
       - name: Upload browser evidence

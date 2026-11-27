@@ -2,21 +2,28 @@ import { useState } from 'react'
 import type { Workspace } from '../types'
 import { renameProfession, taskProfessionIds } from '../lib/taskProfession'
 import { uid } from './common'
+import CreatableSelect from './CreatableSelect'
+import { useRecordCreation } from './BusinessSelect'
+import { createProfession } from '../lib/inlineChoices'
+import { choiceKey, normalizeChoice } from '../lib/businessOptions'
 
-export function CategoryPicker({ workspace, projectId, value, onChange, disabled = false }: { workspace: Workspace; projectId?: string; value: string[]; onChange: (ids: string[]) => void; disabled?: boolean }) {
+export function CategoryPicker({ workspace, setWorkspace, projectId, value, onChange, disabled = false }: { workspace: Workspace; setWorkspace?: React.Dispatch<React.SetStateAction<Workspace>>; projectId?: string; value: string[]; onChange: (ids: string[]) => void; disabled?: boolean }) {
   const project = workspace.projects.find(item => item.id === projectId)
-  return <div className="category-picker">{workspace.categories.filter(category => !projectId || project?.categoryIds?.includes(category.id)).map(category => <label key={category.id}><input type="checkbox" disabled={disabled} checked={value.includes(category.id)} onChange={event => onChange(event.target.checked ? [...value, category.id] : value.filter(id => id !== category.id))} />{category.name}</label>)}</div>
+  const canCreate = useRecordCreation()
+  return <div className="category-picker">{workspace.categories.filter(category => !projectId || project?.categoryIds?.includes(category.id)).map(category => <label key={category.id}><input type="checkbox" disabled={disabled} checked={value.includes(category.id)} onChange={event => onChange(event.target.checked ? [...value, category.id] : value.filter(id => id !== category.id))} />{category.name}</label>)}{setWorkspace && !disabled && canCreate('tasks') && <CreatableSelect label="מקצוע" ariaLabel="הוספת מקצוע לקובץ" value="" emptyOption={{value:'',label:'בחירת מקצוע'}} options={workspace.categories.map(category=>({value:category.id,label:category.name}))} onCreate={name=>{const id=uid('category');setWorkspace(current=>createProfession(current,name,id,projectId));return id}} onValueChange={id=>onChange([...new Set([...value,id])])} />}</div>
 }
 
 export function CategoryManager({ workspace, setWorkspace, projectId, canEdit, canDelete = false }: { workspace: Workspace; setWorkspace: React.Dispatch<React.SetStateAction<Workspace>>; projectId?: string; canEdit: boolean; canDelete?: boolean }) {
   const [name, setName] = useState(''); const [error, setError] = useState('')
   const project = workspace.projects.find(item => item.id === projectId)
   const add = () => {
-    const trimmed = name.trim()
-    if (!trimmed || workspace.categories.some(category => category.name.trim() === trimmed)) { setError('יש להזין שם מקצוע ייחודי'); return }
-    const id = uid('category')
-    setWorkspace(current => ({ ...current, categories: [...current.categories, { id, name: trimmed }], projects: current.projects.map(item => item.id === projectId ? { ...item, categoryIds: [...(item.categoryIds || []), id] } : item) }))
-    setName(''); setError('')
+    try {
+      const trimmed = normalizeChoice(name)
+      if (workspace.categories.some(category => choiceKey(category.name) === choiceKey(trimmed))) { setError('יש להזין שם מקצוע ייחודי'); return }
+      const id = uid('category')
+      setWorkspace(current => createProfession(current, trimmed, id, projectId))
+      setName(''); setError('')
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'שם מקצוע אינו תקין') }
   }
   return <details className="card category-manager"><summary>{project ? 'בחירת תחומי עבודה לפרויקט' : 'ניהול תחומי עבודה (מקצועות)'}</summary>{error && <p role="alert">{error}</p>}{canEdit && <div className="inline-create"><input placeholder="למשל: חשמל, אדריכלות, קונסטרוקציה" aria-label="שם מקצוע חדש" value={name} onChange={event => setName(event.target.value)} /><button type="button" className="secondary" onClick={add}>הוספת מקצוע</button></div>}
     {workspace.categories.map(category => <div className="inline-create" key={category.id}>{project && <label><input aria-label={`שיוך ${category.name} לפרויקט`} type="checkbox" disabled={!canEdit} checked={project.categoryIds?.includes(category.id) || false} onChange={event => {
